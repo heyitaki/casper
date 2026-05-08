@@ -3182,11 +3182,10 @@ struct ContentView: View {
         view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { notification in
             guard let window = notification.object as? NSWindow,
                   window === observedWindow else { return }
-            // Animate the icon cluster from trailing to leading alongside
-            // the OS fullscreen-enter transition so it slides smoothly.
-            withAnimation(.easeInOut(duration: 0.45)) {
-                sidebarIconLeadingAligned = true
-            }
+            // Snap to leading at the start of the OS fullscreen-enter transition
+            // so the icons are already in their final fullscreen position by the
+            // time the window finishes resizing.
+            sidebarIconLeadingAligned = true
         })
 
         view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { notification in
@@ -9415,8 +9414,17 @@ struct VerticalTabsSidebar: View {
         MinimalModeChromeMetrics.titlebarHeight
     }
 
+    private var sidebarWorkspaceListExtraTopOffset: CGFloat {
+        // Track the icon-cluster alignment state so the extra top offset flips
+        // at willEnter/willExit time (start of the OS transition) instead of
+        // didEnter/didExit (end), keeping the change instant during the
+        // fullscreen <-> windowed transition.
+        let alignedAsFullScreen = iconLeadingAligned ?? isWindowFullScreen
+        return SidebarWorkspaceListMetrics.extraTopOffset(isWindowFullScreen: alignedAsFullScreen)
+    }
+
     private var sidebarTopScrimHeight: CGFloat {
-        SidebarWorkspaceListMetrics.topScrimHeight
+        SidebarWorkspaceListMetrics.topScrimHeight(extraTopOffset: sidebarWorkspaceListExtraTopOffset)
     }
 
     private var sidebarBottomScrimHeight: CGFloat {
@@ -9607,7 +9615,9 @@ struct VerticalTabsSidebar: View {
     }
 
     private func workspaceScrollArea(renderContext: WorkspaceListRenderContext) -> some View {
-        let scrollInsets = SidebarWorkspaceScrollInsets.workspaceList
+        let scrollInsets = SidebarWorkspaceScrollInsets.workspaceList(
+            extraTopOffset: sidebarWorkspaceListExtraTopOffset
+        )
         return GeometryReader { geometryProxy in
             ScrollViewReader { scrollProxy in
                 ScrollView {
@@ -10040,17 +10050,6 @@ enum ShortcutHintDebugSettings {
     }
 }
 
-enum DevBuildBannerDebugSettings {
-    static let sidebarBannerVisibleKey = "showSidebarDevBuildBanner"
-    static let defaultShowSidebarBanner = true
-
-    static func showSidebarBanner(defaults: UserDefaults = .standard) -> Bool {
-        guard defaults.object(forKey: sidebarBannerVisibleKey) != nil else {
-            return defaultShowSidebarBanner
-        }
-        return defaults.bool(forKey: sidebarBannerVisibleKey)
-    }
-}
 
 private enum FeedbackComposerSettings {
     static let storedEmailKey = "sidebarHelpFeedbackEmail"
@@ -10857,14 +10856,10 @@ private struct SidebarFooter: View {
     let onSendFeedback: () -> Void
 
     var body: some View {
-#if DEBUG
-        SidebarDevFooter(updateViewModel: updateViewModel, fileExplorerState: fileExplorerState, onSendFeedback: onSendFeedback)
-#else
         SidebarFooterButtons(updateViewModel: updateViewModel, fileExplorerState: fileExplorerState, onSendFeedback: onSendFeedback)
             .padding(.leading, 6)
             .padding(.trailing, 10)
             .padding(.bottom, 6)
-#endif
     }
 }
 
@@ -10874,8 +10869,13 @@ private struct SidebarFooterButtons: View {
     let onSendFeedback: () -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             SidebarHelpMenuButton(onSendFeedback: onSendFeedback)
+#if DEBUG
+            Text(String(localized: "debug.devBuildBanner.title", defaultValue: "Development"))
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+#endif
             UpdatePill(model: updateViewModel)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -12040,30 +12040,6 @@ private struct SidebarFooterIconButtonStyleBody: View {
             .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
     }
 }
-
-#if DEBUG
-private struct SidebarDevFooter: View {
-    @ObservedObject var updateViewModel: UpdateViewModel
-    @ObservedObject var fileExplorerState: FileExplorerState
-    let onSendFeedback: () -> Void
-    @AppStorage(DevBuildBannerDebugSettings.sidebarBannerVisibleKey)
-    private var showSidebarDevBuildBanner = DevBuildBannerDebugSettings.defaultShowSidebarBanner
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SidebarFooterButtons(updateViewModel: updateViewModel, fileExplorerState: fileExplorerState, onSendFeedback: onSendFeedback)
-            if showSidebarDevBuildBanner {
-                Text(String(localized: "debug.devBuildBanner.title", defaultValue: "THIS IS A DEV BUILD"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.red)
-            }
-        }
-        .padding(.leading, 6)
-        .padding(.trailing, 10)
-        .padding(.bottom, 6)
-    }
-}
-#endif
 
 private struct SidebarScrollViewResolver: NSViewRepresentable {
     let onResolve: (NSScrollView?) -> Void

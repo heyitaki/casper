@@ -1035,35 +1035,6 @@
         }
       }
     },
-    "debug.devBuildBanner.show": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show Dev Build Banner"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開発ビルドバナーを表示"
-          }
-        },
-        "uk": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Показати банер версії для розробки"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "개발 빌드 배너 표시"
-          }
-        }
-      }
-    },
     "debug.menu.openStressWorkspacesWithLoadedSurfaces": {
       "extractionState": "manual",
       "localizations": {
@@ -2982,25 +2953,25 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "THIS IS A DEV BUILD"
+            "value": "Development"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "これは開発ビルドです"
+            "value": "開発"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "ЦЕ ВЕРСІЯ ДЛЯ РОЗРОБКИ"
+            "value": "Розробка"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "개발 빌드입니다"
+            "value": "개발"
           }
         }
       }
