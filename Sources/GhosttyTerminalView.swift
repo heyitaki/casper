@@ -8795,6 +8795,16 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
         )
         pasteItem.target = self
         menu.addItem(.separator())
+        let newTabItem = menu.addItem(
+            withTitle: String(localized: "terminalContextMenu.newTab", defaultValue: "New Tab"),
+            action: #selector(newTabInCurrentPane(_:)),
+            keyEquivalent: ""
+        )
+        newTabItem.target = self
+        newTabItem.image = NSImage(
+            systemSymbolName: "plus.rectangle.on.rectangle",
+            accessibilityDescription: nil
+        )
         let splitHorizontallyItem = menu.addItem(
             withTitle: String(localized: "terminalContextMenu.splitHorizontally", defaultValue: "Split Horizontally"),
             action: #selector(splitHorizontally(_:)),
@@ -8858,6 +8868,19 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 
     @objc private func splitVertically(_ sender: Any?) {
         _ = splitCurrentSurface(direction: .right)
+    }
+
+    @objc private func newTabInCurrentPane(_ sender: Any?) {
+        guard let tabId,
+              let surfaceId = terminalSurface?.id,
+              let app = AppDelegate.shared,
+              let manager = app.tabManagerFor(tabId: tabId) ?? app.tabManager,
+              let workspace = manager.tabs.first(where: { $0.id == tabId }),
+              let paneId = workspace.paneId(forPanelId: surfaceId) else {
+            return
+        }
+        workspace.clearSplitZoom()
+        _ = workspace.newTerminalSurface(inPane: paneId, focus: true)
     }
 
     @discardableResult

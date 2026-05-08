@@ -7555,6 +7555,7 @@ final class Workspace: Identifiable, ObservableObject {
             renderingMode: renderingMode
         )
         return BonsplitConfiguration.Appearance(
+            tabBarVisibility: .auto,
             tabBarHeight: WindowChromeMetrics.bonsplitTabBarHeight,
             tabTitleFontSize: tabTitleFontSize,
             splitButtonBackdropEffect: Self.bonsplitSplitButtonBackdropEffect(),
