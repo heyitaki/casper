@@ -13834,6 +13834,68 @@ private extension AppDelegate {
         windowDecorationsController.handleMinimalModeSidebarChromeMouseDown(window: window, event: event)
     }
 
+    @discardableResult
+    func handleSidebarRevealLeadingEdgeMouseDown(window: NSWindow, event: NSEvent) -> Bool {
+        guard event.type == .leftMouseDown else { return false }
+        let location = event.locationInWindow
+        guard location.x >= 0, location.x < SidebarRevealStripMetrics.width else {
+            return false
+        }
+        guard isMainWorkspaceWindow(window) else { return false }
+        guard let context = mainWindowContexts.values.first(where: { $0.window === window }),
+              !context.sidebarState.isVisible else {
+            return false
+        }
+        let startScreenLocation = NSEvent.mouseLocation
+        let startFrame = window.frame
+        let threshold = SidebarRevealStripMetrics.tapThreshold
+        let minWidth = max(window.minSize.width, CGFloat(SessionPersistencePolicy.minimumWindowWidth))
+        let maxWidth = window.maxSize.width.isFinite ? window.maxSize.width : .greatestFiniteMagnitude
+        let isFullScreen = window.styleMask.contains(.fullScreen)
+        var didStartResize = false
+        defer {
+            if didStartResize {
+                NSCursor.arrow.set()
+            }
+        }
+
+        let mask: NSEvent.EventTypeMask = [.leftMouseDragged, .leftMouseUp]
+        while let next = window.nextEvent(matching: mask) {
+            let current = NSEvent.mouseLocation
+            let dx = current.x - startScreenLocation.x
+            let dy = current.y - startScreenLocation.y
+            let movement = max(abs(dx), abs(dy))
+
+            switch next.type {
+            case .leftMouseDragged:
+                // Fullscreen windows can't be edge-resized, so don't show the
+                // resize cursor or attempt setFrame — the system would ignore it.
+                guard !isFullScreen else { break }
+                if didStartResize || movement >= threshold {
+                    didStartResize = true
+                    NSCursor.resizeLeftRight.set()
+                    let newFrame = SidebarRevealLeadingEdgeGeometry.resizedFrame(
+                        startFrame: startFrame,
+                        dxScreen: dx,
+                        minWidth: minWidth,
+                        maxWidth: maxWidth
+                    )
+                    if newFrame != window.frame {
+                        window.setFrame(newFrame, display: true, animate: false)
+                    }
+                }
+            case .leftMouseUp:
+                if !didStartResize && movement < threshold {
+                    context.sidebarState.toggle()
+                }
+                return true
+            default:
+                break
+            }
+        }
+        return true
+    }
+
     @objc func handleThemesReloadNotification(_ notification: Notification) {
         DispatchQueue.main.async {
             GhosttyApp.shared.reloadConfiguration(source: "distributed.cmux.themes")
@@ -14064,6 +14126,10 @@ private extension NSWindow {
         if event.type == .keyDown { AppDelegate.shared?.recordTypingActivity() }
         if event.type == .leftMouseDown,
            AppDelegate.shared?.handleMinimalModeSidebarChromeMouseDown(window: self, event: event) == true {
+            return
+        }
+        if event.type == .leftMouseDown,
+           AppDelegate.shared?.handleSidebarRevealLeadingEdgeMouseDown(window: self, event: event) == true {
             return
         }
 #if DEBUG

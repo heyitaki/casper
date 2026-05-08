@@ -830,9 +830,12 @@ struct HiddenTitlebarSidebarControlsView: View {
     @State private var hostWindowNumber: Int?
     @AppStorage("titlebarControlsStyle") private var styleRawValue = TitlebarControlsStyle.classic.rawValue
 
-    private var shouldPinControls: Bool {
-        isHoveringHost || isHoveringWindowChrome || popoverVisibilityState.isShown(in: hostWindowNumber)
-    }
+    /// Always render the sidebar-top controls visibly when the sidebar is
+    /// expanded — the host (`isMinimalMode` overlay in `VerticalTabsSidebar`)
+    /// only mounts this view in that state, so there's no hover-to-reveal
+    /// behaviour to preserve. We still observe hover and popover state for
+    /// debug/UI-test telemetry hooks below, but visibility is unconditional.
+    private var shouldPinControls: Bool { true }
 
     var body: some View {
         let style = TitlebarControlsStyle(rawValue: styleRawValue) ?? .classic

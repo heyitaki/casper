@@ -1826,6 +1826,7 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             ContentView.effectiveTitlebarPadding(
                 isMinimalMode: false,
                 isFullScreen: false,
+                isSidebarVisible: true,
                 titlebarPadding: 32,
                 hostingSafeAreaTop: 0
             ),
@@ -1838,6 +1839,7 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             ContentView.effectiveTitlebarPadding(
                 isMinimalMode: true,
                 isFullScreen: true,
+                isSidebarVisible: true,
                 titlebarPadding: 32,
                 hostingSafeAreaTop: 32
             ),
@@ -1850,25 +1852,88 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             ContentView.effectiveTitlebarPadding(
                 isMinimalMode: true,
                 isFullScreen: false,
+                isSidebarVisible: true,
                 titlebarPadding: 32,
                 hostingSafeAreaTop: 0
             ),
             0,
             accuracy: 0.5,
-            "Manually hosted minimal windows already have zero safe area, so the Bonsplit strip must not be pulled offscreen"
+            "Windowed minimal mode with the sidebar visible should not offset for a titlebar — traffic lights sit over the sidebar, not the terminals"
         )
 
         XCTAssertEqual(
             ContentView.effectiveTitlebarPadding(
                 isMinimalMode: true,
                 isFullScreen: false,
+                isSidebarVisible: true,
                 titlebarPadding: 32,
                 hostingSafeAreaTop: 28
             ),
             -28,
             accuracy: 0.5,
-            "SwiftUI WindowGroup windows still need their native titlebar safe area cancelled"
+            "SwiftUI WindowGroup windows still need their native titlebar safe area cancelled even when the sidebar is visible"
         )
+
+        XCTAssertEqual(
+            ContentView.effectiveTitlebarPadding(
+                isMinimalMode: true,
+                isFullScreen: false,
+                isSidebarVisible: false,
+                titlebarPadding: 32,
+                hostingSafeAreaTop: 0
+            ),
+            WindowChromeMetrics.appTitlebarHeight,
+            accuracy: 0.5,
+            "Windowed minimal mode with the sidebar hidden must reserve the titlebar height so traffic lights don't overlap terminal text"
+        )
+
+        XCTAssertEqual(
+            ContentView.effectiveTitlebarPadding(
+                isMinimalMode: true,
+                isFullScreen: false,
+                isSidebarVisible: false,
+                titlebarPadding: 32,
+                hostingSafeAreaTop: 28
+            ),
+            0,
+            accuracy: 0.5,
+            "Windowed minimal mode with the sidebar hidden must cancel a host-reported safe area before applying the titlebar offset"
+        )
+    }
+
+    func testSidebarRevealLeadingEdgeResizedFrameClampsToMinAndMax() {
+        let startFrame = NSRect(x: 100, y: 200, width: 800, height: 600)
+
+        let widened = SidebarRevealLeadingEdgeGeometry.resizedFrame(
+            startFrame: startFrame,
+            dxScreen: -50,
+            minWidth: 300,
+            maxWidth: 2000
+        )
+        XCTAssertEqual(widened.maxX, startFrame.maxX, accuracy: 0.001, "Right edge must stay anchored")
+        XCTAssertEqual(widened.width, 850, accuracy: 0.001, "Dragging left expands the window leftwards")
+        XCTAssertEqual(widened.origin.x, 50, accuracy: 0.001)
+
+        let clampedToMin = SidebarRevealLeadingEdgeGeometry.resizedFrame(
+            startFrame: startFrame,
+            dxScreen: 1000,
+            minWidth: 300,
+            maxWidth: 2000
+        )
+        XCTAssertEqual(clampedToMin.width, 300, accuracy: 0.001, "Width must clamp to minWidth")
+        XCTAssertEqual(clampedToMin.maxX, startFrame.maxX, accuracy: 0.001, "Right edge stays anchored even when clamped")
+
+        let clampedToMax = SidebarRevealLeadingEdgeGeometry.resizedFrame(
+            startFrame: startFrame,
+            dxScreen: -2000,
+            minWidth: 300,
+            maxWidth: 1200
+        )
+        XCTAssertEqual(clampedToMax.width, 1200, accuracy: 0.001, "Width must clamp to maxWidth")
+        XCTAssertEqual(clampedToMax.maxX, startFrame.maxX, accuracy: 0.001)
+
+        XCTAssertEqual(widened.origin.y, startFrame.origin.y, accuracy: 0.001, "Y origin is preserved")
+        XCTAssertEqual(widened.height, startFrame.height, accuracy: 0.001, "Height is preserved")
     }
 
     func testNotificationsPopoverVisibilityIsScopedByWindow() {

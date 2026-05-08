@@ -521,6 +521,19 @@ final class WindowBrowserHostView: NSView {
 #endif
             return nil
         }
+        if shouldPassThroughToSidebarRevealStrip(at: point) {
+#if DEBUG
+            debugLogPointerRouting(
+                stage: "hitTest.sidebarRevealStripPass",
+                point: point,
+                titlebarPassThrough: false,
+                sidebarPassThrough: false,
+                dividerHit: dividerHit,
+                hitView: nil
+            )
+#endif
+            return nil
+        }
         if splitPassThrough {
 #if DEBUG
             debugLogPointerRouting(
@@ -807,6 +820,13 @@ final class WindowBrowserHostView: NSView {
         return SidebarResizeInteraction.Edge.trailing.hitRange(dividerX: rightMostEdge).contains(point.x)
     }
 
+    private func shouldPassThroughToSidebarRevealStrip(at point: NSPoint) -> Bool {
+        let frames = subviews.compactMap { $0 as? WindowBrowserSlotView }
+            .filter { !$0.isHidden && $0.window != nil && $0.frame.width > 1 && $0.frame.height > 1 }
+            .map { $0.frame }
+        return SidebarRevealStripMetrics.shouldPassThrough(point: point, hostedFrames: frames)
+    }
+
     private func updateDividerCursor(
         at point: NSPoint,
         dividerHit: DividerHit? = nil,
@@ -819,6 +839,11 @@ final class WindowBrowserHostView: NSView {
             dividerHit: resolvedDividerHit,
             hostedInspectorHit: resolvedHostedInspectorHit
         ) {
+            clearActiveDividerCursor(restoreArrow: false)
+            return
+        }
+
+        if shouldPassThroughToSidebarRevealStrip(at: point) {
             clearActiveDividerCursor(restoreArrow: false)
             return
         }

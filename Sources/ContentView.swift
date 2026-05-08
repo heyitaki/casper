@@ -1030,6 +1030,13 @@ struct ContentView: View {
     @State private var lastSidebarSelectionIndex: Int? = nil
     @State private var titlebarText: String = ""
     @State private var isFullScreen: Bool = false
+    /// Drives the sidebar icon-cluster alignment with custom transition timing:
+    /// `true` = leading (fullscreen layout), `false` = trailing (windowed layout).
+    /// Updated on `willEnter`/`willExit` so windowed→fullscreen smoothly animates
+    /// alongside the OS shape change while fullscreen→windowed snaps to trailing
+    /// immediately so the icons are already in their final position during the
+    /// reverse animation.
+    @State private var sidebarIconLeadingAligned: Bool = false
     @State private var observedWindow: NSWindow?
     @StateObject private var fullscreenControlsViewModel = TitlebarControlsViewModel()
     @StateObject private var fileExplorerStore = FileExplorerStore()
@@ -1048,6 +1055,8 @@ struct ContentView: View {
     @State private var sidebarResizerCursorReleaseWorkItem: DispatchWorkItem?
     @State private var sidebarResizerPointerMonitor: Any?
     @State private var isResizerBandActive = false
+    @State private var activeResizerBandHandle: SidebarResizerHandle?
+    @State private var resizerDragMovementExceededTapThreshold = false
     @State private var isSidebarResizerCursorActive = false
     @State private var sidebarResizerCursorStabilizer: DispatchSourceTimer?
     @State private var isCommandPalettePresented = false
@@ -1686,7 +1695,7 @@ struct ContentView: View {
         sidebarResizerCursorReleaseWorkItem?.cancel()
         sidebarResizerCursorReleaseWorkItem = nil
         isSidebarResizerCursorActive = true
-        Self.fixedSidebarResizeCursor.set()
+        applySidebarResizerCursor()
     }
 
     private func releaseSidebarResizerCursorIfNeeded(force: Bool = false) {
@@ -1714,21 +1723,58 @@ struct ContentView: View {
     }
 
     private func dividerBandContains(pointInContent point: NSPoint, contentBounds: NSRect) -> Bool {
-        guard point.y >= contentBounds.minY, point.y <= contentBounds.maxY else { return false }
+        computeActiveResizerHandle(pointInContent: point, contentBounds: contentBounds) != nil
+    }
+
+    private func computeActiveResizerHandle(
+        pointInContent point: NSPoint,
+        contentBounds: NSRect
+    ) -> SidebarResizerHandle? {
+        guard point.y >= contentBounds.minY, point.y <= contentBounds.maxY else { return nil }
         if sidebarState.isVisible,
            SidebarResizeInteraction.Edge.leading.hitRange(dividerX: sidebarWidth).contains(point.x) {
-            return true
+            return .divider
         }
 
         let rightDividerX = contentBounds.maxX - rightSidebarWidth
-        return rightSidebarVisible &&
-            SidebarResizeInteraction.Edge.trailing.hitRange(dividerX: rightDividerX).contains(point.x)
+        if rightSidebarVisible,
+           SidebarResizeInteraction.Edge.trailing.hitRange(dividerX: rightDividerX).contains(point.x) {
+            return .explorerDivider
+        }
+        return nil
+    }
+
+    private func resizerHandleSupportsTap(_ handle: SidebarResizerHandle) -> Bool {
+        // Only the leading sidebar's divider doubles as a click-to-collapse
+        // affordance — the trailing/right resizer is drag-only.
+        handle == .divider
+    }
+
+    private func resolvedSidebarResizerCursor() -> NSCursor {
+        // Show the pointing-hand on hover so the band advertises its
+        // click-to-collapse role (mirroring the collapsed-edge reveal strip).
+        // Switch to the resize cursor as soon as the user actually drags so the
+        // resize affordance is correct mid-gesture.
+        if isResizerDragging, resizerDragMovementExceededTapThreshold {
+            return Self.fixedSidebarResizeCursor
+        }
+        if let handle = activeResizerBandHandle, resizerHandleSupportsTap(handle), !isResizerDragging {
+            return NSCursor.pointingHand
+        }
+        return Self.fixedSidebarResizeCursor
+    }
+
+    private func applySidebarResizerCursor() {
+        resolvedSidebarResizerCursor().set()
     }
 
     private func updateSidebarResizerBandState(using _: NSEvent? = nil) {
         guard sidebarState.isVisible || rightSidebarVisible,
               let window = observedWindow,
               let contentView = window.contentView else {
+            if activeResizerBandHandle != nil {
+                activeResizerBandHandle = nil
+            }
             isResizerBandActive = false
             scheduleSidebarResizerCursorRelease(force: true)
             return
@@ -1739,17 +1785,24 @@ struct ContentView: View {
         // event locations during cursor updates, which causes visible cursor flicker.
         let pointInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
         let pointInContent = contentView.convert(pointInWindow, from: nil)
-        let isInDividerBand = dividerBandContains(pointInContent: pointInContent, contentBounds: contentView.bounds)
+        let activeHandle = computeActiveResizerHandle(
+            pointInContent: pointInContent,
+            contentBounds: contentView.bounds
+        )
+        let isInDividerBand = (activeHandle != nil)
         isResizerBandActive = isInDividerBand
+        if activeResizerBandHandle != activeHandle {
+            activeResizerBandHandle = activeHandle
+        }
 
         if isInDividerBand || isResizerDragging {
             activateSidebarResizerCursor()
             startSidebarResizerCursorStabilizer()
             // AppKit cursorUpdate handlers from overlapped portal/web views can run
             // after our local monitor callback and temporarily reset the cursor.
-            // Re-assert on the next runloop turn to keep the resize cursor stable.
+            // Re-assert on the next runloop turn to keep the resolved cursor stable.
             DispatchQueue.main.async {
-                Self.fixedSidebarResizeCursor.set()
+                applySidebarResizerCursor()
             }
         } else {
             stopSidebarResizerCursorStabilizer()
@@ -1764,7 +1817,7 @@ struct ContentView: View {
         timer.setEventHandler {
             updateSidebarResizerBandState()
             if isResizerBandActive || isResizerDragging {
-                Self.fixedSidebarResizeCursor.set()
+                applySidebarResizerCursor()
             } else {
                 stopSidebarResizerCursorStabilizer()
             }
@@ -1807,7 +1860,7 @@ struct ContentView: View {
                 // Consume hover motion in divider band so overlapped views cannot
                 // continuously reassert their own cursor while we are resizing.
                 activateSidebarResizerCursor()
-                Self.fixedSidebarResizeCursor.set()
+                applySidebarResizerCursor()
                 return nil
             }
             return event
@@ -1830,7 +1883,8 @@ struct ContentView: View {
         _ handle: SidebarResizerHandle,
         width: CGFloat,
         availableWidth: CGFloat,
-        accessibilityIdentifier: String? = nil
+        accessibilityIdentifier: String? = nil,
+        onTap: (() -> Void)? = nil
     ) -> some View {
         Color.clear
             .frame(width: width)
@@ -1872,18 +1926,35 @@ struct ContentView: View {
                         if !isResizerDragging {
                             TerminalWindowPortalRegistry.beginInteractiveGeometryResize()
                             isResizerDragging = true
+                            resizerDragMovementExceededTapThreshold = false
                             config.captureStart()
+                        }
+                        let movement = max(
+                            abs(value.translation.width),
+                            abs(value.translation.height)
+                        )
+                        if !resizerDragMovementExceededTapThreshold,
+                           movement >= SidebarRevealStripMetrics.tapThreshold {
+                            resizerDragMovementExceededTapThreshold = true
                         }
                         activateSidebarResizerCursor()
                         config.updateWidth(value.translation.width)
                     }
-                    .onEnded { _ in
+                    .onEnded { value in
                         if isResizerDragging {
                             TerminalWindowPortalRegistry.endInteractiveGeometryResize()
                             isResizerDragging = false
                             let config = resizerConfig(for: handle, availableWidth: availableWidth)
                             config.finishDrag()
                         }
+                        // Treat near-zero movement as a tap so the same hit-band
+                        // can collapse the sidebar when clicked without scrubbing.
+                        if let onTap,
+                           abs(value.translation.width) < SidebarRevealStripMetrics.tapThreshold,
+                           abs(value.translation.height) < SidebarRevealStripMetrics.tapThreshold {
+                            onTap()
+                        }
+                        resizerDragMovementExceededTapThreshold = false
                         activateSidebarResizerCursor()
                         scheduleSidebarResizerCursorRelease()
                     }
@@ -1895,12 +1966,22 @@ struct ContentView: View {
         handle: SidebarResizerHandle,
         edge: SidebarResizeInteraction.Edge,
         accessibilityIdentifier: String,
-        dividerX: @escaping (CGFloat) -> CGFloat
+        dividerX: @escaping (CGFloat) -> CGFloat,
+        showsHoverHairline: Bool = false,
+        onTap: (() -> Void)? = nil
     ) -> some View {
         GeometryReader { proxy in
             let totalWidth = max(0, proxy.size.width)
             let resolvedDividerX = min(max(dividerX(totalWidth), 0), totalWidth)
             let leadingWidth = max(0, edge.handleX(dividerX: resolvedDividerX))
+            // Drive hairline visibility off the NSEvent-monitor-tracked band
+            // state instead of SwiftUI .onHover. The portal NSView sits above
+            // SwiftUI and can intermittently swallow tracking events near the
+            // divider, which made the hover hairline flicker on the trailing
+            // edge of the expanded sidebar.
+            let isHoveredOrDragging = activeResizerBandHandle == handle
+                || hoveredResizerHandles.contains(handle)
+                || isResizerDragging
 
             HStack(spacing: 0) {
                 Color.clear
@@ -1911,8 +1992,23 @@ struct ContentView: View {
                     handle,
                     width: SidebarResizeInteraction.totalHitWidth,
                     availableWidth: totalWidth,
-                    accessibilityIdentifier: accessibilityIdentifier
+                    accessibilityIdentifier: accessibilityIdentifier,
+                    onTap: onTap
                 )
+                .overlay(alignment: .trailing) {
+                    if showsHoverHairline, isHoveredOrDragging {
+                        // Match the leading-edge reveal strip's hover tint so the
+                        // expanded sidebar's trailing edge advertises the same
+                        // click-to-toggle affordance. Pad away from the drag-only
+                        // overlap on the content side so the highlight aligns to
+                        // the visual divider.
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.16))
+                            .frame(width: SidebarRevealStripMetrics.width)
+                            .padding(.trailing, SidebarResizeInteraction.contentSideHitWidth)
+                            .allowsHitTesting(false)
+                    }
+                }
 
                 Color.clear
                     .frame(maxWidth: .infinity)
@@ -1927,8 +2023,23 @@ struct ContentView: View {
             handle: .divider,
             edge: .leading,
             accessibilityIdentifier: "SidebarResizer",
-            dividerX: { totalWidth in min(max(sidebarWidth, 0), totalWidth) }
+            dividerX: { totalWidth in min(max(sidebarWidth, 0), totalWidth) },
+            showsHoverHairline: true,
+            onTap: { sidebarState.toggle() }
         )
+    }
+
+    /// Thin strip rendered along the leading edge when the sidebar is hidden.
+    /// Click reopens the sidebar. The strip extends to the very top in both
+    /// fullscreen and windowed modes; in windowed mode it overlaps the
+    /// macOS resize hit zone, and the underlying NSView captures clicks
+    /// before AppKit's resize handler activates so taps still expand the
+    /// sidebar while drags resize the window.
+    private var sidebarRevealStripOverlay: some View {
+        SidebarRevealStripView()
+            .frame(width: SidebarRevealStripView.stripWidth)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .accessibilityIdentifier("SidebarRevealStrip")
     }
 
     private var rightSidebarResizerOverlay: some View {
@@ -1954,7 +2065,9 @@ struct ContentView: View {
             },
             selection: $sidebarSelectionState.selection,
             selectedTabIds: $selectedTabIds,
-            lastSidebarSelectionIndex: $lastSidebarSelectionIndex
+            lastSidebarSelectionIndex: $lastSidebarSelectionIndex,
+            isWindowFullScreen: isFullScreen,
+            iconLeadingAligned: sidebarIconLeadingAligned
         )
         .frame(width: sidebarWidth)
         .frame(maxHeight: .infinity, alignment: .topLeading)
@@ -1977,6 +2090,7 @@ struct ContentView: View {
         Self.effectiveTitlebarPadding(
             isMinimalMode: isMinimalMode,
             isFullScreen: isFullScreen,
+            isSidebarVisible: sidebarState.isVisible,
             titlebarPadding: titlebarPadding,
             hostingSafeAreaTop: hostingSafeAreaTop
         )
@@ -1985,12 +2099,20 @@ struct ContentView: View {
     static func effectiveTitlebarPadding(
         isMinimalMode: Bool,
         isFullScreen: Bool,
+        isSidebarVisible: Bool,
         titlebarPadding: CGFloat,
         hostingSafeAreaTop: CGFloat
     ) -> CGFloat {
         guard isMinimalMode else { return WindowChromeMetrics.appTitlebarHeight }
         guard !isFullScreen else { return 0 }
-        return -max(0, min(titlebarPadding, hostingSafeAreaTop))
+        // Windowed minimal mode: when the sidebar is visible the traffic lights
+        // sit over the sidebar, so terminal content can extend to the top.
+        // When the sidebar is hidden, reserve the titlebar height so window
+        // buttons get their own bar instead of overlapping terminal text.
+        // In either case cancel any host-reported safe-area inset first.
+        let cancelHostSafeArea = -max(0, min(titlebarPadding, hostingSafeAreaTop))
+        if isSidebarVisible { return cancelHostSafeArea }
+        return WindowChromeMetrics.appTitlebarHeight + cancelHostSafeArea
     }
 
     private func terminalContent(appearance: WindowAppearanceSnapshot) -> some View {
@@ -2562,6 +2684,9 @@ struct ContentView: View {
                     if sidebarState.isVisible {
                         sidebarResizerOverlay
                             .zIndex(1000)
+                    } else {
+                        sidebarRevealStripOverlay
+                            .zIndex(1000)
                     }
                 }
                 .overlay(alignment: .leading) {
@@ -2604,6 +2729,13 @@ struct ContentView: View {
             reconcileMountedWorkspaceIds()
             previousSelectedWorkspaceId = tabManager.selectedTabId
             installSidebarResizerPointerMonitorIfNeeded()
+            // Resync icon alignment from the live window state in case a
+            // SwiftUI view recreation reset the @State while in fullscreen.
+            if let live = observedWindow ?? NSApp.keyWindow {
+                sidebarIconLeadingAligned = live.styleMask.contains(.fullScreen)
+            } else {
+                sidebarIconLeadingAligned = isFullScreen
+            }
             let restoredWidth = normalizedSidebarWidth(sidebarState.persistedWidth)
             if abs(sidebarWidth - restoredWidth) > 0.5 {
                 sidebarWidth = restoredWidth
@@ -3047,6 +3179,25 @@ struct ContentView: View {
             updateWindowGlassTint()
         })
 
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  window === observedWindow else { return }
+            // Animate the icon cluster from trailing to leading alongside
+            // the OS fullscreen-enter transition so it slides smoothly.
+            withAnimation(.easeInOut(duration: 0.45)) {
+                sidebarIconLeadingAligned = true
+            }
+        })
+
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  window === observedWindow else { return }
+            // Snap immediately to trailing as the OS begins exiting fullscreen
+            // so the icons are already in their final windowed position when
+            // the reverse animation finishes.
+            sidebarIconLeadingAligned = false
+        })
+
         view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { notification in
             guard let window = notification.object as? NSWindow,
                   window === observedWindow else { return }
@@ -3179,6 +3330,7 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     observedWindow = window
                     isFullScreen = window.styleMask.contains(.fullScreen)
+                    sidebarIconLeadingAligned = isFullScreen
                     let availableWidth = window.contentView?.bounds.width ?? window.contentLayoutRect.width
                     clampSidebarWidthIfNeeded(availableWidth: availableWidth)
                     clampRightSidebarWidthIfNeeded(availableWidth: availableWidth)
@@ -9011,6 +9163,78 @@ private struct SidebarResizerAccessibilityModifier: ViewModifier {
     }
 }
 
+/// Sizing for the sidebar reveal strip. Lives outside the SwiftUI view so the
+/// portal hit-test (`TerminalWindowPortal.swift`) can pass-through the same
+/// leading region without depending on SwiftUI.
+enum SidebarRevealStripMetrics {
+    static let width: CGFloat = 5
+    static let tapThreshold: CGFloat = 3
+    static let leadingEdgeEpsilon: CGFloat = 1
+    static let minimumLeadingContentWidth: CGFloat = 24
+
+    /// Shared sidebar-hidden detector for `WindowTerminalHostView` and
+    /// `WindowBrowserHostView` hit-tests: if a hosted view is flush to the
+    /// leading edge, treat clicks in the leading reveal band as pass-through
+    /// so the SwiftUI `SidebarRevealStripView` underneath gets the click.
+    static func shouldPassThrough(point: NSPoint, hostedFrames: [CGRect]) -> Bool {
+        guard point.x >= 0, point.x < width else { return false }
+        return hostedFrames.contains {
+            $0.minX <= leadingEdgeEpsilon && $0.maxX > minimumLeadingContentWidth
+        }
+    }
+}
+
+enum SidebarRevealLeadingEdgeGeometry {
+    static func resizedFrame(
+        startFrame: NSRect,
+        dxScreen: CGFloat,
+        minWidth: CGFloat,
+        maxWidth: CGFloat
+    ) -> NSRect {
+        let rightEdge = startFrame.maxX
+        let proposedX = startFrame.origin.x + dxScreen
+        let proposedWidth = rightEdge - proposedX
+        let clampedWidth = min(maxWidth, max(minWidth, proposedWidth))
+        let clampedX = rightEdge - clampedWidth
+        return NSRect(
+            x: clampedX,
+            y: startFrame.origin.y,
+            width: clampedWidth,
+            height: startFrame.height
+        )
+    }
+}
+
+/// Thin strip docked at the leading edge while the sidebar is hidden.
+/// Clicks (including on the leading-edge resize hit zone) are intercepted in
+/// `cmux_sendEvent` BEFORE AppKit's resize tracking starts — see
+/// `AppDelegate.handleSidebarRevealLeadingEdgeMouseDown(window:event:)`.
+/// SwiftUI hover is reliable for the highlight affordance because hover
+/// events fire normally before any tracking session begins.
+private struct SidebarRevealStripView: View {
+    static let stripWidth: CGFloat = SidebarRevealStripMetrics.width
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Rectangle()
+            .fill(isHovering ? Color.primary.opacity(0.16) : Color.primary.opacity(0.001))
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                guard hovering != isHovering else { return }
+                isHovering = hovering
+                if hovering {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
+            .help(String(localized: "sidebarRevealStrip.tooltip", defaultValue: "Show Sidebar"))
+            .accessibilityLabel(Text(String(localized: "sidebarRevealStrip.label", defaultValue: "Show Sidebar")))
+            .accessibilityAddTraits(.isButton)
+    }
+}
+
 private struct SidebarTabItemSettingsSnapshot: Equatable {
     let sidebarShortcutHintXOffset: Double
     let sidebarShortcutHintYOffset: Double
@@ -9165,6 +9389,11 @@ struct VerticalTabsSidebar: View {
     @Binding var selection: SidebarSelection
     @Binding var selectedTabIds: Set<UUID>
     @Binding var lastSidebarSelectionIndex: Int?
+    var isWindowFullScreen: Bool = false
+    /// Tracks the icon-cluster alignment with custom transition timing managed
+    /// by `ContentView`. Defaults to `isWindowFullScreen` so callers that don't
+    /// thread it through still get the previous behavior.
+    var iconLeadingAligned: Bool? = nil
     @StateObject private var modifierKeyMonitor = WindowScopedShortcutHintModifierMonitor(activation: .commandOnly)
     @StateObject private var dragAutoScrollController = SidebarDragAutoScrollController()
     @StateObject private var dragFailsafeMonitor = SidebarDragFailsafeMonitor()
@@ -9436,21 +9665,34 @@ struct VerticalTabsSidebar: View {
                             ))
                     }
                 }
-                .overlay(alignment: .topLeading) {
+                .overlay(alignment: .top) {
                     if isMinimalMode {
-                        HiddenTitlebarSidebarControlsView(
-                            notificationStore: notificationStore,
-                            onToggleSidebar: onToggleSidebar,
-                            onToggleNotifications: { anchorView in
-                                AppDelegate.shared?.toggleNotificationsPopover(
-                                    animated: true,
-                                    anchorView: anchorView
-                                )
-                            },
-                            onNewTab: onNewTab
-                        )
-                            .padding(.leading, MinimalModeSidebarTitlebarControlsMetrics.leadingInset)
-                            .padding(.top, 2)
+                        // In windowed mode the traffic lights occupy the leading
+                        // edge, so push the icons to the trailing side to avoid
+                        // overlapping them.
+                        let leading = iconLeadingAligned ?? isWindowFullScreen
+                        HStack(spacing: 0) {
+                            if !leading {
+                                Spacer(minLength: 0)
+                            }
+                            HiddenTitlebarSidebarControlsView(
+                                notificationStore: notificationStore,
+                                onToggleSidebar: onToggleSidebar,
+                                onToggleNotifications: { anchorView in
+                                    AppDelegate.shared?.toggleNotificationsPopover(
+                                        animated: true,
+                                        anchorView: anchorView
+                                    )
+                                },
+                                onNewTab: onNewTab
+                            )
+                            if leading {
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.trailing, leading ? 0 : 4)
+                        .padding(.top, 2)
                     }
                 }
                 .background(Color.clear)

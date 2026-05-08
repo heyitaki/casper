@@ -142,6 +142,11 @@ final class WindowTerminalHostView: NSView {
                 return nil
             }
 
+            if shouldPassThroughToSidebarRevealStrip(at: point) {
+                clearActiveDividerCursor(restoreArrow: false)
+                return nil
+            }
+
             // Compute divider hit once and reuse for both cursor update and pass-through.
             if let kind = splitDividerCursorKind(at: point) {
                 activeDividerCursorKind = kind
@@ -291,6 +296,17 @@ final class WindowTerminalHostView: NSView {
         return SidebarResizeInteraction.Edge.leading.hitRange(dividerX: dividerX).contains(point.x)
     }
 
+    /// When the sidebar is hidden, the leading edge hosts a thin SwiftUI reveal
+    /// strip. Without this pass-through, the AppKit terminal portal sits above
+    /// the strip and swallows clicks (hover events leak through but mouse-down
+    /// does not), so clicking the strip never re-expands the sidebar.
+    private func shouldPassThroughToSidebarRevealStrip(at point: NSPoint) -> Bool {
+        let frames = subviews.compactMap { $0 as? GhosttySurfaceScrollView }
+            .filter { !$0.isHidden && $0.window != nil && $0.frame.width > 1 && $0.frame.height > 1 }
+            .map { $0.frame }
+        return SidebarRevealStripMetrics.shouldPassThrough(point: point, hostedFrames: frames)
+    }
+
     private func shouldPassThroughToTrailingSidebarResizer(
         at point: NSPoint,
         visibleHostedViews: [GhosttySurfaceScrollView]
@@ -309,6 +325,11 @@ final class WindowTerminalHostView: NSView {
         }
 
         if shouldPassThroughToSidebarResizer(at: point) {
+            clearActiveDividerCursor(restoreArrow: false)
+            return
+        }
+
+        if shouldPassThroughToSidebarRevealStrip(at: point) {
             clearActiveDividerCursor(restoreArrow: false)
             return
         }
