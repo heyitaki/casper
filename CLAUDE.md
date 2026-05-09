@@ -257,27 +257,30 @@ The app has a **Debug** menu in the macOS menu bar (only in DEBUG builds). Use i
 
 ## Ghostty submodule workflow
 
-Ghostty changes must be committed in the `ghostty` submodule and pushed to the `manaflow-ai/ghostty` fork.
+Ghostty changes must be committed in the `ghostty` submodule and pushed to the `heyitaki/ghostty` fork (cmux's working fork of `manaflow-ai/ghostty`).
 Keep `docs/ghostty-fork.md` up to date with any fork changes and conflict notes.
 
 ```bash
 cd ghostty
-git remote -v  # origin = upstream, manaflow = fork
+git remote -v  # origin = heyitaki/ghostty (cmux's fork)
 git checkout -b <branch>
 git add <files>
 git commit -m "..."
-git push manaflow <branch>
+git push origin <branch>
 ```
 
-To keep the fork up to date with upstream:
+To keep the fork up to date with `manaflow-ai/ghostty` (one level upstream):
 
 ```bash
 cd ghostty
-git fetch origin
+git remote add upstream https://github.com/manaflow-ai/ghostty.git  # one-time
+git fetch upstream main
 git checkout main
-git merge origin/main
-git push manaflow main
+git merge upstream/main
+git push origin main
 ```
+
+The `Sync upstream` workflow on `heyitaki/ghostty` does this automatically on a daily cron and opens a PR when `manaflow-ai/ghostty:main` advances.
 
 Then update the parent repo with the new submodule SHA:
 

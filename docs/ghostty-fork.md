@@ -1,12 +1,16 @@
-# Ghostty Fork Changes (manaflow-ai/ghostty)
+# Ghostty Fork Changes (heyitaki/ghostty)
 
 This repo uses a fork of Ghostty for local patches that aren't upstream yet.
+The submodule points at `heyitaki/ghostty`, which is in turn forked from
+`manaflow-ai/ghostty` and re-synced from it daily via the `Sync upstream`
+GitHub Actions workflow on the fork.
+
 When we change the fork, update this document and the parent submodule SHA.
 
 ## Fork update checklist
 
 1) Make changes in `ghostty/`.
-2) Commit and push to `manaflow-ai/ghostty`.
+2) Commit and push to `heyitaki/ghostty` (the submodule's `origin`).
 3) Update this file with the new change summary + conflict notes.
 4) In the parent repo: `git add ghostty` and commit the submodule SHA.
 

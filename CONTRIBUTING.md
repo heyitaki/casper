@@ -65,7 +65,7 @@ ssh cmux-vm 'cd /Users/cmux/GhosttyTabs && xcodebuild -project GhosttyTabs.xcode
 
 ## Ghostty Submodule
 
-The `ghostty` submodule points to [manaflow-ai/ghostty](https://github.com/manaflow-ai/ghostty), a fork of the upstream Ghostty project.
+The `ghostty` submodule points to [heyitaki/ghostty](https://github.com/heyitaki/ghostty), cmux's working fork of upstream Ghostty. heyitaki/ghostty is itself forked from [manaflow-ai/ghostty](https://github.com/manaflow-ai/ghostty), and a daily `Sync upstream` workflow keeps `heyitaki/ghostty:main` aligned with `manaflow-ai/ghostty:main`.
 
 ### Making changes to ghostty
 
@@ -75,17 +75,21 @@ git checkout -b my-feature
 # make changes
 git add .
 git commit -m "Description of changes"
-git push manaflow my-feature
+git push origin my-feature
 ```
 
 ### Keeping the fork updated
 
+The `Sync upstream` workflow on `heyitaki/ghostty` runs daily and opens a PR
+when `manaflow-ai/ghostty:main` advances. Manual sync:
+
 ```bash
 cd ghostty
-git fetch origin
+git remote add upstream https://github.com/manaflow-ai/ghostty.git  # one-time
+git fetch upstream main
 git checkout main
-git merge origin/main
-git push manaflow main
+git merge upstream/main
+git push origin main
 ```
 
 Then update the parent repo:
