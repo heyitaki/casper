@@ -87,8 +87,6 @@ struct FilePreviewTextEditor: NSViewRepresentable {
             self.panel = panel
         }
 
-        deinit {}
-
         func textDidChange(_ notification: Notification) {
             guard !isApplyingPanelUpdate,
                   let textView = notification.object as? NSTextView else { return }
@@ -123,12 +121,17 @@ final class SavingTextView: NSTextView {
     private var previewFontSize: CGFloat = 13
     private var pendingSaveShortcutChordPrefix: ShortcutStroke?
 
-    deinit {}
-
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         applyFilePreviewTextEditorInsets()
         panel?.retryPendingFocus()
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        guard let panel = panel else { return menu }
+        menu.appendPanelTabActions(workspaceId: panel.workspaceId, panelId: panel.id)
+        return menu
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

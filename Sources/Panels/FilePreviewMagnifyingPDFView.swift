@@ -9,6 +9,7 @@ final class FilePreviewMagnifyingPDFView: PDFView {
     var onRotate: ((NSEvent) -> Void)?
     var onSwipe: ((NSEvent) -> Void)?
     var onFocusChanged: ((Bool) -> Void)?
+    var panelTabContext: (workspaceId: UUID, panelId: UUID)?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -72,5 +73,12 @@ final class FilePreviewMagnifyingPDFView: PDFView {
         } else {
             super.swipe(with: event)
         }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        guard let context = panelTabContext else { return menu }
+        menu.appendPanelTabActions(workspaceId: context.workspaceId, panelId: context.panelId)
+        return menu
     }
 }

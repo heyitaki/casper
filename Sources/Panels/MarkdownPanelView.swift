@@ -41,6 +41,7 @@ struct MarkdownPanelView: View {
         .onChange(of: panel.focusFlashToken) { _ in
             triggerFocusFlashAnimation()
         }
+        .panelTabActionsContextMenu(workspaceId: panel.workspaceId, panelId: panel.id)
     }
 
     // MARK: - Content

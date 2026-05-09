@@ -355,7 +355,7 @@ final class CmuxWebView: WKWebView {
     var onContextMenuOpenLinkInNewTab: ((URL) -> Void)?
     var contextMenuLinkURLProvider: ((CmuxWebView, NSPoint, @escaping (URL?) -> Void) -> Void)?
     var contextMenuDefaultBrowserOpener: ((URL) -> Bool)?
-    var contextMenuCanMoveTabToNewWorkspace: (() -> Bool)?; var contextMenuMoveTabToNewWorkspace: (() -> Bool)?
+    var panelTabContext: (workspaceId: UUID, panelId: UUID)?
     /// Guard against background panes stealing first responder (e.g. page autofocus).
     /// BrowserPanelView updates this as pane focus state changes.
     var allowsFirstResponderAcquisition: Bool = true
@@ -2110,7 +2110,9 @@ final class CmuxWebView: WKWebView {
             item.target = self
             menu.insertItem(item, at: min(openLinkInsertionIndex, menu.items.count))
         }
-        appendMoveTabToNewWorkspaceContextMenuItem(to: menu)
+        if let context = panelTabContext {
+            menu.appendPanelTabActions(workspaceId: context.workspaceId, panelId: context.panelId)
+        }
     }
     @objc private func contextMenuOpenLinkInDefaultBrowser(_ sender: Any?) {
         _ = sender

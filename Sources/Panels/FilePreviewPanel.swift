@@ -857,6 +857,7 @@ struct FilePreviewPanelView: View {
         .onChange(of: panel.focusFlashToken) {
             triggerFocusFlashAnimation()
         }
+        .panelTabActionsContextMenu(workspaceId: panel.workspaceId, panelId: panel.id)
     }
 
     private var header: some View {
@@ -1933,6 +1934,7 @@ final class FilePreviewPDFContainerView: NSView, NSSplitViewDelegate, NSOutlineV
 
     func setPanel(_ panel: FilePreviewPanel) {
         self.panel = panel
+        pdfView.panelTabContext = (workspaceId: panel.workspaceId, panelId: panel.id)
         registerFocusEndpoint()
     }
 

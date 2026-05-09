@@ -6811,8 +6811,6 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
             return GhosttyPasteboardHelper.hasString(for: GHOSTTY_CLIPBOARD_STANDARD)
         case #selector(pasteAsPlainText(_:)):
             return GhosttyPasteboardHelper.hasString(for: GHOSTTY_CLIPBOARD_STANDARD)
-        case #selector(splitHorizontally(_:)), #selector(splitVertically(_:)):
-            return canSplitCurrentSurface()
         case #selector(copyWorkspaceAndSurfaceIdentifiers(_:)):
             return terminalSurface != nil
         default:
@@ -8794,41 +8792,10 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
             keyEquivalent: ""
         )
         pasteItem.target = self
+        if let tabId, let surfaceId = terminalSurface?.id {
+            menu.appendPanelTabActions(workspaceId: tabId, panelId: surfaceId)
+        }
         menu.addItem(.separator())
-        let newTabItem = menu.addItem(
-            withTitle: String(localized: "terminalContextMenu.newTab", defaultValue: "New Tab"),
-            action: #selector(newTabInCurrentPane(_:)),
-            keyEquivalent: ""
-        )
-        newTabItem.target = self
-        newTabItem.image = NSImage(
-            systemSymbolName: "plus.rectangle.on.rectangle",
-            accessibilityDescription: nil
-        )
-        let splitHorizontallyItem = menu.addItem(
-            withTitle: String(localized: "terminalContextMenu.splitHorizontally", defaultValue: "Split Horizontally"),
-            action: #selector(splitHorizontally(_:)),
-            keyEquivalent: ""
-        )
-        splitHorizontallyItem.target = self
-        applyConfiguredMenuShortcut(KeyboardShortcutSettings.menuShortcut(for: .splitDown), to: splitHorizontallyItem)
-        splitHorizontallyItem.image = NSImage(
-            systemSymbolName: "rectangle.bottomhalf.inset.filled",
-            accessibilityDescription: nil
-        )
-
-        let splitVerticallyItem = menu.addItem(
-            withTitle: String(localized: "terminalContextMenu.splitVertically", defaultValue: "Split Vertically"),
-            action: #selector(splitVertically(_:)),
-            keyEquivalent: ""
-        )
-        splitVerticallyItem.target = self
-        applyConfiguredMenuShortcut(KeyboardShortcutSettings.menuShortcut(for: .splitRight), to: splitVerticallyItem)
-        splitVerticallyItem.image = NSImage(
-            systemSymbolName: "rectangle.righthalf.inset.filled",
-            accessibilityDescription: nil
-        )
-        appendMoveCurrentSurfaceToNewWorkspaceMenuItem(to: menu); menu.addItem(.separator())
         let resetTerminalItem = menu.addItem(
             withTitle: String(localized: "terminalContextMenu.resetTerminal", defaultValue: "Reset Terminal"),
             action: #selector(resetTerminal(_:)),
@@ -8849,49 +8816,6 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
             identifiersItem.target = self
         }
         return menu
-    }
-
-    private func canSplitCurrentSurface() -> Bool {
-        guard let tabId,
-              let surfaceId = terminalSurface?.id,
-              let app = AppDelegate.shared,
-              let manager = app.tabManagerFor(tabId: tabId) ?? app.tabManager,
-              let workspace = manager.tabs.first(where: { $0.id == tabId }) else {
-            return false
-        }
-        return workspace.panels[surfaceId] != nil
-    }
-
-    @objc private func splitHorizontally(_ sender: Any?) {
-        _ = splitCurrentSurface(direction: .down)
-    }
-
-    @objc private func splitVertically(_ sender: Any?) {
-        _ = splitCurrentSurface(direction: .right)
-    }
-
-    @objc private func newTabInCurrentPane(_ sender: Any?) {
-        guard let tabId,
-              let surfaceId = terminalSurface?.id,
-              let app = AppDelegate.shared,
-              let manager = app.tabManagerFor(tabId: tabId) ?? app.tabManager,
-              let workspace = manager.tabs.first(where: { $0.id == tabId }),
-              let paneId = workspace.paneId(forPanelId: surfaceId) else {
-            return
-        }
-        workspace.clearSplitZoom()
-        _ = workspace.newTerminalSurface(inPane: paneId, focus: true)
-    }
-
-    @discardableResult
-    private func splitCurrentSurface(direction: SplitDirection) -> Bool {
-        guard let tabId,
-              let surfaceId = terminalSurface?.id,
-              let app = AppDelegate.shared,
-              let manager = app.tabManagerFor(tabId: tabId) ?? app.tabManager else {
-            return false
-        }
-        return manager.createSplit(tabId: tabId, surfaceId: surfaceId, direction: direction) != nil
     }
 
     @objc private func triggerFlash(_ sender: Any?) {

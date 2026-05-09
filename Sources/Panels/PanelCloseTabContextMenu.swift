@@ -1,0 +1,269 @@
+import AppKit
+import SwiftUI
+
+enum PanelCloseTabAction {
+    @MainActor
+    static func perform(workspaceId: UUID, panelId: UUID) {
+        guard let app = AppDelegate.shared,
+              let manager = app.tabManagerFor(tabId: workspaceId) ?? app.tabManager else {
+            return
+        }
+        manager.closePanelWithConfirmation(tabId: workspaceId, surfaceId: panelId)
+    }
+}
+
+@MainActor
+enum PanelTabActions {
+    static func splitHorizontally(workspaceId: UUID, panelId: UUID) {
+        guard let manager = resolveManager(workspaceId: workspaceId) else { return }
+        _ = manager.createSplit(tabId: workspaceId, surfaceId: panelId, direction: .down)
+    }
+
+    static func splitVertically(workspaceId: UUID, panelId: UUID) {
+        guard let manager = resolveManager(workspaceId: workspaceId) else { return }
+        _ = manager.createSplit(tabId: workspaceId, surfaceId: panelId, direction: .right)
+    }
+
+    static func newTab(workspaceId: UUID, panelId: UUID) {
+        guard let manager = resolveManager(workspaceId: workspaceId),
+              let workspace = manager.tabs.first(where: { $0.id == workspaceId }),
+              let paneId = workspace.paneId(forPanelId: panelId) else {
+            return
+        }
+        workspace.clearSplitZoom()
+        _ = workspace.newTerminalSurface(inPane: paneId, focus: true)
+    }
+
+    static func canMoveTabToNewWorkspace(panelId: UUID) -> Bool {
+        AppDelegate.shared?.canMoveSurfaceToNewWorkspace(panelId: panelId) ?? false
+    }
+
+    static func moveTabToNewWorkspace(panelId: UUID) {
+        guard canMoveTabToNewWorkspace(panelId: panelId) else {
+            NSSound.beep()
+            return
+        }
+        _ = AppDelegate.shared?.moveSurfaceToNewWorkspace(
+            panelId: panelId,
+            focus: true,
+            focusWindow: false
+        )
+    }
+
+    static func closeTab(workspaceId: UUID, panelId: UUID) {
+        PanelCloseTabAction.perform(workspaceId: workspaceId, panelId: panelId)
+    }
+
+    private static func resolveManager(workspaceId: UUID) -> TabManager? {
+        guard let app = AppDelegate.shared else { return nil }
+        return app.tabManagerFor(tabId: workspaceId) ?? app.tabManager
+    }
+}
+
+@MainActor
+final class PanelTabActionMenuController: NSObject {
+    let workspaceId: UUID
+    let panelId: UUID
+
+    init(workspaceId: UUID, panelId: UUID) {
+        self.workspaceId = workspaceId
+        self.panelId = panelId
+        super.init()
+    }
+
+    func appendActions(to menu: NSMenu) {
+        let leadingNeedsSeparator = !menu.items.isEmpty
+            && menu.items.last?.isSeparatorItem == false
+        if leadingNeedsSeparator {
+            menu.addItem(.separator())
+        }
+
+        let splitHItem = menu.addItem(
+            withTitle: String(localized: "panelContextMenu.splitHorizontally", defaultValue: "Split Horizontally"),
+            action: #selector(panelSplitHorizontally(_:)),
+            keyEquivalent: ""
+        )
+        splitHItem.target = self
+        splitHItem.image = NSImage(
+            systemSymbolName: "rectangle.bottomhalf.inset.filled",
+            accessibilityDescription: nil
+        )
+        applyConfiguredMenuShortcutIfAvailable(.splitDown, to: splitHItem)
+
+        let splitVItem = menu.addItem(
+            withTitle: String(localized: "panelContextMenu.splitVertically", defaultValue: "Split Vertically"),
+            action: #selector(panelSplitVertically(_:)),
+            keyEquivalent: ""
+        )
+        splitVItem.target = self
+        splitVItem.image = NSImage(
+            systemSymbolName: "rectangle.righthalf.inset.filled",
+            accessibilityDescription: nil
+        )
+        applyConfiguredMenuShortcutIfAvailable(.splitRight, to: splitVItem)
+
+        menu.addItem(.separator())
+
+        let newTabItem = menu.addItem(
+            withTitle: String(localized: "panelContextMenu.newTab", defaultValue: "New Tab"),
+            action: #selector(panelNewTab(_:)),
+            keyEquivalent: ""
+        )
+        newTabItem.target = self
+        newTabItem.image = NSImage(
+            systemSymbolName: "plus.rectangle.on.rectangle",
+            accessibilityDescription: nil
+        )
+
+        menu.appendPanelCloseTabItem(
+            target: self,
+            action: #selector(panelCloseTab(_:))
+        )
+
+        if PanelTabActions.canMoveTabToNewWorkspace(panelId: panelId) {
+            let moveItem = menu.addItem(
+                withTitle: String(localized: "panelContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"),
+                action: #selector(panelMoveTabToNewWorkspace(_:)),
+                keyEquivalent: ""
+            )
+            moveItem.target = self
+            moveItem.image = NSImage(
+                systemSymbolName: "rectangle.portrait.and.arrow.right",
+                accessibilityDescription: nil
+            )
+        }
+    }
+
+    private func applyConfiguredMenuShortcutIfAvailable(
+        _ id: KeyboardShortcutSettings.Action,
+        to item: NSMenuItem
+    ) {
+        let stored = KeyboardShortcutSettings.menuShortcut(for: id)
+        guard let keyEquivalent = stored.menuItemKeyEquivalent else { return }
+        item.keyEquivalent = keyEquivalent
+        item.keyEquivalentModifierMask = stored.modifierFlags
+    }
+
+    @objc private func panelSplitHorizontally(_ sender: Any?) {
+        PanelTabActions.splitHorizontally(workspaceId: workspaceId, panelId: panelId)
+    }
+
+    @objc private func panelSplitVertically(_ sender: Any?) {
+        PanelTabActions.splitVertically(workspaceId: workspaceId, panelId: panelId)
+    }
+
+    @objc private func panelNewTab(_ sender: Any?) {
+        PanelTabActions.newTab(workspaceId: workspaceId, panelId: panelId)
+    }
+
+    @objc private func panelCloseTab(_ sender: Any?) {
+        PanelTabActions.closeTab(workspaceId: workspaceId, panelId: panelId)
+    }
+
+    @objc private func panelMoveTabToNewWorkspace(_ sender: Any?) {
+        PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
+    }
+}
+
+private var panelTabActionMenuControllerKey: UInt8 = 0
+
+extension NSMenu {
+    @discardableResult
+    func appendPanelCloseTabItem(target: AnyObject, action: Selector) -> NSMenuItem {
+        let item = addItem(
+            withTitle: String(localized: "menu.file.closeTab", defaultValue: "Close Tab"),
+            action: action,
+            keyEquivalent: ""
+        )
+        item.target = target
+        let stored = KeyboardShortcutSettings.menuShortcut(for: .closeTab)
+        if let keyEquivalent = stored.menuItemKeyEquivalent {
+            item.keyEquivalent = keyEquivalent
+            item.keyEquivalentModifierMask = stored.modifierFlags
+        }
+        item.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)
+        return item
+    }
+
+    @MainActor
+    func appendPanelTabActions(workspaceId: UUID, panelId: UUID) {
+        let controller = PanelTabActionMenuController(workspaceId: workspaceId, panelId: panelId)
+        objc_setAssociatedObject(
+            self,
+            &panelTabActionMenuControllerKey,
+            controller,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+        controller.appendActions(to: self)
+    }
+}
+
+private struct PanelTabActionsContextMenu: ViewModifier {
+    let workspaceId: UUID
+    let panelId: UUID
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            Button {
+                PanelTabActions.splitHorizontally(workspaceId: workspaceId, panelId: panelId)
+            } label: {
+                Text(String(localized: "panelContextMenu.splitHorizontally", defaultValue: "Split Horizontally"))
+            }
+            .keyboardShortcut(splitHShortcut)
+
+            Button {
+                PanelTabActions.splitVertically(workspaceId: workspaceId, panelId: panelId)
+            } label: {
+                Text(String(localized: "panelContextMenu.splitVertically", defaultValue: "Split Vertically"))
+            }
+            .keyboardShortcut(splitVShortcut)
+
+            Divider()
+
+            Button {
+                PanelTabActions.newTab(workspaceId: workspaceId, panelId: panelId)
+            } label: {
+                Text(String(localized: "panelContextMenu.newTab", defaultValue: "New Tab"))
+            }
+
+            Button {
+                PanelTabActions.closeTab(workspaceId: workspaceId, panelId: panelId)
+            } label: {
+                Text(String(localized: "menu.file.closeTab", defaultValue: "Close Tab"))
+            }
+            .keyboardShortcut(closeTabShortcut)
+
+            if PanelTabActions.canMoveTabToNewWorkspace(panelId: panelId) {
+                Button {
+                    PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
+                } label: {
+                    Text(String(localized: "panelContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"))
+                }
+            }
+        }
+    }
+
+    private var splitHShortcut: KeyboardShortcut? {
+        shortcutValue(for: .splitDown)
+    }
+
+    private var splitVShortcut: KeyboardShortcut? {
+        shortcutValue(for: .splitRight)
+    }
+
+    private var closeTabShortcut: KeyboardShortcut {
+        shortcutValue(for: .closeTab) ?? KeyboardShortcut("w", modifiers: .command)
+    }
+
+    private func shortcutValue(for id: KeyboardShortcutSettings.Action) -> KeyboardShortcut? {
+        let stored = KeyboardShortcutSettings.shortcut(for: id)
+        guard let key = stored.keyEquivalent else { return nil }
+        return KeyboardShortcut(key, modifiers: stored.eventModifiers)
+    }
+}
+
+extension View {
+    func panelTabActionsContextMenu(workspaceId: UUID, panelId: UUID) -> some View {
+        modifier(PanelTabActionsContextMenu(workspaceId: workspaceId, panelId: panelId))
+    }
+}
