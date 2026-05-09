@@ -2,6 +2,7 @@ import AppKit
 import Bonsplit
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 #if DEBUG
 private func fileExplorerDebugResponder(_ responder: NSResponder?) -> String {
@@ -1596,7 +1597,18 @@ final class FileExplorerCellView: NSTableCellView {
                 iconView.image = folderIcon
                 iconView.contentTintColor = nil
             } else {
-                let fileIcon = NSWorkspace.shared.icon(forFileType: (node.name as NSString).pathExtension)
+                // Some source-code extensions (e.g. .ts → public.mpeg-2-transport-stream)
+                // resolve to a media UTI in NSWorkspace. When our preview resolver knows
+                // the file is text, fall back to the generic plain-text icon so the
+                // sidebar doesn't show a misleading video/audio thumbnail.
+                let nameNS = node.name as NSString
+                let ext = nameNS.pathExtension.lowercased()
+                let fileIcon: NSImage
+                if FilePreviewKindResolver.isExplicitTextFile(filename: node.name.lowercased(), ext: ext) {
+                    fileIcon = NSWorkspace.shared.icon(for: .plainText)
+                } else {
+                    fileIcon = NSWorkspace.shared.icon(forFileType: nameNS.pathExtension)
+                }
                 fileIcon.size = NSSize(width: style.iconSize, height: style.iconSize)
                 iconView.image = fileIcon
                 iconView.contentTintColor = nil

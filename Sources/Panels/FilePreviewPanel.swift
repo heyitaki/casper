@@ -313,6 +313,13 @@ enum FilePreviewKindResolver {
 
     private static func initialResolution(for url: URL) -> Resolution {
         let ext = url.pathExtension.lowercased()
+        // Source-code extensions like "ts" map to media UTIs (MPEG-2 Transport
+        // Stream) on macOS; consult our explicit text allow-list first so
+        // TypeScript and similar files aren't routed to the video player.
+        if isExplicitTextFile(url: url) {
+            return .resolved(.text)
+        }
+
         if let type = UTType(filenameExtension: ext),
            let mediaMode = mediaMode(for: type) {
             return .resolved(mediaMode)
@@ -335,6 +342,10 @@ enum FilePreviewKindResolver {
             return .resolved(.quickLook)
         }
 
+        if isExplicitTextFile(url: url) {
+            return .resolved(.text)
+        }
+
         for type in contentTypes(for: url) {
             if let mediaMode = mediaMode(for: type) {
                 return .resolved(mediaMode)
@@ -346,6 +357,26 @@ enum FilePreviewKindResolver {
         }
 
         return .needsSniff
+    }
+
+    static func isExplicitTextFile(url: URL) -> Bool {
+        isExplicitTextFile(
+            filename: url.lastPathComponent.lowercased(),
+            ext: url.pathExtension.lowercased()
+        )
+    }
+
+    static func isExplicitTextFile(filename: String, ext: String) -> Bool {
+        // plist still needs binary-vs-text sniffing — let the dedicated branches handle it.
+        guard ext != "plist" else { return false }
+        return matchesTextNameOrExtension(filename: filename, ext: ext)
+    }
+
+    private static func matchesTextNameOrExtension(filename: String, ext: String) -> Bool {
+        if textFilenames.contains(filename) {
+            return true
+        }
+        return textExtensions.contains(ext)
     }
 
     private static func mediaMode(for type: UTType) -> FilePreviewMode? {
@@ -378,11 +409,8 @@ enum FilePreviewKindResolver {
 
     private static func knownTextFile(url: URL, includeResourceContentType: Bool) -> Bool {
         let filename = url.lastPathComponent.lowercased()
-        if textFilenames.contains(filename) {
-            return true
-        }
         let ext = url.pathExtension.lowercased()
-        if textExtensions.contains(ext) {
+        if matchesTextNameOrExtension(filename: filename, ext: ext) {
             return true
         }
         if includeResourceContentType,

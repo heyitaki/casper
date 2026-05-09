@@ -77,6 +77,18 @@ final class FilePreviewReviewFeedbackTests: XCTestCase {
         XCTAssertEqual(FilePreviewKindResolver.mode(for: url), .text)
     }
 
+    func testBinaryPropertyListStillResolvesAsQuickLook() throws {
+        // The text/source allow-list must not short-circuit binary plists; they should
+        // still fall through to the binary-sniff branch and open in QuickLook.
+        let url = temporaryFileURL(extension: "plist")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let payload: [String: Any] = ["greeting": "hi"]
+        let data = try PropertyListSerialization.data(fromPropertyList: payload, format: .binary, options: 0)
+        try data.write(to: url)
+
+        XCTAssertEqual(FilePreviewKindResolver.mode(for: url), .quickLook)
+    }
+
     func testTextLoaderRejectsOversizedTextFiles() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
