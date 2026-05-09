@@ -3005,6 +3005,29 @@
         }
       }
     },
+    "rightSidebarRevealStrip.label": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Right Sidebar"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "右サイドバーを表示"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오른쪽 사이드바 표시"
+          }
+        }
+      }
+    },
     "sidebarRevealStrip.label": {
       "extractionState": "manual",
       "localizations": {

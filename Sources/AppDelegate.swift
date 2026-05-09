@@ -13846,6 +13846,41 @@ private extension AppDelegate {
               !context.sidebarState.isVisible else {
             return false
         }
+        return runSidebarRevealEdgeMouseDownLoop(
+            window: window,
+            edge: .leading,
+            toggle: { context.sidebarState.toggle() }
+        )
+    }
+
+    @discardableResult
+    func handleSidebarRevealTrailingEdgeMouseDown(window: NSWindow, event: NSEvent) -> Bool {
+        guard event.type == .leftMouseDown else { return false }
+        let location = event.locationInWindow
+        let trailingX = window.frame.width
+        guard location.x > trailingX - SidebarRevealStripMetrics.width,
+              location.x <= trailingX else {
+            return false
+        }
+        guard isMainWorkspaceWindow(window) else { return false }
+        guard let context = mainWindowContexts.values.first(where: { $0.window === window }),
+              let fileExplorerState = context.fileExplorerState,
+              !fileExplorerState.isVisible else {
+            return false
+        }
+        return runSidebarRevealEdgeMouseDownLoop(
+            window: window,
+            edge: .trailing,
+            toggle: { fileExplorerState.toggle() }
+        )
+    }
+
+    @discardableResult
+    private func runSidebarRevealEdgeMouseDownLoop(
+        window: NSWindow,
+        edge: SidebarResizeInteraction.Edge,
+        toggle: () -> Void
+    ) -> Bool {
         let startScreenLocation = NSEvent.mouseLocation
         let startFrame = window.frame
         let threshold = SidebarRevealStripMetrics.tapThreshold
@@ -13874,11 +13909,12 @@ private extension AppDelegate {
                 if didStartResize || movement >= threshold {
                     didStartResize = true
                     NSCursor.resizeLeftRight.set()
-                    let newFrame = SidebarRevealLeadingEdgeGeometry.resizedFrame(
+                    let newFrame = SidebarRevealEdgeGeometry.resizedFrame(
                         startFrame: startFrame,
                         dxScreen: dx,
                         minWidth: minWidth,
-                        maxWidth: maxWidth
+                        maxWidth: maxWidth,
+                        draggedEdge: edge
                     )
                     if newFrame != window.frame {
                         window.setFrame(newFrame, display: true, animate: false)
@@ -13886,7 +13922,7 @@ private extension AppDelegate {
                 }
             case .leftMouseUp:
                 if !didStartResize && movement < threshold {
-                    context.sidebarState.toggle()
+                    toggle()
                 }
                 return true
             default:
@@ -14130,6 +14166,10 @@ private extension NSWindow {
         }
         if event.type == .leftMouseDown,
            AppDelegate.shared?.handleSidebarRevealLeadingEdgeMouseDown(window: self, event: event) == true {
+            return
+        }
+        if event.type == .leftMouseDown,
+           AppDelegate.shared?.handleSidebarRevealTrailingEdgeMouseDown(window: self, event: event) == true {
             return
         }
 #if DEBUG

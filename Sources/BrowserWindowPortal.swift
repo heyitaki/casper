@@ -821,10 +821,16 @@ final class WindowBrowserHostView: NSView {
     }
 
     private func shouldPassThroughToSidebarRevealStrip(at point: NSPoint) -> Bool {
+        let w = SidebarRevealStripMetrics.width
+        guard point.x < w || point.x > bounds.maxX - w else { return false }
         let frames = subviews.compactMap { $0 as? WindowBrowserSlotView }
             .filter { !$0.isHidden && $0.window != nil && $0.frame.width > 1 && $0.frame.height > 1 }
             .map { $0.frame }
-        return SidebarRevealStripMetrics.shouldPassThrough(point: point, hostedFrames: frames)
+        return SidebarRevealStripMetrics.shouldPassThrough(
+            point: point,
+            bounds: bounds,
+            hostedFrames: frames
+        )
     }
 
     private func updateDividerCursor(

@@ -1904,36 +1904,133 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
     func testSidebarRevealLeadingEdgeResizedFrameClampsToMinAndMax() {
         let startFrame = NSRect(x: 100, y: 200, width: 800, height: 600)
 
-        let widened = SidebarRevealLeadingEdgeGeometry.resizedFrame(
+        let widened = SidebarRevealEdgeGeometry.resizedFrame(
             startFrame: startFrame,
             dxScreen: -50,
             minWidth: 300,
-            maxWidth: 2000
+            maxWidth: 2000,
+            draggedEdge: .leading
         )
         XCTAssertEqual(widened.maxX, startFrame.maxX, accuracy: 0.001, "Right edge must stay anchored")
         XCTAssertEqual(widened.width, 850, accuracy: 0.001, "Dragging left expands the window leftwards")
         XCTAssertEqual(widened.origin.x, 50, accuracy: 0.001)
 
-        let clampedToMin = SidebarRevealLeadingEdgeGeometry.resizedFrame(
+        let clampedToMin = SidebarRevealEdgeGeometry.resizedFrame(
             startFrame: startFrame,
             dxScreen: 1000,
             minWidth: 300,
-            maxWidth: 2000
+            maxWidth: 2000,
+            draggedEdge: .leading
         )
         XCTAssertEqual(clampedToMin.width, 300, accuracy: 0.001, "Width must clamp to minWidth")
         XCTAssertEqual(clampedToMin.maxX, startFrame.maxX, accuracy: 0.001, "Right edge stays anchored even when clamped")
 
-        let clampedToMax = SidebarRevealLeadingEdgeGeometry.resizedFrame(
+        let clampedToMax = SidebarRevealEdgeGeometry.resizedFrame(
             startFrame: startFrame,
             dxScreen: -2000,
             minWidth: 300,
-            maxWidth: 1200
+            maxWidth: 1200,
+            draggedEdge: .leading
         )
         XCTAssertEqual(clampedToMax.width, 1200, accuracy: 0.001, "Width must clamp to maxWidth")
         XCTAssertEqual(clampedToMax.maxX, startFrame.maxX, accuracy: 0.001)
 
         XCTAssertEqual(widened.origin.y, startFrame.origin.y, accuracy: 0.001, "Y origin is preserved")
         XCTAssertEqual(widened.height, startFrame.height, accuracy: 0.001, "Height is preserved")
+    }
+
+    func testSidebarRevealTrailingEdgeResizedFrameClampsToMinAndMax() {
+        let startFrame = NSRect(x: 100, y: 200, width: 800, height: 600)
+
+        let widened = SidebarRevealEdgeGeometry.resizedFrame(
+            startFrame: startFrame,
+            dxScreen: 75,
+            minWidth: 300,
+            maxWidth: 2000,
+            draggedEdge: .trailing
+        )
+        XCTAssertEqual(widened.origin.x, startFrame.origin.x, accuracy: 0.001, "Left edge must stay anchored")
+        XCTAssertEqual(widened.width, 875, accuracy: 0.001, "Dragging right expands the window rightwards")
+        XCTAssertEqual(widened.maxX, 975, accuracy: 0.001)
+
+        let narrowed = SidebarRevealEdgeGeometry.resizedFrame(
+            startFrame: startFrame,
+            dxScreen: -200,
+            minWidth: 300,
+            maxWidth: 2000,
+            draggedEdge: .trailing
+        )
+        XCTAssertEqual(narrowed.origin.x, startFrame.origin.x, accuracy: 0.001, "Left edge stays anchored when narrowing")
+        XCTAssertEqual(narrowed.width, 600, accuracy: 0.001)
+
+        let clampedToMin = SidebarRevealEdgeGeometry.resizedFrame(
+            startFrame: startFrame,
+            dxScreen: -1000,
+            minWidth: 300,
+            maxWidth: 2000,
+            draggedEdge: .trailing
+        )
+        XCTAssertEqual(clampedToMin.width, 300, accuracy: 0.001, "Width must clamp to minWidth")
+        XCTAssertEqual(clampedToMin.origin.x, startFrame.origin.x, accuracy: 0.001, "Left edge stays anchored when clamped")
+
+        let clampedToMax = SidebarRevealEdgeGeometry.resizedFrame(
+            startFrame: startFrame,
+            dxScreen: 5000,
+            minWidth: 300,
+            maxWidth: 1200,
+            draggedEdge: .trailing
+        )
+        XCTAssertEqual(clampedToMax.width, 1200, accuracy: 0.001, "Width must clamp to maxWidth")
+        XCTAssertEqual(clampedToMax.origin.x, startFrame.origin.x, accuracy: 0.001)
+
+        XCTAssertEqual(widened.origin.y, startFrame.origin.y, accuracy: 0.001, "Y origin is preserved")
+        XCTAssertEqual(widened.height, startFrame.height, accuracy: 0.001, "Height is preserved")
+    }
+
+    func testSidebarRevealStripMetricsPassThroughDetectsTrailingFlushContent() {
+        let bounds = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let trailingFlush = CGRect(x: 200, y: 0, width: 1000, height: 800)
+        let leadingFlush = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let width = SidebarRevealStripMetrics.width
+
+        let pointInsideTrailingBand = NSPoint(x: bounds.maxX - 1, y: 400)
+        XCTAssertTrue(
+            SidebarRevealStripMetrics.shouldPassThrough(
+                point: pointInsideTrailingBand,
+                bounds: bounds,
+                hostedFrames: [trailingFlush]
+            ),
+            "Trailing-flush content should pass-through clicks in the trailing reveal band"
+        )
+
+        XCTAssertFalse(
+            SidebarRevealStripMetrics.shouldPassThrough(
+                point: pointInsideTrailingBand,
+                bounds: bounds,
+                hostedFrames: [leadingFlush]
+            ),
+            "Leading-flush content alone must not trigger trailing pass-through"
+        )
+
+        let pointJustInsideOfBand = NSPoint(x: bounds.maxX - width - 1, y: 400)
+        XCTAssertFalse(
+            SidebarRevealStripMetrics.shouldPassThrough(
+                point: pointJustInsideOfBand,
+                bounds: bounds,
+                hostedFrames: [trailingFlush]
+            ),
+            "Points just inside of the trailing band must not pass through"
+        )
+
+        let pointPastTrailingEdge = NSPoint(x: bounds.maxX + 1, y: 400)
+        XCTAssertFalse(
+            SidebarRevealStripMetrics.shouldPassThrough(
+                point: pointPastTrailingEdge,
+                bounds: bounds,
+                hostedFrames: [trailingFlush]
+            ),
+            "Points past the trailing edge must not pass through"
+        )
     }
 
     func testNotificationsPopoverVisibilityIsScopedByWindow() {
