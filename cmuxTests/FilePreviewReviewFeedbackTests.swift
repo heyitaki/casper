@@ -66,6 +66,17 @@ final class FilePreviewReviewFeedbackTests: XCTestCase {
         XCTAssertEqual(FilePreviewKindResolver.mode(for: url), .text)
     }
 
+    func testTypeScriptExtensionResolvesAsTextNotMedia() throws {
+        // macOS maps the "ts" filename extension to public.mpeg-2-transport-stream,
+        // which would otherwise route TypeScript files into the video player.
+        let url = temporaryFileURL(extension: "ts")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try "export const greeting = \"hi\";\n".write(to: url, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(FilePreviewKindResolver.initialMode(for: url), .text)
+        XCTAssertEqual(FilePreviewKindResolver.mode(for: url), .text)
+    }
+
     func testTextLoaderRejectsOversizedTextFiles() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -146,11 +157,15 @@ final class FilePreviewReviewFeedbackTests: XCTestCase {
     }
 
     private func temporaryTextFile(contents: String, encoding: String.Encoding) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("txt")
+        let url = temporaryFileURL(extension: "txt")
         try contents.write(to: url, atomically: true, encoding: encoding)
         return url
+    }
+
+    private func temporaryFileURL(extension ext: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(ext)
     }
 
     private func keyEvent(key: String, keyCode: UInt16) -> NSEvent? {
