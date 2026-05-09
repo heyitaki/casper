@@ -142,7 +142,36 @@ tend to conflict together during rebases.
   - Adds a C API for loading Ghostty config from an in-memory string.
   - Lets cmux parse generated or override config without materializing a separate config file first.
 
-### 10) Manual embedded IO for libghostty iOS
+### 10) Debounce pty resize during live drag
+
+- Files:
+  - `src/termio/Termio.zig`
+  - `src/termio/Thread.zig`
+  - `src/termio/Exec.zig`
+- Summary:
+  - Splits the resize path into two legs. `Termio.resize` does only the visual portion (terminal + screen resize, mouse coords, OSC 2031, render). It also forces `shell_redraws_prompt = .false` during the resize and restores it on `defer`, so a stale prompt is not replayed mid-drag. `Termio.resizePty` runs only the backend pty `TIOCSWINSZ`; it is `pub` so the IO-thread coalesce timer and the manual-backend inline path can both invoke it.
+  - Adds a one-shot `xev.Timer` (`pty_coalesce`, 150ms min, 500ms retry, max 3 retries) on the IO thread. `handleResize` short-circuits when the cell grid (`rows`/`columns`) is unchanged so jitter on the same grid does not re-arm the timer; otherwise it caches the latest size and resets the timer. SIGWINCH only reaches the child shell after the user stops dragging.
+  - `Subprocess.resize` keeps a defensive same-grid guard for the inline manual-backend path.
+
+### 11) Per-RunStep DEVELOPER_DIR helper
+
+- Files:
+  - `src/build/xcode.zig`
+  - `src/build/MetallibStep.zig`
+  - `src/build/XCFrameworkStep.zig`
+- Summary:
+  - New `xcode.developerDir(b)` helper centralizes resolving the Xcode `Developer/` directory for the RunSteps that must run under a full Xcode install (`metal`, `metallib`, `xcodebuild`).
+  - Honours `GHOSTTY_XCODE_DEVELOPER_DIR`; otherwise runs `xcode-select -p` with an empty env so it returns the persistent setting instead of inheriting the parent process's `DEVELOPER_DIR`.
+  - Needed because Xcode 26.4 ships an arm64e-only `libSystem.tbd` (so the host zig link step needs CLT) while `xcodebuild` and the Metal toolchain refuse to run without a full Xcode install. The helper lets each RunStep set `DEVELOPER_DIR` per-invocation.
+
+### 12) Lazy xcframework iOS slices
+
+- Files:
+  - `src/build/GhosttyXCFramework.zig`
+- Summary:
+  - Builds the iOS / iOS-simulator slices only when the requested xcframework target actually needs them. A `-Dxcframework-target=macos-native` build no longer drags in iOS toolchain steps that fail without an iOS SDK.
+
+### 13) Manual embedded IO for libghostty iOS
 
 - Commit: `22fa801f8` (Expose manual embedded IO for iOS)
 - PR: https://github.com/manaflow-ai/ghostty/pull/53
