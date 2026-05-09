@@ -1,0 +1,136 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  UPSTREAM_REPO: manaflow-ai/cmux
+  UPSTREAM_BRANCH: main
+  TARGET_BRANCH: main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.TARGET_BRANCH }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags upstream "${UPSTREAM_BRANCH}"
+
+      - name: Skip if already up to date
+        id: check
+        run: |
+          if git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD; then
+            echo "Already up to date with upstream/${UPSTREAM_BRANCH}"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create sync branch
+        if: steps.check.outputs.skip != 'true'
+        id: branch
+        run: |
+          today=$(date -u +%Y-%m-%d)
+          base="sync/upstream-${today}"
+          branch="$base"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            branch="${base}-${{ github.run_id }}"
+          fi
+          git checkout -b "$branch"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream (commit conflict markers if any)
+        if: steps.check.outputs.skip != 'true'
+        id: merge
+        run: |
+          set +e
+          git merge --no-edit --no-ff "upstream/${UPSTREAM_BRANCH}"
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "conflicted=false" >> "$GITHUB_OUTPUT"
+          else
+            git add -A
+            git commit --no-verify -m "Merge upstream/${UPSTREAM_BRANCH} (UNRESOLVED CONFLICTS)"
+            echo "conflicted=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push sync branch
+        if: steps.check.outputs.skip != 'true'
+        run: git push origin "${{ steps.branch.outputs.name }}"
+
+      - name: Open pull request
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+          CONFLICTED: ${{ steps.merge.outputs.conflicted }}
+        run: |
+          gh label create upstream-sync --color 0E8A16 --description "Automated upstream sync" 2>/dev/null || true
+          gh label create conflicts --color D73A4A --description "Merge conflicts to resolve" 2>/dev/null || true
+
+          today=$(date -u +%Y-%m-%d)
+          {
+            echo "Daily upstream sync from \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\`."
+            echo
+            if [ "$CONFLICTED" = "true" ]; then
+              echo "**Merge produced conflicts.** Conflict markers have been committed so they appear in the diff."
+              echo
+              echo "To resolve locally:"
+              echo '```'
+              echo "git fetch origin"
+              echo "git checkout ${BRANCH}"
+              echo "# edit files to resolve markers"
+              echo "git add -A"
+              echo "git commit --amend --no-edit"
+              echo "git push --force-with-lease"
+              echo '```'
+            else
+              echo "Clean merge."
+            fi
+          } > pr-body.md
+
+          if [ "$CONFLICTED" = "true" ]; then
+            title="Sync upstream (${today}) - UNRESOLVED CONFLICTS"
+            labels="upstream-sync,conflicts"
+          else
+            title="Sync upstream (${today})"
+            labels="upstream-sync"
+          fi
+
+          gh pr create \
+            --base "${TARGET_BRANCH}" \
+            --head "$BRANCH" \
+            --title "$title" \
+            --body-file pr-body.md \
+            --label "$labels"
+
+      - name: Open issue on unexpected failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --title "Upstream sync workflow failed ($(date -u +%Y-%m-%d))" \
+            --body "Sync workflow failed unexpectedly. See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label upstream-sync || true
