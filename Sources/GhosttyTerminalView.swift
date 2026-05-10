@@ -8721,8 +8721,18 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
         requestPointerFocusRecovery()
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, modsFromEvent(event))
-        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, modsFromEvent(event))
+        let mods = modsFromEvent(event)
+        ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, mods)
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods)
+        // Synthesize the matching release before showing the menu: super
+        // presents a modal context menu that swallows the real mouse-up,
+        // so without this the PTY app would see a stuck right-button-down.
+        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, mods)
+        // Forward to AppKit so the context menu still shows when the app
+        // has mouse capture on (vim with `set mouse=a`, tmux, fullscreen TUIs).
+        // The PTY already saw the click above; this is purely so the user
+        // can still get copy/paste.
+        super.rightMouseDown(with: event)
     }
 
     override func rightMouseUp(with event: NSEvent) {
@@ -8759,14 +8769,16 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let surface = surface else { return nil }
-        if ghostty_surface_mouse_captured(surface) {
-            return nil
-        }
 
-        window?.makeFirstResponder(self)
-        let point = convert(event.locationInWindow, from: nil)
-        ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, modsFromEvent(event))
-        _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, modsFromEvent(event))
+        // When mouse is captured, rightMouseDown already made us first responder
+        // and forwarded the press to the PTY — don't repeat either here.
+        if !ghostty_surface_mouse_captured(surface) {
+            window?.makeFirstResponder(self)
+            let point = convert(event.locationInWindow, from: nil)
+            let mods = modsFromEvent(event)
+            ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, mods)
+            _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods)
+        }
 
         let menu = NSMenu()
         if onTriggerFlash != nil {
