@@ -6,10 +6,6 @@ final class WindowDecorationsController {
     private var minimalModeSidebarChromeHoverMonitor: Any?
     private var lastMinimalModeTitlebarClick: MinimalModeTitlebarClickRecord?
     private var lastKnownPresentationMode = WorkspacePresentationModeSettings.mode()
-    private let minimalModeSidebarTitlebarClickTargets = NSMapTable<NSWindow, MinimalModeSidebarControlActionView>(
-        keyOptions: .weakMemory,
-        valueOptions: .strongMemory
-    )
 
     deinit {
         let center = NotificationCenter.default
@@ -18,10 +14,6 @@ final class WindowDecorationsController {
         }
         if let minimalModeSidebarChromeHoverMonitor {
             NSEvent.removeMonitor(minimalModeSidebarChromeHoverMonitor)
-        }
-        let enumerator = minimalModeSidebarTitlebarClickTargets.objectEnumerator()
-        while let view = enumerator?.nextObject() as? NSView {
-            view.removeFromSuperview()
         }
         WindowMouseMovedEventsCoordinator.disableOwner(self)
     }
@@ -42,7 +34,6 @@ final class WindowDecorationsController {
         }
         let shouldHideButtons = shouldHideTrafficLights(for: window)
         hideStandardButtons(on: window, hidden: shouldHideButtons)
-        applyMinimalModeSidebarTitlebarClickTarget(to: window)
     }
 
     private func installObservers() {
@@ -86,7 +77,6 @@ final class WindowDecorationsController {
             }
             let window = target.window
             let locationInWindow = target.locationInWindow
-            self.applyMinimalModeSidebarTitlebarClickTarget(to: window)
             let isHovering = isMinimalModeSidebarChromeHoverCandidate(
                 window: window,
                 locationInWindow: locationInWindow
@@ -158,7 +148,6 @@ final class WindowDecorationsController {
         locationInWindow: NSPoint,
         event: NSEvent
     ) -> Bool {
-        applyMinimalModeSidebarTitlebarClickTarget(to: window)
         let isHovering = isMinimalModeSidebarChromeHoverCandidate(
             window: window,
             locationInWindow: locationInWindow
@@ -357,79 +346,6 @@ final class WindowDecorationsController {
         window.standardWindowButton(.closeButton)?.isHidden = hidden
         window.standardWindowButton(.miniaturizeButton)?.isHidden = hidden
         window.standardWindowButton(.zoomButton)?.isHidden = hidden
-    }
-
-    private func applyMinimalModeSidebarTitlebarClickTarget(to window: NSWindow) {
-        let shouldInstall = isMainWorkspaceWindow(window)
-            && WorkspacePresentationModeSettings.isMinimal()
-            && !window.styleMask.contains(.fullScreen)
-            && minimalModeSidebarTitlebarControlsAreAvailable(in: window)
-        guard shouldInstall,
-              let contentView = window.contentView else {
-            #if DEBUG
-            if ProcessInfo.processInfo.environment["CMUX_UI_TEST_BONSPLIT_TAB_DRAG_SETUP"] == "1" {
-                _ = CmuxUITestCapture.mutateJSONObjectIfConfigured(envKey: "CMUX_UI_TEST_BONSPLIT_TAB_DRAG_PATH") { payload in
-                    payload["minimalSidebarTitlebarClickTargetInstalled"] = "false"
-                    payload["minimalSidebarTitlebarClickTargetWindowNumber"] = String(window.windowNumber)
-                }
-            }
-            #endif
-            removeMinimalModeSidebarTitlebarClickTarget(from: window)
-            return
-        }
-
-        let target = minimalModeSidebarTitlebarClickTargets.object(forKey: window) ?? {
-            let view = MinimalModeSidebarControlActionView()
-            view.autoresizingMask = [.maxXMargin, .minYMargin]
-            minimalModeSidebarTitlebarClickTargets.setObject(view, forKey: window)
-            return view
-        }()
-        target.config = (TitlebarControlsStyle(rawValue: UserDefaults.standard.integer(forKey: "titlebarControlsStyle")) ?? .classic).config
-        target.isEnabled = true
-        target.requiresRevealedState = true
-        target.telemetryPrefix = "minimalSidebarTitlebarClickTarget"
-        target.onAction = { [weak self, weak window, weak target] slot, _, locationInWindow in
-            let anchorView = target
-            guard let self, let window else { return }
-            self.performMinimalModeSidebarControlAction(
-                slot,
-                window: window,
-                locationInWindow: locationInWindow,
-                anchorView: anchorView
-            )
-        }
-
-        if target.superview !== contentView {
-            target.removeFromSuperview()
-            contentView.addSubview(target, positioned: .above, relativeTo: nil)
-        }
-
-        let hostHeight = MinimalModeSidebarTitlebarControlsMetrics.hostHeight
-        let contentBounds = contentView.bounds
-        let targetY = contentView.isFlipped ? contentBounds.minY : max(0, contentBounds.maxY - hostHeight)
-        target.frame = NSRect(
-            x: MinimalModeSidebarTitlebarControlsMetrics.leadingInset,
-            y: targetY,
-            width: MinimalModeSidebarTitlebarControlsMetrics.hostWidth,
-            height: hostHeight
-        )
-
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["CMUX_UI_TEST_BONSPLIT_TAB_DRAG_SETUP"] == "1" {
-            _ = CmuxUITestCapture.mutateJSONObjectIfConfigured(envKey: "CMUX_UI_TEST_BONSPLIT_TAB_DRAG_PATH") { payload in
-                payload["minimalSidebarTitlebarClickTargetInstalled"] = "true"
-                payload["minimalSidebarTitlebarClickTargetWindowNumber"] = String(window.windowNumber)
-                payload["minimalSidebarTitlebarClickTargetFrameInWindow"] = NSStringFromRect(target.convert(target.bounds, to: nil))
-                payload["minimalSidebarTitlebarClickTargetContentBounds"] = NSStringFromRect(contentBounds)
-            }
-        }
-        #endif
-    }
-
-    private func removeMinimalModeSidebarTitlebarClickTarget(from window: NSWindow) {
-        guard let target = minimalModeSidebarTitlebarClickTargets.object(forKey: window) else { return }
-        target.removeFromSuperview()
-        minimalModeSidebarTitlebarClickTargets.removeObject(forKey: window)
     }
 
     private func shouldHideTrafficLights(for window: NSWindow) -> Bool {

@@ -455,7 +455,6 @@ func isMinimalModeTitlebarControlHit(window: NSWindow, locationInWindow: NSPoint
 }
 
 enum MinimalModeSidebarTitlebarControlsMetrics {
-    static let leadingInset: CGFloat = 72
     static let hostWidth: CGFloat = 124
     static let hostHeight: CGFloat = 28
 }
@@ -568,23 +567,10 @@ func isMinimalModeSidebarChromeHoverCandidate(
         return false
     }
 
-    if MinimalModeTitlebarControlHitRegionRegistry.containsSidebarControlHostWindowPoint(
+    return MinimalModeTitlebarControlHitRegionRegistry.containsSidebarControlHostWindowPoint(
         locationInWindow,
         in: window
-    ) {
-        return true
-    }
-
-    guard isPointInMinimalModeTitlebarBand(
-        isEnabled: true,
-        point: locationInWindow,
-        bounds: contentBounds,
-        topStripHeight: MinimalModeChromeMetrics.titlebarHeight
-    ) else { return false }
-
-    let minX = MinimalModeSidebarTitlebarControlsMetrics.leadingInset
-    let maxX = minX + MinimalModeSidebarTitlebarControlsMetrics.hostWidth
-    return locationInWindow.x >= minX && locationInWindow.x <= maxX
+    )
 }
 
 private func titlebarControlsStyleConfig(defaults: UserDefaults) -> TitlebarControlsStyleConfig {
@@ -613,27 +599,9 @@ func minimalModeSidebarControlActionSlot(
         return nil
     }
 
-    if let registeredSlot = MinimalModeTitlebarControlHitRegionRegistry.minimalModeSidebarControlActionSlot(
+    return MinimalModeTitlebarControlHitRegionRegistry.minimalModeSidebarControlActionSlot(
         forWindowPoint: locationInWindow,
         in: window
-    ) {
-        return registeredSlot
-    }
-
-    guard isPointInMinimalModeTitlebarBand(
-        isEnabled: true,
-        point: locationInWindow,
-        bounds: contentBounds,
-        topStripHeight: MinimalModeChromeMetrics.titlebarHeight
-    ) else { return nil }
-
-    let localPoint = NSPoint(
-        x: locationInWindow.x - MinimalModeSidebarTitlebarControlsMetrics.leadingInset,
-        y: MinimalModeSidebarTitlebarControlsMetrics.hostHeight / 2
-    )
-    return TitlebarControlsHitRegions.sidebarActionSlot(
-        at: localPoint,
-        config: titlebarControlsStyleConfig(defaults: defaults)
     )
 }
 
@@ -672,13 +640,10 @@ func recordMinimalModeSidebarChromeHoverForUITest(
         contentBounds: contentBounds,
         titlebarBandHeight: MinimalModeChromeMetrics.titlebarHeight
     )
-    let minX = MinimalModeSidebarTitlebarControlsMetrics.leadingInset
-    let maxX = minX + MinimalModeSidebarTitlebarControlsMetrics.hostWidth
-    let inXRange = (locationInWindow.x >= minX && locationInWindow.x <= maxX)
-        || MinimalModeTitlebarControlHitRegionRegistry.containsSidebarControlHostWindowPoint(
-            locationInWindow,
-            in: window
-        )
+    let inXRange = MinimalModeTitlebarControlHitRegionRegistry.containsSidebarControlHostWindowPoint(
+        locationInWindow,
+        in: window
+    )
     _ = CmuxUITestCapture.mutateJSONObjectIfConfigured(envKey: "CMUX_UI_TEST_BONSPLIT_TAB_DRAG_PATH") { payload in
         let count = (payload["minimalSidebarHoverEventCount"] as? String).flatMap(Int.init) ?? 0
         payload["minimalSidebarHoverEventCount"] = String(count + 1)
