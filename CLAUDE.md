@@ -290,6 +290,18 @@ git add ghostty
 git commit -m "Update ghostty submodule"
 ```
 
+## Upstream merge strategy (Casper fork)
+
+`heyitaki/cmux` is a fork of `manaflow-ai/cmux`. The discipline below applies to all heyitaki forks; sub-fork mechanics (ghostty, bonsplit) are covered in "Ghostty submodule workflow" above. Goal: keep fork patches small and orthogonal so periodic upstream merges stay tractable by hand.
+
+- **Merge, don't rebase.** From `heyitaki/cmux`, run `git merge upstream/main` (where `upstream` is `manaflow-ai/cmux`) every 1–3 weeks. True 2-parent merges preserve SHAs so `git merge-base` finds the right ancestor for the next sync. Resolve conflicts by hand using `docs/casper-fork.md` as the map.
+- **Additive over modifying.** New Casper functionality goes in a dedicated `Casper/` source group as new files (subclasses, extensions, protocol conformances) — never edits to upstream `Sources/` when an additive alternative exists. Branding (strings, assets, bundle ID, icons, theme) lives entirely in casper-only files plus xcconfig overrides.
+- **Gate unavoidable inline edits.** When an upstream file must be touched, keep the change to a 1-line hook into `Casper/`, and gate the new behavior behind a `CasperConfig` build flag / `Info.plist` key / env var so stock cmux behavior is unchanged when the gate is off.
+- **Comment every Casper-only hunk in-place** with its deletion condition: `// CASPER: <reason>; delete if upstream adds <X>`. Grep these at merge time to retire patches upstream has obviated.
+- **Maintain `docs/casper-fork.md`.** One section per patch (files touched + summary) and a `## Merge conflict notes` section listing upstream files known to churn. Update it whenever a patch lands, retires, or conflicts.
+- **Upstream what's general.** If a change isn't Casper-specific, PR it to `manaflow-ai/cmux` first; only carry as fork-only if upstream rejects or delays. The fork patch set must shrink over time, not grow.
+- **Sub-forks with zero patches:** point the submodule directly at `manaflow-ai/<repo>` and drop the heyitaki layer entirely — an empty fork layer is pure cost. With ≤3 patches, list them in `docs/casper-fork.md`; don't create a separate doc.
+
 ## Release
 
 Use the `/release` command to prepare a new release. This will:
