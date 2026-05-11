@@ -65,4 +65,15 @@ enum CmuxSurfaceTabBarBuiltInAction: String, Codable, Sendable, CaseIterable, Ha
             return .splitDown
         }
     }
+
+    var keyboardShortcutAction: KeyboardShortcutSettings.Action? {
+        switch self {
+        case .newWorkspace: return .newTab
+        case .cloudVM: return nil
+        case .newTerminal: return .newSurface
+        case .newBrowser: return .openBrowser
+        case .splitRight: return .splitRight
+        case .splitDown: return .splitDown
+        }
+    }
 }

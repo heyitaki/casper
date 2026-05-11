@@ -1309,6 +1309,14 @@ struct CmuxResolvedConfigAction: Identifiable, Sendable, Hashable {
         action.workspaceCommandName
     }
 
+    var menuShortcut: StoredShortcut? {
+        if let shortcut, !shortcut.isUnbound { return shortcut }
+        guard case .builtIn(let builtIn) = action,
+              let shortcutAction = builtIn.keyboardShortcutAction else { return nil }
+        let stored = KeyboardShortcutSettings.menuShortcut(for: shortcutAction)
+        return stored.isUnbound ? nil : stored
+    }
+
     func applying(
         _ definition: CmuxConfigActionDefinition,
         sourcePath: String?

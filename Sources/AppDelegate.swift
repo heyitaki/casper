@@ -6126,6 +6126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 )
                 item.toolTip = menuAction.tooltip
                 item.image = (menuAction.icon ?? menuAction.action.icon)?.sfSymbolImage
+                if let stored = menuAction.action.menuShortcut,
+                   let keyEquivalent = stored.menuItemKeyEquivalent {
+                    item.keyEquivalent = keyEquivalent
+                    item.keyEquivalentModifierMask = stored.modifierFlags
+                }
                 menu.addItem(item)
             }
         }
