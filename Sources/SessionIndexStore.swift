@@ -1207,27 +1207,9 @@ final class SessionIndexStore: ObservableObject {
         }
     }
 
-    /// Path to `rg` (ripgrep), if installed. Resolved once. nil when not found —
-    /// the search code falls back to the Foundation substring scan.
-    nonisolated private static let cachedRipgrepPath: String? = {
-        let fm = FileManager.default
-        let common = [
-            "/opt/homebrew/bin/rg",
-            "/usr/local/bin/rg",
-            "/usr/bin/rg",
-            "/opt/local/bin/rg",
-        ]
-        for path in common where fm.isExecutableFile(atPath: path) {
-            return path
-        }
-        if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
-            for dir in pathEnv.split(separator: ":") {
-                let full = String(dir) + "/rg"
-                if fm.isExecutableFile(atPath: full) { return full }
-            }
-        }
-        return nil
-    }()
+    /// Path to `rg` (ripgrep). nil when not found — callers fall back to the
+    /// Foundation substring scan. See `RipgrepLocator` for resolution order.
+    nonisolated private static let cachedRipgrepPath: String? = RipgrepLocator.executableURL?.path
 
     /// Run `rg --files-with-matches --ignore-case --fixed-strings` for `needle`
     /// under `root`, restricted to `glob` (e.g. `*.jsonl`). Returns matched file

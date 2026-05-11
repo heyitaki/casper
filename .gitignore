@@ -20,6 +20,10 @@ xcuserdata/
 GhosttyKit.xcframework
 GhosttyKit.xcframework.bak-*/
 
+# Bundled ripgrep universal binary (downloaded by scripts/ensure-ripgrep.sh)
+Resources/bin/rg
+Resources/bin/rg.version
+
 # Release artifacts
 GhosttyTabs-*.zip
 cmux-macos.dmg

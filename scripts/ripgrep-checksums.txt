@@ -1,0 +1,5 @@
+# Pinned ripgrep release artifacts. Update by re-fetching:
+#   curl -sSL https://github.com/BurntSushi/ripgrep/releases/download/<ver>/<archive>.sha256
+# Format: <sha256>  <archive-filename>
+378e973289176ca0c6054054ee7f631a065874a352bf43f0fa60ef079b6ba715  ripgrep-15.1.0-aarch64-apple-darwin.tar.gz
+64811cb24e77cac3057d6c40b63ac9becf9082eedd54ca411b475b755d334882  ripgrep-15.1.0-x86_64-apple-darwin.tar.gz

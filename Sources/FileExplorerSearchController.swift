@@ -1,5 +1,42 @@
 import Foundation
 
+/// Locates the `rg` (ripgrep) executable used by the right-sidebar Find pane
+/// and SessionIndexStore. Prefers the universal binary bundled at
+/// `Contents/Resources/bin/rg` (installed by scripts/ensure-ripgrep.sh) so the
+/// app works on machines without ripgrep on PATH; falls back to common system
+/// locations and PATH when running outside an app bundle (e.g. unit tests).
+///
+/// rg is copied into `Contents/Resources/bin/` via a PBXCopyFilesBuildPhase.
+/// `Bundle.url(forResource:)` only sees PBXResourcesBuildPhase entries, so we
+/// resolve the path directly from `resourceURL`.
+enum RipgrepLocator {
+    static let executableURL: URL? = {
+        let fm = FileManager.default
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("bin/rg"),
+           fm.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
+        let common = [
+            "/opt/homebrew/bin/rg",
+            "/usr/local/bin/rg",
+            "/usr/bin/rg",
+            "/opt/local/bin/rg",
+        ]
+        for path in common where fm.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
+            for dir in pathEnv.split(separator: ":", omittingEmptySubsequences: true) {
+                let full = URL(fileURLWithPath: String(dir)).appendingPathComponent("rg")
+                if fm.isExecutableFile(atPath: full.path) {
+                    return full
+                }
+            }
+        }
+        return nil
+    }()
+}
+
 struct FileSearchResult: Equatable {
     let path: String
     let relativePath: String
@@ -131,7 +168,7 @@ final class FileSearchController {
             emit(status: .noMatches, isSearching: false)
             return
         }
-        guard let executable = Self.ripgrepExecutable() else {
+        guard let executable = Self.cachedRipgrepExecutable else {
             emit(
                 status: .failed(String(localized: "fileExplorer.search.rgNotInstalled", defaultValue: "ripgrep (rg) is not installed or is not on PATH.")),
                 isSearching: false
@@ -285,18 +322,6 @@ final class FileSearchController {
         }
     }
 
-    private static func ripgrepExecutable() -> RipgrepExecutable? {
-        let fileManager = FileManager.default
-        for path in ["/opt/homebrew/bin/rg", "/usr/local/bin/rg", "/usr/bin/rg"] where fileManager.isExecutableFile(atPath: path) {
-            return RipgrepExecutable(url: URL(fileURLWithPath: path), prefixArguments: [])
-        }
-        let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        for directory in pathValue.split(separator: ":", omittingEmptySubsequences: true) {
-            let path = URL(fileURLWithPath: String(directory)).appendingPathComponent("rg").path
-            if fileManager.isExecutableFile(atPath: path) {
-                return RipgrepExecutable(url: URL(fileURLWithPath: path), prefixArguments: [])
-            }
-        }
-        return nil
-    }
+    private static let cachedRipgrepExecutable: RipgrepExecutable? = RipgrepLocator.executableURL
+        .map { RipgrepExecutable(url: $0, prefixArguments: []) }
 }

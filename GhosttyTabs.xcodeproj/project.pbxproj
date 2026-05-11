@@ -346,6 +346,7 @@
 		D1320AA0D1320AA0D1320AA1 /* AppIconDockTilePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1320AA0D1320AA0D1320AA4 /* AppIconDockTilePlugin.swift */; };
 		D1320AA0D1320AA0D1320AA2 /* CmuxDockTilePlugin.plugin in Copy Dock Tile Plugin */ = {isa = PBXBuildFile; fileRef = D1320AA0D1320AA0D1320AA5 /* CmuxDockTilePlugin.plugin */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D1BEF00002A1B2C3D4E5F719 /* open in Copy CLI */ = {isa = PBXBuildFile; fileRef = D1BEF00001A1B2C3D4E5F719 /* open */; };
+		D2D6E00002A1B2C3D4E5F719 /* rg in Copy CLI */ = {isa = PBXBuildFile; fileRef = D2D6E00001A1B2C3D4E5F719 /* rg */; };
 		D9FEC58D5BACCF76459F1BBE /* AuthEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43430FA5929121E2EAAB3091 /* AuthEnvironment.swift */; };
 		DA7A10CA710E000000000003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DA7A10CA710E000000000001 /* Localizable.xcstrings */; };
 		DA7A10CA710E000000000004 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DA7A10CA710E000000000002 /* InfoPlist.xcstrings */; };
@@ -464,6 +465,7 @@
 				B900000BA1B2C3D4E5F60719 /* cmux in Copy CLI */,
 				C1ADE00002A1B2C3D4E5F719 /* claude in Copy CLI */,
 				D1BEF00002A1B2C3D4E5F719 /* open in Copy CLI */,
+				D2D6E00002A1B2C3D4E5F719 /* rg in Copy CLI */,
 			);
 			name = "Copy CLI";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -817,6 +819,7 @@
 		D1320AA0D1320AA0D1320AA4 /* AppIconDockTilePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconDockTilePlugin.swift; sourceTree = "<group>"; };
 		D1320AA0D1320AA0D1320AA5 /* CmuxDockTilePlugin.plugin */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CmuxDockTilePlugin.plugin; sourceTree = BUILT_PRODUCTS_DIR; };
 		D1BEF00001A1B2C3D4E5F719 /* open */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = Resources/bin/open; sourceTree = SOURCE_ROOT; };
+		D2D6E00001A1B2C3D4E5F719 /* rg */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = Resources/bin/rg; sourceTree = SOURCE_ROOT; };
 		D2C075029771815DD5DA1332 /* NotificationAndMenuBarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationAndMenuBarTests.swift; sourceTree = "<group>"; };
 		DA7A10CA710E000000000001 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		DA7A10CA710E000000000002 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
@@ -1414,6 +1417,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A5001060 /* Build configuration list for PBXNativeTarget "GhosttyTabs" */;
 			buildPhases = (
+				D2D6E00003A1B2C3D4E5F719 /* Ensure ripgrep */,
 				A5001051 /* Sources */,
 				A5001030 /* Frameworks */,
 				A5001102 /* Resources */,
@@ -1626,6 +1630,27 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		D2D6E00003A1B2C3D4E5F719 /* Ensure ripgrep */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/ensure-ripgrep.sh",
+				"$(SRCROOT)/scripts/ripgrep-checksums.txt",
+			);
+			name = "Ensure ripgrep";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Resources/bin/rg",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n\"${SRCROOT}/scripts/ensure-ripgrep.sh\"\n";
+		};
 		A5001300A1B2C3D4E5F60719 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
