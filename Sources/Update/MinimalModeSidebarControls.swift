@@ -44,6 +44,12 @@ enum TitlebarControlsHitRegions {
         return ranges
     }
 
+    static func totalContentWidth(config: TitlebarControlsStyleConfig) -> CGFloat {
+        let buttons = CGFloat(buttonCount) * config.buttonSize
+        let spacings = CGFloat(buttonCount - 1) * config.spacing
+        return outerLeadingPadding + config.groupPadding.leading + buttons + spacings + config.groupPadding.trailing
+    }
+
     static func sidebarActionSlot(
         at point: NSPoint,
         config: TitlebarControlsStyleConfig

@@ -30,20 +30,33 @@ enum RightSidebarChromeMetrics {
 
 enum SidebarWorkspaceListMetrics {
     static let firstRowTopOffset: CGFloat = MinimalModeChromeMetrics.titlebarHeight + 2
+    /// Extra breathing room between the sidebar's top button cluster and the
+    /// first conversation row when the window is full-screen + sidebar expanded.
+    static let fullScreenFirstRowTopBonus: CGFloat = 4
     static let rowVerticalPadding: CGFloat = 8
-    static let topScrimHeight: CGFloat = firstRowTopOffset + 20
-    static let bottomScrimHeight: CGFloat = topScrimHeight
+    private static let baseTopScrimHeight: CGFloat = firstRowTopOffset + 20
+    static let bottomScrimHeight: CGFloat = baseTopScrimHeight
 
-    static var scrollTopInset: CGFloat {
-        max(0, firstRowTopOffset - rowVerticalPadding)
+    static func scrollTopInset(extraTopOffset: CGFloat) -> CGFloat {
+        max(0, firstRowTopOffset + extraTopOffset - rowVerticalPadding)
+    }
+
+    static func topScrimHeight(extraTopOffset: CGFloat) -> CGFloat {
+        baseTopScrimHeight + extraTopOffset
+    }
+
+    static func extraTopOffset(isWindowFullScreen: Bool) -> CGFloat {
+        isWindowFullScreen ? fullScreenFirstRowTopBonus : 0
     }
 }
 
 struct SidebarWorkspaceScrollInsets: Equatable {
-    static let workspaceList = SidebarWorkspaceScrollInsets(
-        top: SidebarWorkspaceListMetrics.scrollTopInset,
-        bottom: SidebarWorkspaceListMetrics.bottomScrimHeight
-    )
+    static func workspaceList(extraTopOffset: CGFloat) -> SidebarWorkspaceScrollInsets {
+        SidebarWorkspaceScrollInsets(
+            top: SidebarWorkspaceListMetrics.scrollTopInset(extraTopOffset: extraTopOffset),
+            bottom: SidebarWorkspaceListMetrics.bottomScrimHeight
+        )
+    }
 
     let top: CGFloat
     let bottom: CGFloat

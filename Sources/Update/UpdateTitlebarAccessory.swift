@@ -430,6 +430,10 @@ struct TitlebarControlsView: View {
     let onToggleNotifications: () -> Void
     let onNewTab: () -> Void
     let visibilityMode: TitlebarControlsVisibilityMode
+    /// When set, replaces the default `titlebarHintTrailingInset`. Use 0 to
+    /// drop the shortcut-hint shadow clearance when the host is sized to the
+    /// natural content width (e.g. right-aligned sidebar icons in windowed mode).
+    var trailingInsetOverride: CGFloat? = nil
     @ObservedObject private var popoverVisibilityState = NotificationsPopoverVisibilityState.shared
     @AppStorage("titlebarControlsStyle") private var styleRawValue = TitlebarControlsStyle.classic.rawValue
     @AppStorage(ShortcutHintDebugSettings.titlebarHintXKey) private var titlebarShortcutHintXOffset = ShortcutHintDebugSettings.defaultTitlebarHintX
@@ -489,7 +493,7 @@ struct TitlebarControlsView: View {
         let config = style.config
         controlsGroup(config: config)
             .padding(.leading, 4)
-            .padding(.trailing, titlebarHintTrailingInset)
+            .padding(.trailing, trailingInsetOverride ?? titlebarHintTrailingInset)
             .contentShape(Rectangle())
             .opacity(shouldShowControls ? 1 : 0)
             .allowsHitTesting(shouldShowControls)
@@ -820,6 +824,10 @@ private struct MinimalModeTitlebarButtonHitRegionView: NSViewRepresentable {
 
 struct HiddenTitlebarSidebarControlsView: View {
     @ObservedObject var notificationStore: TerminalNotificationStore
+    /// Where the icon cluster sits inside the host frame. `.trailing` collapses
+    /// the host to the natural content width so icons hug the sidebar's right
+    /// edge in windowed mode.
+    var iconAlignment: HorizontalAlignment = .leading
     let onToggleSidebar: () -> Void
     let onToggleNotifications: (NSView?) -> Void
     let onNewTab: () -> Void
@@ -839,8 +847,18 @@ struct HiddenTitlebarSidebarControlsView: View {
 
     var body: some View {
         let style = TitlebarControlsStyle(rawValue: styleRawValue) ?? .classic
+        let isTrailing = iconAlignment == .trailing
+        let hostWidth: CGFloat = isTrailing
+            ? TitlebarControlsHitRegions.totalContentWidth(config: style.config)
+            : MinimalModeSidebarTitlebarControlsMetrics.hostWidth
+        let frameAlignment = Alignment(horizontal: iconAlignment, vertical: .center)
+        // Trailing-aligned mode zeroes the shortcut-hint clearance so icons
+        // hug the sidebar's right edge; the rightmost hint pill can extend
+        // past the host frame while the modifier is held, but SwiftUI doesn't
+        // clip by default so it's only visible if a parent applies clipping.
+        let trailingInsetOverride: CGFloat? = isTrailing ? 0 : nil
 
-        ZStack(alignment: .leading) {
+        ZStack(alignment: frameAlignment) {
             WindowAccessor { window in
                 let nextWindowNumber = window.windowNumber
                 let nextHoveringWindowChrome = MinimalModeSidebarChromeHoverState.shared.hoveredWindowNumber == nextWindowNumber
@@ -864,7 +882,7 @@ struct HiddenTitlebarSidebarControlsView: View {
                 #endif
             }
             .frame(
-                width: MinimalModeSidebarTitlebarControlsMetrics.hostWidth,
+                width: hostWidth,
                 height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight
             )
             .allowsHitTesting(false)
@@ -877,12 +895,13 @@ struct HiddenTitlebarSidebarControlsView: View {
                     onToggleNotifications(viewModel.notificationsAnchorView)
                 },
                 onNewTab: onNewTab,
-                visibilityMode: .alwaysVisible
+                visibilityMode: .alwaysVisible,
+                trailingInsetOverride: trailingInsetOverride
             )
             .frame(
-                width: MinimalModeSidebarTitlebarControlsMetrics.hostWidth,
+                width: hostWidth,
                 height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight,
-                alignment: .leading
+                alignment: frameAlignment
             )
             .opacity(shouldPinControls ? 1 : 0)
             .allowsHitTesting(shouldPinControls)
@@ -891,7 +910,7 @@ struct HiddenTitlebarSidebarControlsView: View {
 
             TitlebarControlsGapDragView(config: style.config)
                 .frame(
-                    width: MinimalModeSidebarTitlebarControlsMetrics.hostWidth,
+                    width: hostWidth,
                     height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight
                 )
 
@@ -909,21 +928,21 @@ struct HiddenTitlebarSidebarControlsView: View {
                 }
             }
             .frame(
-                width: MinimalModeSidebarTitlebarControlsMetrics.hostWidth,
+                width: hostWidth,
                 height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight
             )
 
             PassthroughHoverTrackingView(capturesPassiveHits: !shouldPinControls) { isHoveringHost = $0 }
             .frame(
-                width: MinimalModeSidebarTitlebarControlsMetrics.hostWidth,
+                width: hostWidth,
                 height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight
             )
 
         }
         .frame(
-            width: MinimalModeSidebarTitlebarControlsMetrics.hostWidth,
+            width: hostWidth,
             height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight,
-            alignment: .leading
+            alignment: frameAlignment
         )
         .background(MinimalModeTitlebarButtonHitRegionView(config: style.config))
         .onReceive(MinimalModeSidebarChromeHoverState.shared.$hoveredWindowNumber) { hoveredWindowNumber in
