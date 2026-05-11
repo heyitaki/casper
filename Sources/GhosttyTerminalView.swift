@@ -4951,6 +4951,19 @@ final class TerminalSurface: Identifiable, ObservableObject {
             setManagedEnvironmentValue("CMUX_SHELL_INTEGRATION", "1")
             setManagedEnvironmentValue("CMUX_SHELL_INTEGRATION_DIR", integrationDir)
 
+            // Make `<integrationDir>/fish/vendor_conf.d/cmux-shell-integration.fish`
+            // discoverable when the spawned process is fish (directly, or via a
+            // bootstrap script that eventually execs fish). Fish scans each
+            // entry in XDG_DATA_DIRS for a `fish/vendor_conf.d/` subdir.
+            let currentXdg = env["XDG_DATA_DIRS"]
+                ?? getenv("XDG_DATA_DIRS").map { String(cString: $0) }
+                ?? ProcessInfo.processInfo.environment["XDG_DATA_DIRS"]
+                ?? ""
+            if !currentXdg.split(separator: ":").contains(Substring(integrationDir)) {
+                let separator = currentXdg.isEmpty ? "" : ":"
+                setManagedEnvironmentValue("XDG_DATA_DIRS", "\(integrationDir)\(separator)\(currentXdg)")
+            }
+
             let shell = (env["SHELL"]?.isEmpty == false ? env["SHELL"] : nil)
                 ?? getenv("SHELL").map { String(cString: $0) }
                 ?? ProcessInfo.processInfo.environment["SHELL"]
