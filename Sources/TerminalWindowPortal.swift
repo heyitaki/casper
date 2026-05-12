@@ -296,22 +296,8 @@ final class WindowTerminalHostView: NSView {
         return SidebarResizeInteraction.Edge.leading.hitRange(dividerX: dividerX).contains(point.x)
     }
 
-    /// When either sidebar is hidden, that edge of the window hosts a thin
-    /// SwiftUI reveal strip. Without this pass-through, the AppKit terminal
-    /// portal sits above the strip and swallows mouse-down clicks (hover
-    /// leaks through), so clicking the strip never re-expands the sidebar.
-    private func shouldPassThroughToSidebarRevealStrip(at point: NSPoint) -> Bool {
-        let w = SidebarRevealStripMetrics.width
-        guard point.x < w || point.x > bounds.maxX - w else { return false }
-        let frames = subviews.compactMap { $0 as? GhosttySurfaceScrollView }
-            .filter { !$0.isHidden && $0.window != nil && $0.frame.width > 1 && $0.frame.height > 1 }
-            .map { $0.frame }
-        return SidebarRevealStripMetrics.shouldPassThrough(
-            point: point,
-            bounds: bounds,
-            hostedFrames: frames
-        )
-    }
+    // CASPER: shouldPassThroughToSidebarRevealStrip(at:) moved to
+    // Sources/Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift.
 
     private func shouldPassThroughToTrailingSidebarResizer(
         at point: NSPoint,

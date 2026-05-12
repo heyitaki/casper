@@ -820,18 +820,8 @@ final class WindowBrowserHostView: NSView {
         return SidebarResizeInteraction.Edge.trailing.hitRange(dividerX: rightMostEdge).contains(point.x)
     }
 
-    private func shouldPassThroughToSidebarRevealStrip(at point: NSPoint) -> Bool {
-        let w = SidebarRevealStripMetrics.width
-        guard point.x < w || point.x > bounds.maxX - w else { return false }
-        let frames = subviews.compactMap { $0 as? WindowBrowserSlotView }
-            .filter { !$0.isHidden && $0.window != nil && $0.frame.width > 1 && $0.frame.height > 1 }
-            .map { $0.frame }
-        return SidebarRevealStripMetrics.shouldPassThrough(
-            point: point,
-            bounds: bounds,
-            hostedFrames: frames
-        )
-    }
+    // CASPER: shouldPassThroughToSidebarRevealStrip(at:) moved to
+    // Sources/Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift.
 
     private func updateDividerCursor(
         at point: NSPoint,
