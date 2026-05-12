@@ -1,8 +1,6 @@
 import Darwin
 import Foundation
 
-// CASPER: RipgrepLocator added by 306b8f45 to find a bundled universal rg.
-// Delete if upstream ships its own bundled rg or accepts an upstream PR.
 /// Locates the `rg` (ripgrep) executable used by the right-sidebar Find pane
 /// and SessionIndexStore. Prefers the universal binary bundled at
 /// `Contents/Resources/bin/rg` (installed by scripts/ensure-ripgrep.sh) so the

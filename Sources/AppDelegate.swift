@@ -14041,13 +14041,6 @@ private extension AppDelegate {
         windowDecorationsController.handleMinimalModeSidebarChromeMouseDown(window: window, event: event)
     }
 
-    // CASPER: handleSidebarRevealLeadingEdgeMouseDown,
-    // handleSidebarRevealTrailingEdgeMouseDown, and
-    // runSidebarRevealEdgeMouseDownLoop moved to
-    // Sources/Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift.
-    // The cmux_sendEvent intercept below still hooks them. Delete the comment
-    // when the Casper extension is gone or upstream lands a reveal affordance.
-
     @objc func handleThemesReloadNotification(_ notification: Notification) {
         DispatchQueue.main.async {
             GhosttyApp.shared.reloadConfiguration(source: "distributed.cmux.themes")

@@ -1,11 +1,4 @@
-// CASPER: Hit-test pass-through so AppKit terminal/browser hosts don't swallow
-// clicks landing on the leading/trailing SwiftUI reveal strips. Delete this
-// file if upstream lands a comparable reveal affordance.
-//
-// Hot path: called inline from `WindowTerminalHostView.hitTest()` and
-// `WindowBrowserHostView.hitTest()` on every event, including keyboard.
-// The leading guard exits fast (constant-time) when the click isn't in
-// the reveal band; only then do we walk subviews.
+// CASPER: Hit-test pass-through (called on every event); leading guard exits constant-time when click isn't in reveal band.
 
 import AppKit
 

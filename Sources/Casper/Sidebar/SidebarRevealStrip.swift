@@ -1,12 +1,4 @@
-// CASPER: Sidebar reveal-strip + edge-resize helpers added for minimal-mode polish.
-// Delete if upstream lands a comparable hidden-sidebar reveal affordance.
-//
-// Consumed by:
-//   - Sources/ContentView.swift (overlay rendering + resizer accessibility)
-//   - Sources/TerminalWindowPortal.swift (hit-test pass-through)
-//   - Sources/BrowserWindowPortal.swift (hit-test pass-through)
-//   - Sources/AppDelegate.swift (cmux_sendEvent reveal-edge mouse-down intercept)
-//   - cmuxTests/AppDelegateShortcutRoutingTests.swift (regression coverage)
+// CASPER: Sidebar reveal-strip + edge-resize helpers for minimal-mode hidden-sidebar affordance.
 
 import AppKit
 import SwiftUI

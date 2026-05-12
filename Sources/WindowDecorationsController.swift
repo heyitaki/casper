@@ -7,9 +7,6 @@ final class WindowDecorationsController {
     private var lastMinimalModeTitlebarClick: MinimalModeTitlebarClickRecord?
     private var lastKnownPresentationMode = WorkspacePresentationModeSettings.mode()
     private var lastKnownTitlebarDebugSnapshot = MinimalModeTitlebarDebugSettings.snapshot()
-    // CASPER: minimalModeSidebarTitlebarClickTargets NSMapTable removed in 573322fa —
-    // the SwiftUI proxy + MinimalModeTitlebarControlHitRegionRegistry handle hit-testing.
-    // Delete this comment if upstream drops its parallel AppKit click target too.
     private static var trafficLightDebugFrameStateKey: UInt8 = 0
 
     deinit {
@@ -358,10 +355,6 @@ final class WindowDecorationsController {
         window.standardWindowButton(.miniaturizeButton)?.isHidden = hidden
         window.standardWindowButton(.zoomButton)?.isHidden = hidden
     }
-
-    // CASPER: applyMinimalModeSidebarTitlebarClickTarget / remove* pair removed in 573322fa —
-    // SwiftUI proxy + MinimalModeTitlebarControlHitRegionRegistry handle hit-testing.
-    // Delete this comment if upstream drops the parallel AppKit click target too.
 
     private func applyTrafficLightDebugOffsets(to window: NSWindow) {
         let snapshot = MinimalModeTitlebarDebugSettings.snapshot()

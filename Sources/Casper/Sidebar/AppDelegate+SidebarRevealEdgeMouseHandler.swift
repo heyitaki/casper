@@ -1,7 +1,4 @@
-// CASPER: Sidebar reveal-strip leading/trailing edge mouse-down + drag-resize
-// handlers, hooked from `cmux_sendEvent` (Sources/AppDelegate.swift) BEFORE
-// AppKit's edge-resize tracking starts. Delete this file if upstream lands a
-// comparable hidden-sidebar reveal + window-resize affordance.
+// CASPER: Reveal-strip edge mouse-down handlers; hooked from cmux_sendEvent BEFORE AppKit's edge-resize tracking starts.
 
 import AppKit
 

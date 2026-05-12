@@ -9063,12 +9063,6 @@ struct ContentView: View {
 #endif
 }
 
-// CASPER: SidebarResizerAccessibilityModifier, SidebarRevealStripMetrics,
-// SidebarRevealEdgeGeometry, SidebarRevealStripView moved to
-// Sources/Casper/Sidebar/SidebarRevealStrip.swift to keep this upstream file
-// merge-friendly. Delete this comment when the file is gone or the strip
-// affordance lands upstream.
-
 private struct SidebarTabItemSettingsSnapshot: Equatable {
     let sidebarShortcutHintXOffset: Double
     let sidebarShortcutHintYOffset: Double
@@ -9211,8 +9205,6 @@ struct VerticalTabsSidebar: View {
     @Binding var selection: SidebarSelection
     @Binding var selectedTabIds: Set<UUID>
     @Binding var lastSidebarSelectionIndex: Int?
-    // CASPER: windowFullScreenIntent added by 754e7246 for fullscreen breathing room.
-    // Delete if upstream takes a different layout approach.
     var windowFullScreenIntent: Bool
     @State private var modifierKeyMonitor = WindowScopedShortcutHintModifierMonitor(activation: .commandOnly)
     @StateObject private var dragAutoScrollController = SidebarDragAutoScrollController()
@@ -9500,10 +9492,7 @@ struct VerticalTabsSidebar: View {
                 }
                 .overlay(alignment: .top) {
                     if isMinimalMode {
-                        // CASPER: trailing-aligned icon cluster from 754e7246
-                        // so the icons don't jump sideways across the OS
-                        // fullscreen transition. Delete if upstream restores
-                        // a single layout that matches.
+                        // CASPER: trailing-aligned to avoid sideways jump across OS fullscreen transition.
                         HStack(spacing: 0) {
                             Spacer(minLength: 0)
                             HiddenTitlebarSidebarControlsView(

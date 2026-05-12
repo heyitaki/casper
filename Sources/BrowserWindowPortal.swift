@@ -820,9 +820,6 @@ final class WindowBrowserHostView: NSView {
         return SidebarResizeInteraction.Edge.trailing.hitRange(dividerX: rightMostEdge).contains(point.x)
     }
 
-    // CASPER: shouldPassThroughToSidebarRevealStrip(at:) moved to
-    // Sources/Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift.
-
     private func updateDividerCursor(
         at point: NSPoint,
         dividerHit: DividerHit? = nil,

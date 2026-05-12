@@ -537,9 +537,6 @@ struct MinimalModeTitlebarDebugSnapshot: Equatable {
 }
 
 enum MinimalModeSidebarTitlebarControlsMetrics {
-    // CASPER: leadingInset / topInset accessors removed in 573322fa — the registry
-    // is the source of truth for hit-testing. Delete this comment if upstream
-    // also drops the leadingInset fallback rects.
     static let hostWidth: CGFloat = 124
     static let hostHeight: CGFloat = 28
     static let singleButtonHostWidth: CGFloat = hostHeight

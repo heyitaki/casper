@@ -309,9 +309,6 @@ final class WindowTerminalHostView: NSView {
         return SidebarResizeInteraction.Edge.leading.hitRange(dividerX: dividerX).contains(point.x)
     }
 
-    // CASPER: shouldPassThroughToSidebarRevealStrip(at:) moved to
-    // Sources/Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift.
-
     private func shouldPassThroughToTrailingSidebarResizer(
         at point: NSPoint,
         visibleHostedViews: [GhosttySurfaceScrollView]
