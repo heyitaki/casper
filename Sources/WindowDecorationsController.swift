@@ -42,7 +42,7 @@ final class WindowDecorationsController {
         if isMainWorkspaceWindow(window) {
             applyTrafficLightDebugOffsets(to: window)
         }
-        // CASPER: applyMinimalModeSidebarTitlebarClickTarget call removed in 573322fa.
+        CasperMinimalModeWindowMovable.apply(to: window)
     }
 
     private func installObservers() {

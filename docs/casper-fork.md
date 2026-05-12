@@ -155,14 +155,42 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete when upstream cmux adds a fish shell integration.
 
+### Minimal-mode window-movable policy
+
+- Files (added):
+  - `Sources/Casper/Window/CasperMinimalModeWindowMovable.swift`
+- Files (upstream files modified):
+  - `Sources/WindowDecorationsController.swift` (one-line call inside `apply(to:)` so presentation-mode toggles re-apply the policy)
+  - `Sources/ContentView.swift` (one-line call inside the `WindowAccessor` refresh so initial setup and appearance-mutation re-runs don't strand `isMovable = true`)
+- Summary:
+  - Casper defaults to `minimal` presentation mode, which strips `customTitlebar` (and its `WindowDragHandleView` overlay) from the workspace top. The bonsplit tab strip then sits directly under AppKit's system titlebar drag region. With the upstream default of `window.isMovable = true`, AppKit's automatic titlebar drag would hijack tab drags whenever the deepest hit-test view defaulted to `mouseDownCanMoveWindow == true` (SwiftUI's generated NSViews inside the strip). This patch forces `window.isMovable = false` on the main workspace window while in minimal mode. Bonsplit's `TabBarBackgroundNSView.mouseDown` and `DragNSView.startWindowDrag`, plus `WindowDragHandleView`'s `withTemporaryWindowMovableEnabled`, all flip `isMovable = true` for the duration of `performDrag(with:)` and restore — so every legitimate window-drag path keeps working. Stock cmux (standard mode) is unaffected.
+- Deletion condition:
+  - Delete if upstream restores `customTitlebar`/`WindowDragHandleView` in minimal mode or otherwise blocks AppKit's auto-titlebar-drag for the bonsplit tab strip.
+
+### CodeEditSourceEditor-backed text editor (flag-gated)
+
+- Files (added):
+  - `Sources/Casper/Editor/CasperEditorConfig.swift`
+  - `Sources/Casper/Editor/CasperCodeEditorView.swift`
+- Files (upstream files modified):
+  - `Sources/Panels/FilePreviewPanel.swift` (one-line gated branch in the `.text` case of `content`)
+  - `GhosttyTabs.xcodeproj/project.pbxproj` (CodeEditSourceEditor SPM package + cmux target product link)
+- Summary:
+  - The FilePreview panel's text branch is already an editable, saving NSTextView despite its name. This patch adds a flag-gated alternative renderer (`CasperCodeEditorView`) backed by `CodeEditSourceEditor` for syntax highlighting + line numbers + bracket emphasis. Stock cmux behavior (plain NSTextView via `FilePreviewTextEditor`) runs when `CasperEditorConfig.useCodeEditorInFilePreview` is false (the default).
+  - Enable with env `CMUX_CASPER_EDITOR=1` or Info.plist key `CasperEditorEnabled = YES`. Save flow (`panel.saveTextContent()`), dirty tracking, focus coordinator integration (`attachPreviewFocus` with `.textEditor` intent), and cmd-S (via `KeyboardShortcutSettings.saveFilePreview`) all route through the existing FilePreviewPanel APIs unchanged.
+- Deletion condition:
+  - Delete this patch if/when upstream cmux adopts a syntax-highlighting source editor for the FilePreview text branch.
+
 ## Merge conflict notes
 
 These upstream files are touched by fork patches and tend to drift upstream. Re-check each one when running `git merge upstream/main`:
 
 - `Sources/ContentView.swift`
-  - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding) and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
+  - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
 - `Sources/AppDelegate.swift`
   - Touched by patch 2 (sidebar reveal mouse-down handlers, `cmux_sendEvent` intercept, `runSidebarRevealEdgeMouseDownLoop`) and patch 3 (new-workspace context menu shortcut display).
+- `Sources/WindowDecorationsController.swift`
+  - Touched by the minimal-mode window-movable policy (one-line call to `CasperMinimalModeWindowMovable.apply` inside `apply(to:)`). Re-add if upstream rewrites the decorations apply path.
 - `Sources/GhosttyTerminalView.swift`
   - Touched by patches 3 (rightMouseDown mouse-capture handling, menu wiring, removed legacy selectors), 4 (New Tab right-click item), and 7 (fish `XDG_DATA_DIRS` injection). High-traffic file — re-validate each region after upstream merges.
 - `Sources/TerminalWindowPortal.swift`, `Sources/BrowserWindowPortal.swift`
@@ -172,7 +200,7 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
 - `Sources/FileExplorerSearchController.swift`, `Sources/SessionIndexStore.swift`
   - Touched by patch 6 (shared `RipgrepLocator`). Keep one locator instance; do not let either site reintroduce its own fallback list.
 - `Sources/Panels/FilePreviewPanel.swift`, `Sources/FileExplorerView.swift`
-  - Touched by patch 5 (.ts text-file fast-path, Finder-row icon substitution).
+  - Touched by patch 5 (.ts text-file fast-path, Finder-row icon substitution) and by the CodeEditSourceEditor patch (`.text` case in `FilePreviewPanel.content` adds a flag-gated alternative renderer).
 - `GhosttyTabs.xcodeproj/project.pbxproj`
   - Touched by patches 3 (new PanelCloseTabContextMenu.swift entry, removed legacy files) and 6 (ripgrep PBXShellScriptBuildPhase + Copy CLI). Conflicts here are mechanical but always require manual resolution.
 - `Resources/Localizable.xcstrings`

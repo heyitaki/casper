@@ -906,12 +906,21 @@ struct FilePreviewPanelView: View {
         } else {
             switch panel.previewMode {
             case .text:
-                FilePreviewTextEditor(
-                    panel: panel,
-                    isVisibleInUI: isVisibleInUI,
-                    themeBackgroundColor: themeBackgroundColor,
-                    themeForegroundColor: themeForegroundColor
-                )
+                if CasperEditorConfig.useCodeEditorInFilePreview {
+                    CasperCodeEditorView(
+                        panel: panel,
+                        isVisibleInUI: isVisibleInUI,
+                        themeBackgroundColor: themeBackgroundColor,
+                        themeForegroundColor: themeForegroundColor
+                    )
+                } else {
+                    FilePreviewTextEditor(
+                        panel: panel,
+                        isVisibleInUI: isVisibleInUI,
+                        themeBackgroundColor: themeBackgroundColor,
+                        themeForegroundColor: themeForegroundColor
+                    )
+                }
             case .pdf:
                 FilePreviewPDFView(panel: panel, isVisibleInUI: isVisibleInUI)
             case .image:

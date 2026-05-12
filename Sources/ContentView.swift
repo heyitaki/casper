@@ -3404,6 +3404,7 @@ struct ContentView: View {
             // window managers.
             window.isMovableByWindowBackground = false
             window.isMovable = true
+            CasperMinimalModeWindowMovable.apply(to: window)
             window.styleMask.insert(.fullSizeContentView)
 
             // Track this window for fullscreen notifications
