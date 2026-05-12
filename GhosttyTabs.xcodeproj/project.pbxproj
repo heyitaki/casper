@@ -302,6 +302,8 @@
 		CA5840030000000000000001 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */; };
 		CA5840040000000000000001 /* Casper/Editor/CasperEditorConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840040000000000000002 /* Casper/Editor/CasperEditorConfig.swift */; };
 		CA5840050000000000000001 /* Casper/Editor/CasperCodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840050000000000000002 /* Casper/Editor/CasperCodeEditorView.swift */; };
+		CA5840070000000000000001 /* Casper/Editor/CasperPersistentSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840070000000000000002 /* Casper/Editor/CasperPersistentSourceEditor.swift */; };
+		CA5840080000000000000001 /* Casper/Editor/CasperMarkdownHighlightProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840080000000000000002 /* Casper/Editor/CasperMarkdownHighlightProvider.swift */; };
 		CA5840060000000000000001 /* Casper/Window/CasperMinimalModeWindowMovable.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840060000000000000002 /* Casper/Window/CasperMinimalModeWindowMovable.swift */; };
 		CB23911D7E131E8FBC9B82B6 /* SidebarOrderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC39DE4B96D1931C52AF7D68 /* SidebarOrderingTests.swift */; };
 		D0B10000A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0B10001A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift */; };
@@ -801,6 +803,8 @@
 		CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift"; sourceTree = "<group>"; };
 		CA5840040000000000000002 /* Casper/Editor/CasperEditorConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperEditorConfig.swift; sourceTree = "<group>"; };
 		CA5840050000000000000002 /* Casper/Editor/CasperCodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperCodeEditorView.swift; sourceTree = "<group>"; };
+		CA5840070000000000000002 /* Casper/Editor/CasperPersistentSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperPersistentSourceEditor.swift; sourceTree = "<group>"; };
+		CA5840080000000000000002 /* Casper/Editor/CasperMarkdownHighlightProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperMarkdownHighlightProvider.swift; sourceTree = "<group>"; };
 		CA5840060000000000000002 /* Casper/Window/CasperMinimalModeWindowMovable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Window/CasperMinimalModeWindowMovable.swift; sourceTree = "<group>"; };
 		D0B10001A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneDropTargetView.swift; sourceTree = "<group>"; };
 		D0B10003A1B2C3D4E5F60001 /* BonsplitTabBarPassThrough.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonsplitTabBarPassThrough.swift; sourceTree = "<group>"; };
@@ -1142,6 +1146,8 @@
 				CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */,
 				CA5840040000000000000002 /* Casper/Editor/CasperEditorConfig.swift */,
 				CA5840050000000000000002 /* Casper/Editor/CasperCodeEditorView.swift */,
+				CA5840070000000000000002 /* Casper/Editor/CasperPersistentSourceEditor.swift */,
+				CA5840080000000000000002 /* Casper/Editor/CasperMarkdownHighlightProvider.swift */,
 				CA5840060000000000000002 /* Casper/Window/CasperMinimalModeWindowMovable.swift */,
 				C0DE32470000000000000002 /* ContentViewIdentifierCopyCommands.swift */,
 				9960CC3992F3C44489E7627C /* App/WorkspaceRuntimeSettings.swift */,
@@ -1820,6 +1826,8 @@
 				CA5840030000000000000001 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift in Sources */,
 				CA5840040000000000000001 /* Casper/Editor/CasperEditorConfig.swift in Sources */,
 				CA5840050000000000000001 /* Casper/Editor/CasperCodeEditorView.swift in Sources */,
+				CA5840070000000000000001 /* Casper/Editor/CasperPersistentSourceEditor.swift in Sources */,
+				CA5840080000000000000001 /* Casper/Editor/CasperMarkdownHighlightProvider.swift in Sources */,
 				CA5840060000000000000001 /* Casper/Window/CasperMinimalModeWindowMovable.swift in Sources */,
 				C0DE32470000000000000001 /* ContentViewIdentifierCopyCommands.swift in Sources */,
 				619D509BC9B1EA946CBD6A8A /* App/WorkspaceRuntimeSettings.swift in Sources */,

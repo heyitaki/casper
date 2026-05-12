@@ -552,6 +552,13 @@ final class FilePreviewPanel: Panel, ObservableObject {
     private weak var textView: NSTextView?
     private let focusCoordinator: FilePreviewFocusCoordinator
 
+    // CASPER: Persists the Casper code editor's TextViewController across workspace
+    // remounts so syntax highlighting survives switching workspaces.
+    // Owned here because the panel outlives SwiftUI's view tree. See
+    // Sources/Casper/Editor/CasperPersistentSourceEditor.swift.
+    // Delete if upstream adds an editor portal layer like TerminalWindowPortal.
+    var casperEditorAttachment: AnyObject?
+
     var fileURL: URL {
         URL(fileURLWithPath: filePath)
     }
@@ -584,6 +591,9 @@ final class FilePreviewPanel: Panel, ObservableObject {
     func close() {
         textView = nil
         focusCoordinator.unregisterAll()
+        // CASPER: Drop the persistent editor attachment so its observers/monitors
+        // deinit. Delete if upstream adds an editor portal layer.
+        casperEditorAttachment = nil
     }
 
     func triggerFlash(reason: WorkspaceAttentionFlashReason) {
