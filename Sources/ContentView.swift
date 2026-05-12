@@ -2084,7 +2084,7 @@ struct ContentView: View {
         SidebarRevealStripView(
             label: String(localized: "sidebarRevealStrip.label", defaultValue: "Show Sidebar")
         )
-        .frame(width: SidebarRevealStripView.stripWidth)
+        .frame(width: SidebarRevealStripMetrics.width)
         .frame(maxHeight: .infinity, alignment: .top)
         .accessibilityIdentifier("SidebarRevealStrip")
     }
@@ -2093,7 +2093,7 @@ struct ContentView: View {
         SidebarRevealStripView(
             label: String(localized: "rightSidebarRevealStrip.label", defaultValue: "Show Right Sidebar")
         )
-        .frame(width: SidebarRevealStripView.stripWidth)
+        .frame(width: SidebarRevealStripMetrics.width)
         .frame(maxHeight: .infinity, alignment: .top)
         .accessibilityIdentifier("RightSidebarRevealStrip")
     }

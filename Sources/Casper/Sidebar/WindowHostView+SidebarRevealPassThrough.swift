@@ -9,36 +9,43 @@
 
 import AppKit
 
+/// When either sidebar is hidden, that edge of the window hosts a thin
+/// SwiftUI reveal strip. Without this pass-through, the AppKit portal sits
+/// above the strip and swallows mouse-down clicks (hover leaks through), so
+/// clicking the strip never re-expands the sidebar.
+private func sidebarRevealStripPassThroughIsActive<Slot: NSView>(
+    in host: NSView,
+    at point: NSPoint,
+    slotType: Slot.Type
+) -> Bool {
+    let w = SidebarRevealStripMetrics.width
+    guard point.x < w || point.x > host.bounds.maxX - w else { return false }
+    let frames = host.subviews.compactMap { $0 as? Slot }
+        .filter { !$0.isHidden && $0.window != nil && $0.frame.width > 1 && $0.frame.height > 1 }
+        .map { $0.frame }
+    return SidebarRevealStripMetrics.shouldPassThrough(
+        point: point,
+        bounds: host.bounds,
+        hostedFrames: frames
+    )
+}
+
 extension WindowTerminalHostView {
-    /// When either sidebar is hidden, that edge of the window hosts a thin
-    /// SwiftUI reveal strip. Without this pass-through, the AppKit terminal
-    /// portal sits above the strip and swallows mouse-down clicks (hover
-    /// leaks through), so clicking the strip never re-expands the sidebar.
     func shouldPassThroughToSidebarRevealStrip(at point: NSPoint) -> Bool {
-        let w = SidebarRevealStripMetrics.width
-        guard point.x < w || point.x > bounds.maxX - w else { return false }
-        let frames = subviews.compactMap { $0 as? GhosttySurfaceScrollView }
-            .filter { !$0.isHidden && $0.window != nil && $0.frame.width > 1 && $0.frame.height > 1 }
-            .map { $0.frame }
-        return SidebarRevealStripMetrics.shouldPassThrough(
-            point: point,
-            bounds: bounds,
-            hostedFrames: frames
+        sidebarRevealStripPassThroughIsActive(
+            in: self,
+            at: point,
+            slotType: GhosttySurfaceScrollView.self
         )
     }
 }
 
 extension WindowBrowserHostView {
     func shouldPassThroughToSidebarRevealStrip(at point: NSPoint) -> Bool {
-        let w = SidebarRevealStripMetrics.width
-        guard point.x < w || point.x > bounds.maxX - w else { return false }
-        let frames = subviews.compactMap { $0 as? WindowBrowserSlotView }
-            .filter { !$0.isHidden && $0.window != nil && $0.frame.width > 1 && $0.frame.height > 1 }
-            .map { $0.frame }
-        return SidebarRevealStripMetrics.shouldPassThrough(
-            point: point,
-            bounds: bounds,
-            hostedFrames: frames
+        sidebarRevealStripPassThroughIsActive(
+            in: self,
+            at: point,
+            slotType: WindowBrowserSlotView.self
         )
     }
 }

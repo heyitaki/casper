@@ -104,8 +104,6 @@ enum SidebarRevealEdgeGeometry {
 /// SwiftUI hover is reliable for the highlight affordance because hover
 /// events fire normally before any tracking session begins.
 struct SidebarRevealStripView: View {
-    static let stripWidth: CGFloat = SidebarRevealStripMetrics.width
-
     let label: String
 
     @State private var isHovering = false
