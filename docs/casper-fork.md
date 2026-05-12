@@ -4,6 +4,14 @@
 
 See `CLAUDE.md` → "Upstream merge strategy (Casper fork)" for the discipline. This file is the per-patch register that the discipline points at.
 
+## Current merge debt
+
+As of 2026-05-12, `heyitaki/cmux:main` is **64 commits behind** `manaflow-ai/cmux:main`. The apparent fork-vs-upstream diff (`git diff upstream/main..HEAD`) includes both the Casper-only patches cataloged below AND upstream changes that have not yet been merged in. Numbers like "952 inserted lines in ContentView.swift" reflect both, not just Casper additions.
+
+**Action when running the merge.** `git merge upstream/main` is overdue. Of the 20 files modified by both sides, the heaviest conflict surfaces are: `Resources/Localizable.xcstrings` (1998 upstream / 2127 Casper changes), `Sources/ContentView.swift` (851 / 1265), `Sources/Workspace.swift` (551 / 552), `Sources/GhosttyTerminalView.swift` (445 / 547), `Sources/cmuxApp.swift` (425 / 435). Use the per-patch sections below as the resolution map.
+
+**Hot paths to preserve during conflict resolution.** `TerminalWindowPortal.hitTest()` and `BrowserWindowPortal.hitTest()` are touched on both sides and are typing-latency-critical (see `CLAUDE.md` → "Pitfalls"). Keep the `isPointerEvent` guard and any interior-point early-reject — these must not regress during the merge.
+
 ## Fork update checklist
 
 1) Land the change on `main` (or via PR against `heyitaki/cmux`).
