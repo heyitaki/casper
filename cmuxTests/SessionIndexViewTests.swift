@@ -84,6 +84,24 @@ final class SessionIndexViewTests: XCTestCase {
         )
     }
 
+    func testClaudeResumeCommandOmitsEnvWhenConfigDirIsDefault() {
+        let defaultClaudeDir = ((NSHomeDirectory() as NSString)
+            .appendingPathComponent(".claude") as NSString)
+            .standardizingPath
+        let fileURL = URL(fileURLWithPath: defaultClaudeDir)
+            .appendingPathComponent("projects")
+            .appendingPathComponent("-tmp")
+            .appendingPathComponent("claude-session-123.jsonl")
+
+        let entry = makeEntry(
+            sessionId: "claude-session-123",
+            title: "resume me",
+            fileURL: fileURL
+        )
+
+        XCTAssertEqual(entry.resumeCommand, "claude --resume claude-session-123")
+    }
+
     func testCurrentDirectorySetterDoesNotPublishEqualValue() {
         let store = SessionIndexStore()
         var emittedValues: [String?] = []

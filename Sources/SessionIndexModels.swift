@@ -311,7 +311,13 @@ struct SessionEntry: Identifiable, Hashable {
         }
         let configComponents = Array(pathComponents[..<projectsIndex])
         let configDir = NSString.path(withComponents: configComponents)
-        return configDir.isEmpty ? nil : ClaudeConfigDirectoryPath.preferredPath(configDir)
+        guard !configDir.isEmpty else { return nil }
+        let resolved = ClaudeConfigDirectoryPath.preferredPath(configDir)
+        // Explicit CLAUDE_CONFIG_DIR (even default) bypasses macOS Keychain OAuth → re-login.
+        let defaultClaudeDir = ((NSHomeDirectory() as NSString)
+            .appendingPathComponent(".claude") as NSString)
+            .standardizingPath
+        return resolved == defaultClaudeDir ? nil : resolved
     }
 
     private static func withShellEnvironment(
