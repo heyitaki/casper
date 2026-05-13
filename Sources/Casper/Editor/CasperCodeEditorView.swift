@@ -6,11 +6,19 @@ import SwiftUI
 import CodeEditSourceEditor
 import CodeEditLanguages
 
+enum CasperEditorPreferences {
+    static let wrapLinesKey = "casper.editor.wrapLines"
+    static let defaultWrapLines = false
+}
+
 struct CasperCodeEditorView: View {
     @ObservedObject var panel: FilePreviewPanel
     let isVisibleInUI: Bool
     let themeBackgroundColor: NSColor
     let themeForegroundColor: NSColor
+
+    @AppStorage(CasperEditorPreferences.wrapLinesKey)
+    private var wrapLines = CasperEditorPreferences.defaultWrapLines
 
     var body: some View {
         CasperPersistentSourceEditor(
@@ -20,11 +28,12 @@ struct CasperCodeEditorView: View {
                 appearance: .init(
                     theme: editorTheme(),
                     font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
-                    wrapLines: true
-                )
-            )
+                    wrapLines: wrapLines
+                ),
+                peripherals: .init(showMinimap: false)
+            ),
+            isVisibleInUI: isVisibleInUI
         )
-        .opacity(isVisibleInUI ? 1 : 0)
     }
 
     private func detectLanguage() -> CodeLanguage {
@@ -52,5 +61,27 @@ struct CasperCodeEditorView: View {
             characters: .init(color: NSColor(red: 0.85, green: 0.79, blue: 0.49, alpha: 1.0)),
             comments: .init(color: fg.withAlphaComponent(0.5))
         )
+    }
+}
+
+struct CasperWrapLinesToggleButton: View {
+    @AppStorage(CasperEditorPreferences.wrapLinesKey)
+    private var wrapLines = CasperEditorPreferences.defaultWrapLines
+
+    var body: some View {
+        Button {
+            wrapLines.toggle()
+        } label: {
+            Image(systemName: wrapLines ? "arrow.turn.down.left" : "arrow.right.to.line")
+        }
+        .buttonStyle(.borderless)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        wrapLines
+            ? String(localized: "filePreview.wrapLines.disable", defaultValue: "Disable line wrapping")
+            : String(localized: "filePreview.wrapLines.enable", defaultValue: "Enable line wrapping")
     }
 }

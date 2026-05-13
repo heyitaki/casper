@@ -8,6 +8,14 @@ import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
 
+// CASPER: Scroll target passed to FilePreviewPanel when opening a file from the
+// grouped Find sidebar. Both fields are 1-indexed to match ripgrep / CursorPosition.
+// Delete if upstream adds a richer file-open API.
+struct CasperFilePreviewScrollTarget: Equatable {
+    let line: Int
+    let column: Int
+}
+
 enum FilePreviewInteraction {
     static let zoomStep: CGFloat = 1.25
 
@@ -559,6 +567,12 @@ final class FilePreviewPanel: Panel, ObservableObject {
     // Delete if upstream adds an editor portal layer like TerminalWindowPortal.
     var casperEditorAttachment: AnyObject?
 
+    // CASPER: Line/column the Casper editor should scroll to on next display.
+    // Set by openOrFocusFilePreviewSurface when invoked from the grouped Find UI.
+    // Consumed (and cleared) by CasperPersistentSourceEditor once it positions the cursor.
+    // Delete if upstream adds a richer file-open API that carries a scroll target.
+    @Published var casperPendingScrollTarget: CasperFilePreviewScrollTarget?
+
     var fileURL: URL {
         URL(fileURLWithPath: filePath)
     }
@@ -883,6 +897,11 @@ struct FilePreviewPanelView: View {
                 .textSelection(.enabled)
             Spacer(minLength: 8)
             if panel.previewMode == .text {
+                // CASPER: Wrap-lines toggle. Delete with the rest of the
+                // CodeEditSourceEditor branch if upstream removes it.
+                if CasperEditorConfig.useCodeEditorInFilePreview {
+                    CasperWrapLinesToggleButton()
+                }
                 Button {
                     panel.loadTextContent()
                 } label: {
