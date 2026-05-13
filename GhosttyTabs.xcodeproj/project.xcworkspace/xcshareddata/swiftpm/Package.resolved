@@ -38,15 +38,6 @@
       }
     },
     {
-      "identity" : "dlkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/johnno1962/DLKit",
-      "state" : {
-        "revision" : "966a6ae1d242a9932faf848aaa0291037f316446",
-        "version" : "3.5.7"
-      }
-    },
-    {
       "identity" : "fishhook",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/johnno1962/fishhook",
@@ -56,30 +47,12 @@
       }
     },
     {
-      "identity" : "injectionlite",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/johnno1962/InjectionLite",
-      "state" : {
-        "revision" : "49ef136d023009f7f8e0adb6eeb4cd8da0369aec",
-        "version" : "1.2.16"
-      }
-    },
-    {
       "identity" : "networkimage",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/gonzalezreal/NetworkImage",
       "state" : {
         "revision" : "2849f5323265386e200484b0d0f896e73c3411b9",
         "version" : "6.0.1"
-      }
-    },
-    {
-      "identity" : "popen",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/johnno1962/Popen",
-      "state" : {
-        "revision" : "88234d2a067b277dab3c7d3a74210205f0b92962",
-        "version" : "2.2.1"
       }
     },
     {
@@ -170,15 +143,6 @@
       "state" : {
         "revision" : "a3877065a7d72ee40e1fa64e13b9e33e846c667c",
         "version" : "0.63.1"
-      }
-    },
-    {
-      "identity" : "swiftregex5",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/johnno1962/SwiftRegex5",
-      "state" : {
-        "revision" : "84c3fa9a180b2c02e65e9a61287445b0482a5efe",
-        "version" : "6.3.0"
       }
     },
     {

@@ -50,8 +50,8 @@ final class CasperHMRDaemon {
 
     // MARK: - Boot
 
-    /// Public entrypoint. Called from cmuxApp.init() under the
-    /// CASPER_HMR_NEW gate (Req 12). Idempotent — calling twice is a no-op.
+    /// Public entrypoint. Called from cmuxApp.init() in DEBUG builds.
+    /// Idempotent — calling twice is a no-op.
     func boot() {
         guard !booted else { return }
         booted = true
@@ -1097,9 +1097,8 @@ private func escapeJSON(_ s: String) -> String {
     return out
 }
 
-/// Entry point invoked from cmuxApp.init() when the CASPER_HMR_NEW gate is on.
-/// PR 3 renames this to casperHMRBootstrap() and drops the legacy
-/// casperHotReloadBootstrap path.
+/// Entry point invoked from cmuxApp.init() in DEBUG builds. Release builds
+/// dead-strip this whole file along with the daemon.
 @MainActor
 func casperHMRBootstrap() {
     CasperHMRDaemon.shared.boot()

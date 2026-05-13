@@ -2,7 +2,7 @@
   "sourceLanguage": "en",
   "version": "1.0",
   "strings": {
-    "casper.hmr.menu.enabled": { "localizations": {"en":{"stringUnit":{"state":"translated","value":"Casper HMR (CASPER_HMR_NEW)"}},"ja":{"stringUnit":{"state":"translated","value":"Casper HMR (CASPER_HMR_NEW)"}}} },
+    "casper.hmr.menu.enabled": { "localizations": {"en":{"stringUnit":{"state":"translated","value":"Casper HMR"}},"ja":{"stringUnit":{"state":"translated","value":"Casper HMR"}}} },
     "casper.hmr.menu.open_recent_swaps": { "localizations": {"en":{"stringUnit":{"state":"translated","value":"Open Casper HMR Recent Swaps…"}},"ja":{"stringUnit":{"state":"translated","value":"Casper HMR の最近のスワップを開く…"}}} },
     "casper.hmr.window.recent_swaps.title": { "localizations": {"en":{"stringUnit":{"state":"translated","value":"Casper HMR Recent Swaps"}},"ja":{"stringUnit":{"state":"translated","value":"Casper HMR 最近のスワップ"}}} },
     "casper.hmr.window.recent_swaps.empty": { "localizations": {"en":{"stringUnit":{"state":"translated","value":"No swaps yet. Save a file in Sources/Casper to trigger one."}},"ja":{"stringUnit":{"state":"translated","value":"まだスワップはありません。Sources/Casper のファイルを保存して起動してください。"}}} },

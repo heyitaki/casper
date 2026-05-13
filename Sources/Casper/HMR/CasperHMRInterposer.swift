@@ -7,10 +7,9 @@
 // the cmux module to its own functions.
 //
 // Pure-Swift dylibs don't emit `__DATA[_CONST],__interpose` sections, so the
-// dyld static-interpose path the spec assumed doesn't fire for our compile
-// pipeline. This file is the runtime equivalent that InjectionLite/DLKit use
-// to achieve the same swap behavior. Delete the file together with the rest
-// of `Sources/Casper/HMR/` when upstream cmux ships an in-process HMR story.
+// dyld static-interpose path doesn't fire for our compile pipeline. This file
+// is the runtime equivalent. Delete it together with the rest of
+// `Sources/Casper/HMR/` when upstream cmux ships an in-process HMR story.
 
 #if DEBUG
 
@@ -19,10 +18,8 @@ import Foundation
 import MachO
 
 /// Swift mirror of fishhook's `struct rebinding`. Layout-compatible with the C
-/// definition in `fishhookD/fishhook.h`. We declare it here to avoid taking a
-/// direct `import fishhookD` module dependency — the underlying C symbols come
-/// in transitively via the InjectionLite SPM dep. After PR 3 deletes that dep,
-/// fishhookD should be re-introduced as a direct cmux dependency.
+/// definition in `fishhookD/fishhook.h`. We declare it here so we don't have to
+/// `import fishhookD` (the C symbols come in via the SPM link).
 struct CasperHMRRebinding {
     var name: UnsafePointer<CChar>?
     var replacement: UnsafeMutableRawPointer?
@@ -226,10 +223,9 @@ enum CasperHMRInterposer {
         return result
     }
 
-    /// Subset of InjectionLite's `injectableSymbol` predicate (Reloader.swift
-    /// :361). Accepts Swift function bodies (F/g/s/C/Df suffixes) and skips
-    /// type metadata / witness tables / property descriptors. C++ mangled
-    /// names (`_ZN…`) are also accepted to mirror InjectionLite's behavior.
+    /// Injectable-Swift-symbol predicate: accepts Swift function bodies
+    /// (F/g/s/C/Df suffixes), skips type metadata / witness tables / property
+    /// descriptors, and accepts C++ mangled names (`_ZN…`).
     static func isInjectableSwiftSymbol(_ name: String) -> Bool {
         let bytes = Array(name.utf8)
         guard bytes.count >= 4 else { return false }

@@ -16,18 +16,12 @@ enum CasperHMRConfig {
     /// always means an Xcode upgrade ran the wrapper from a stale install.
     static let pairedWrapperVersion: String = "1.0.0"
 
-    /// Process-environment gate. PR 1 ships this off so existing InjectionLite
-    /// users see byte-identical behavior. PR 2 flips the default to on; PR 3
-    /// deletes the InjectionLite branch entirely.
-    static let environmentGateKey: String = "CASPER_HMR_NEW"
-
-    /// Disable switch — set CASPER_HMR_DISABLE=1 to skip daemon boot even if
-    /// the gate is on. Lets the user bisect HMR-vs-something-else without
-    /// editing the gate.
+    /// Disable switch — set CASPER_HMR_DISABLE=1 to skip daemon boot. Lets the
+    /// user bisect HMR-vs-something-else without rebuilding.
     static let environmentDisableKey: String = "CASPER_HMR_DISABLE"
 
-    /// AppStorage key for the Debug menu toggle. Default true: once the gate
-    /// is on, swaps are live unless the user opts out.
+    /// AppStorage key for the Debug menu toggle. Default true: swaps are live
+    /// in DEBUG builds unless the user opts out.
     static let userDefaultsEnabledKey: String = "casper.hmr.enabled"
 
     /// Build sentinel — a string constant we look for in the Release symbol /
@@ -106,7 +100,7 @@ enum CasperHMRConfig {
     }
 
     /// Production bundle ID; if a Dock-launched cmux ever boots with this
-    /// bundle id and CASPER_HMR_NEW set, refuse to start.
+    /// bundle id, the daemon refuses to start (DEBUG-only is the contract).
     static let productionBundleIdentifier: String = "com.cmuxterm.app"
 }
 

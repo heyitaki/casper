@@ -27,23 +27,12 @@ struct cmuxApp: App {
             Self.terminateForMissingLaunchTag()
         }
 
-        // CASPER: PR 2 of the casper-hmr migration. The new daemon
-        // (Sources/Casper/HMR/) is on by default for DEBUG; set
-        // CASPER_HMR_NEW=0 to fall back to InjectionLite while it's still
-        // around. PR 3 deletes the InjectionLite branch entirely along with
-        // this gate.
+        // CASPER: starts the in-process HMR daemon (FSEvents + dlopen interpose)
+        // for DEBUG builds. The call site is excluded in Release; the daemon
+        // file is `#if DEBUG`-only and dead-strips.
         #if DEBUG
-        let casperHMRNew = ProcessInfo.processInfo.environment["CASPER_HMR_NEW"] != "0"
-        #else
-        let casperHMRNew = false
+        casperHMRBootstrap()
         #endif
-        if casperHMRNew {
-            casperHMRBootstrap() // CASPER: starts the new HMR daemon (FSEvents + dlopen interpose).
-        } else {
-            casperCaptureStdoutForHotReload() // CASPER: capture InjectionLite stdout for Dock launches; no-op in Release.
-            casperPrimeInjectionLogsPath() // CASPER: pre-populate InjectionLite's build-logs path so the first edit can find swiftc commands; no-op in Release.
-            casperHotReloadBootstrap() // CASPER: starts InjectionLite FileWatcher; no-op in Release.
-        }
 
         Self.configureGhosttyEnvironment()
         _ = KeyboardShortcutSettings.settingsFileStore

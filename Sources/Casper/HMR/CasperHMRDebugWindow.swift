@@ -266,7 +266,7 @@ struct CasperHMRDebugMenuSection: View {
         Toggle(
             String(
                 localized: "casper.hmr.menu.enabled",
-                defaultValue: "Casper HMR (CASPER_HMR_NEW)"
+                defaultValue: "Casper HMR"
             ),
             isOn: $enabled
         )

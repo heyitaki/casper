@@ -95,7 +95,7 @@
 		A5001250 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = A5001251 /* Sentry */; };
 		A5001270 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = A5001271 /* PostHog */; };
 		A5001290 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A5001291 /* MarkdownUI */; };
-		CA9000030000000000000001 /* InjectionLite in Frameworks */ = {isa = PBXBuildFile; productRef = CA9000030000000000000002 /* InjectionLite */; };
+		CA9000040000000000000001 /* fishhookD in Frameworks */ = {isa = PBXBuildFile; productRef = CA9000040000000000000002 /* fishhookD */; };
 		A50012F1 /* Backport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50012F0 /* Backport.swift */; };
 		A50012F3 /* KeyboardShortcutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50012F2 /* KeyboardShortcutSettings.swift */; };
 		A50012F5 /* KeyboardLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50012F4 /* KeyboardLayout.swift */; };
@@ -310,7 +310,7 @@
 		CA58400A0000000000000001 /* Casper/Search/CasperFileSearchRanking.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */; };
 		CA58400B0000000000000001 /* Casper/Config/CasperBuildEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */; };
 		CA58400C0000000000000001 /* CasperFileSearchRankingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400C0000000000000002 /* CasperFileSearchRankingTests.swift */; };
-		CA9000020000000000000001 /* Casper/Config/CasperHotReload.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9000020000000000000002 /* Casper/Config/CasperHotReload.swift */; };
+		CA9000020000000000000001 /* Casper/Config/CasperHMRSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9000020000000000000002 /* Casper/Config/CasperHMRSwiftUI.swift */; };
 		CAHM00010000000000000001 /* Casper/HMR/CasperHMRConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00010000000000000002 /* Casper/HMR/CasperHMRConfig.swift */; };
 		CAHM00020000000000000001 /* Casper/HMR/CasperHMRReloadable.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00020000000000000002 /* Casper/HMR/CasperHMRReloadable.swift */; };
 		CAHM00030000000000000001 /* Casper/HMR/CasperHMRSourceClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00030000000000000002 /* Casper/HMR/CasperHMRSourceClassifier.swift */; };
@@ -823,7 +823,7 @@
 		CA5840090000000000000002 /* Casper/Search/CasperSearchConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperSearchConfig.swift; sourceTree = "<group>"; };
 		CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperFileSearchRanking.swift; sourceTree = "<group>"; };
 		CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Config/CasperBuildEnvironment.swift; sourceTree = "<group>"; };
-		CA9000020000000000000002 /* Casper/Config/CasperHotReload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Config/CasperHotReload.swift; sourceTree = "<group>"; };
+		CA9000020000000000000002 /* Casper/Config/CasperHMRSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Config/CasperHMRSwiftUI.swift; sourceTree = "<group>"; };
 		CAHM00010000000000000002 /* Casper/HMR/CasperHMRConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRConfig.swift; sourceTree = "<group>"; };
 		CAHM00020000000000000002 /* Casper/HMR/CasperHMRReloadable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRReloadable.swift; sourceTree = "<group>"; };
 		CAHM00030000000000000002 /* Casper/HMR/CasperHMRSourceClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRSourceClassifier.swift; sourceTree = "<group>"; };
@@ -990,7 +990,7 @@
 				A5001250 /* Sentry in Frameworks */,
 				A5001270 /* PostHog in Frameworks */,
 				A5001290 /* MarkdownUI in Frameworks */,
-				CA9000030000000000000001 /* InjectionLite in Frameworks */,
+				CA9000040000000000000001 /* fishhookD in Frameworks */,
 				613B3DA02FB3BC5400D1A30E /* CodeEditSourceEditor in Frameworks */,
 				5EDB6027B346C46521A93C74 /* CMUXAuthCore in Frameworks */,
 				AA11BB22CC33DD44EE550001 /* CMUXWorkstream in Frameworks */,
@@ -1181,7 +1181,7 @@
 				CA5840090000000000000002 /* Casper/Search/CasperSearchConfig.swift */,
 				CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */,
 				CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */,
-				CA9000020000000000000002 /* Casper/Config/CasperHotReload.swift */,
+				CA9000020000000000000002 /* Casper/Config/CasperHMRSwiftUI.swift */,
 				CAHM00010000000000000002 /* Casper/HMR/CasperHMRConfig.swift */,
 				CAHM00020000000000000002 /* Casper/HMR/CasperHMRReloadable.swift */,
 				CAHM00030000000000000002 /* Casper/HMR/CasperHMRSourceClassifier.swift */,
@@ -1602,7 +1602,7 @@
 				A5001271 /* PostHog */,
 				A5001261 /* Bonsplit */,
 				A5001291 /* MarkdownUI */,
-				CA9000030000000000000002 /* InjectionLite */,
+				CA9000040000000000000002 /* fishhookD */,
 				29813FE5A6CBC1019289A251 /* CMUXAuthCore */,
 				AA11BB22CC33DD44EE550002 /* CMUXWorkstream */,
 				3069F1D10000000000000006 /* CMUXPasteboardFidelity */,
@@ -1733,7 +1733,7 @@
 				A5001252 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 				A5001272 /* XCRemoteSwiftPackageReference "posthog-ios" */,
 				A5001292 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
-				CA9000030000000000000003 /* XCRemoteSwiftPackageReference "InjectionLite" */,
+				CA9000040000000000000003 /* XCRemoteSwiftPackageReference "fishhook" */,
 				A5001260 /* XCLocalSwiftPackageReference "vendor/bonsplit" */,
 				40B63BB4A170F0BD2D1DEFD1 /* XCLocalSwiftPackageReference "Packages/CMUXAuthCore" */,
 				AA11BB22CC33DD44EE550003 /* XCLocalSwiftPackageReference "Packages/CMUXWorkstream" */,
@@ -1899,7 +1899,7 @@
 				CA5840090000000000000001 /* Casper/Search/CasperSearchConfig.swift in Sources */,
 				CA58400A0000000000000001 /* Casper/Search/CasperFileSearchRanking.swift in Sources */,
 				CA58400B0000000000000001 /* Casper/Config/CasperBuildEnvironment.swift in Sources */,
-				CA9000020000000000000001 /* Casper/Config/CasperHotReload.swift in Sources */,
+				CA9000020000000000000001 /* Casper/Config/CasperHMRSwiftUI.swift in Sources */,
 				CAHM00010000000000000001 /* Casper/HMR/CasperHMRConfig.swift in Sources */,
 				CAHM00020000000000000001 /* Casper/HMR/CasperHMRReloadable.swift in Sources */,
 				CAHM00030000000000000001 /* Casper/HMR/CasperHMRSourceClassifier.swift in Sources */,
@@ -2783,12 +2783,12 @@
 				minimumVersion = 2.4.1;
 			};
 		};
-		CA9000030000000000000003 /* XCRemoteSwiftPackageReference "InjectionLite" */ = {
+		CA9000040000000000000003 /* XCRemoteSwiftPackageReference "fishhook" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/johnno1962/InjectionLite";
+			repositoryURL = "https://github.com/johnno1962/fishhook";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.0;
+				minimumVersion = 1.2.1;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -2834,10 +2834,10 @@
 			package = A5001292 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
 		};
-		CA9000030000000000000002 /* InjectionLite */ = {
+		CA9000040000000000000002 /* fishhookD */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = CA9000030000000000000003 /* XCRemoteSwiftPackageReference "InjectionLite" */;
-			productName = InjectionLite;
+			package = CA9000040000000000000003 /* XCRemoteSwiftPackageReference "fishhook" */;
+			productName = fishhookD;
 		};
 		A500D013A1B2C3D4E5F60718 /* CMUXDebugLog */ = {
 			isa = XCSwiftPackageProductDependency;
