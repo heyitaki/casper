@@ -1,0 +1,24 @@
+// CASPER: HMR build-time capture. Sets SWIFT_EXEC to the casper-swiftc-wrapper
+// binary so every Swift compile during Debug builds writes its argv + env
+// subset to ~/.casper/hmr/<tag>/commands.jsonl before delegating to the real
+// swiftc. Only referenced by the Debug XCBuildConfiguration of the cmux app
+// target. Release does not inherit this — the wrapper never runs in Release.
+//
+// Phase 0 of the casper-hmr spec verifies SWIFT_EXEC is honored under
+// xcodebuild on Xcode 26.5. If the integrated driver shadows it, uncomment the
+// SWIFT_USE_INTEGRATED_DRIVER override below — but only after confirming
+// explicit modules still build cleanly (see docs/casper-hmr Phase 0a).
+//
+// Delete this whole file once upstream cmux ships an in-process HMR story.
+
+SWIFT_EXEC = $(HOME)/.casper/hmr/tools/bin/casper-swiftc-wrapper
+
+// Empirically required on Xcode 26.5 (Phase 0a result, 2026-05-13). With the
+// default builtin-SwiftDriver, SWIFT_EXEC is only invoked for `--version` probing
+// and the actual compile runs in-process — no argv ever reaches the wrapper. With
+// SWIFT_USE_INTEGRATED_DRIVER=NO scoped to *only* the cmux target via this
+// xcconfig, swiftc is spawned as a subprocess and the wrapper captures the full
+// driver-level invocation (one entry with @SwiftFileList, ~286 sources). SPM
+// packages keep using the integrated driver, so they still get `-package-name`
+// injected and build cleanly.
+SWIFT_USE_INTEGRATED_DRIVER = NO

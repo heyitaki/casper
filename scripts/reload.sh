@@ -443,6 +443,16 @@ if [[ "${CMUX_SKIP_ZIG_BUILD:-}" == "1" ]]; then
 fi
 XCODEBUILD_ARGS+=(build)
 
+# CASPER: forward the tag slug into the wrapper/daemon so they pick the right
+# per-tag state directory under ~/.casper/hmr/<tag>/. Exported (not just an
+# XCODEBUILD_ARG) so the Run Script phase that rebuilds casper-swiftc-wrapper
+# sees it too.
+export CASPER_HMR_TAG="${TAG_SLUG:-agent}"
+# CASPER: PR 2 of the casper-hmr spec — flip the new daemon on by default for
+# every reload.sh-built Casper. Stock cmux doesn't see this; reload.sh is the
+# Casper-fork entrypoint. Removed in PR 3 alongside InjectionLite deletion.
+export CASPER_HMR_NEW="1"
+
 XCODEBUILD_LOCK="${TMPDIR:-/tmp}/cmux-xcodebuild-$(id -u).lock"
 # Xcode 26's SWBBuildService is a per-user singleton. Concurrent xcodebuild
 # invocations (even with separate -derivedDataPath) share that daemon and can
@@ -569,6 +579,11 @@ if [[ -n "$TAG" && "$APP_NAME" != "$SEARCH_APP_NAME" ]]; then
       set_plist_env "$INFO_PLIST" CMUX_SOCKET_MODE "allowAll"
       set_plist_env "$INFO_PLIST" CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD "1"
       set_plist_env "$INFO_PLIST" CMUXTERM_REPO_ROOT "$PWD"
+      # CASPER: per-tag HMR state dir under ~/.casper/hmr/<tag>/.
+      set_plist_env "$INFO_PLIST" CASPER_HMR_TAG "${TAG_SLUG}"
+      # CASPER: PR 2 — boot the new HMR daemon by default in reload.sh-built
+      # Casper apps. CasperHMRDaemon gates on this; default-off in stock cmux.
+      set_plist_env "$INFO_PLIST" CASPER_HMR_NEW "1"
       set_plist_env "$INFO_PLIST" CMUX_PORT "$CMUX_DEV_PORT"
       set_plist_env "$INFO_PLIST" CMUX_PORT_END "$CMUX_DEV_PORT_END"
       set_plist_env "$INFO_PLIST" CMUX_PORT_RANGE "$CMUX_DEV_PORT_RANGE"
@@ -697,6 +712,8 @@ if [[ "$LAUNCH" -eq 1 ]]; then
     CMUX_DEBUG_LOG="$CMUX_DEBUG_LOG"
     CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD=1
     CMUXTERM_REPO_ROOT="$PWD"
+    CASPER_HMR_TAG="${TAG_SLUG:-agent}"
+    CASPER_HMR_NEW="1"
     CMUX_PORT="$CMUX_DEV_PORT"
     CMUX_PORT_END="$CMUX_DEV_PORT_END"
     CMUX_PORT_RANGE="$CMUX_DEV_PORT_RANGE"
