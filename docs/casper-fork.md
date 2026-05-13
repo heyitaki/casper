@@ -167,6 +167,20 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete if upstream restores `customTitlebar`/`WindowDragHandleView` in minimal mode or otherwise blocks AppKit's auto-titlebar-drag for the bonsplit tab strip.
 
+### Find-sidebar ripgrep result ranking (flag-gated)
+
+- Files (added):
+  - `Sources/Casper/Search/CasperSearchConfig.swift`
+  - `Sources/Casper/Search/CasperFileSearchRanking.swift`
+- Files (upstream files modified):
+  - `Sources/FileExplorerSearchController.swift` (one-line hook in `emit(status:isSearching:)` that re-ranks `results` through `CasperFileSearchRanking.rank` before publishing the snapshot)
+  - `GhosttyTabs.xcodeproj/project.pbxproj` (registers the two new files)
+- Summary:
+  - Stock cmux streams ripgrep matches into the Find pane in walk order with no grouping or relevance signal, so searching `game` in a large repo can surface twenty README hits before `Game.ts`. This patch groups hits by file and tiers files by basename relevance: tier 0 = basename stem equals the query, tier 1 = basename contains the query, tier 2 = body-only match. Within each tier files sort alphabetically by relative path; within each file hits sort by line number. The re-rank runs at the snapshot boundary so the streaming pipeline is untouched.
+  - Enable with env `CMUX_CASPER_SEARCH_RANKING=1` or Info.plist key `CasperSearchRankingEnabled = YES`. Brand-name fallback turns it on for Casper builds and leaves stock cmux unchanged.
+- Deletion condition:
+  - Delete if upstream cmux ships its own ranked Find-sidebar pipeline (e.g. Zoekt/trigram index) that supersedes this post-hoc grouping.
+
 ### CodeEditSourceEditor-backed text editor (flag-gated)
 
 - Files (added):

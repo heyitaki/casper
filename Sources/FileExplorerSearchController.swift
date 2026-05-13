@@ -525,9 +525,12 @@ final class FileSearchController: FileSearchControlling {
     }
 
     private func emit(status: FileSearchSnapshot.Status, isSearching: Bool) {
+        let query = request?.query ?? ""
+        // CASPER: re-rank arrival-order rg matches into per-file tier buckets; delete if upstream adds its own ranked Find pipeline.
+        let displayResults = CasperFileSearchRanking.rank(results, query: query)
         onSnapshotChanged?(FileSearchSnapshot(
-            query: request?.query ?? "",
-            results: results,
+            query: query,
+            results: displayResults,
             status: status,
             isSearching: isSearching
         ))
