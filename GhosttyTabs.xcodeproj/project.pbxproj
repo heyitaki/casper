@@ -309,6 +309,7 @@
 		CA58400A0000000000000001 /* Casper/Search/CasperFileSearchRanking.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */; };
 		CA58400B0000000000000001 /* Casper/Config/CasperBuildEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */; };
 		CA58400C0000000000000001 /* CasperFileSearchRankingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400C0000000000000002 /* CasperFileSearchRankingTests.swift */; };
+		CA5840150000000000000001 /* Casper/Reload/CasperReloadTitlebarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840150000000000000002 /* Casper/Reload/CasperReloadTitlebarButton.swift */; };
 		CB23911D7E131E8FBC9B82B6 /* SidebarOrderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC39DE4B96D1931C52AF7D68 /* SidebarOrderingTests.swift */; };
 		D0B10000A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0B10001A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift */; };
 		D0B10002A1B2C3D4E5F60001 /* BonsplitTabBarPassThrough.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0B10003A1B2C3D4E5F60001 /* BonsplitTabBarPassThrough.swift */; };
@@ -814,6 +815,7 @@
 		CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperFileSearchRanking.swift; sourceTree = "<group>"; };
 		CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Config/CasperBuildEnvironment.swift; sourceTree = "<group>"; };
 		CA58400C0000000000000002 /* CasperFileSearchRankingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CasperFileSearchRankingTests.swift; sourceTree = "<group>"; };
+		CA5840150000000000000002 /* Casper/Reload/CasperReloadTitlebarButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Reload/CasperReloadTitlebarButton.swift; sourceTree = "<group>"; };
 		D0B10001A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneDropTargetView.swift; sourceTree = "<group>"; };
 		D0B10003A1B2C3D4E5F60001 /* BonsplitTabBarPassThrough.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonsplitTabBarPassThrough.swift; sourceTree = "<group>"; };
 		D0B10005A1B2C3D4E5F60001 /* WorkspacePortalPaneDrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePortalPaneDrop.swift; sourceTree = "<group>"; };
@@ -1160,6 +1162,7 @@
 				CA5840090000000000000002 /* Casper/Search/CasperSearchConfig.swift */,
 				CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */,
 				CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */,
+				CA5840150000000000000002 /* Casper/Reload/CasperReloadTitlebarButton.swift */,
 				C0DE32470000000000000002 /* ContentViewIdentifierCopyCommands.swift */,
 				9960CC3992F3C44489E7627C /* App/WorkspaceRuntimeSettings.swift */,
 				243632BA1DBBA36FD46E0610 /* Sidebar/SidebarAppearanceSupport.swift */,
@@ -1844,6 +1847,7 @@
 				CA5840090000000000000001 /* Casper/Search/CasperSearchConfig.swift in Sources */,
 				CA58400A0000000000000001 /* Casper/Search/CasperFileSearchRanking.swift in Sources */,
 				CA58400B0000000000000001 /* Casper/Config/CasperBuildEnvironment.swift in Sources */,
+				CA5840150000000000000001 /* Casper/Reload/CasperReloadTitlebarButton.swift in Sources */,
 				C0DE32470000000000000001 /* ContentViewIdentifierCopyCommands.swift in Sources */,
 				619D509BC9B1EA946CBD6A8A /* App/WorkspaceRuntimeSettings.swift in Sources */,
 				211A75777F433ED8BA5AE208 /* Sidebar/SidebarAppearanceSupport.swift in Sources */,

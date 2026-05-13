@@ -540,6 +540,13 @@ struct TitlebarControlsView: View {
     private func controlsGroup(config: TitlebarControlsStyleConfig) -> some View {
         let hintLayoutItems = titlebarHintLayoutItems(config: config)
         let content = HStack(spacing: config.spacing) {
+            #if DEBUG
+            // CASPER: in-app reload for the currently running tag. Hides itself
+            // for non-Casper builds and untagged/non-dev runs. Delete if upstream
+            // adds a generic dev reload affordance.
+            CasperReloadTitlebarButton(config: config)
+            #endif
+
             TitlebarControlButton(
                 config: config,
                 accessibilityIdentifier: "titlebarControl.toggleSidebar",

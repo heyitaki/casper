@@ -99,6 +99,15 @@ cd cmuxd && zig build -Doptimize=ReleaseFast
 ./scripts/reload2.sh --tag <tag>
 ```
 
+`reload-casper-preview` = build the dedicated Casper iteration target. Tag `casper-preview`, app name `Casper Preview`, distinct bundle id and DerivedData from the pinned `--tag casper --name "Casper"` app:
+
+```bash
+./scripts/reload-casper-preview.sh           # build only
+./scripts/reload-casper-preview.sh --launch  # build and open
+```
+
+For Casper-fork agents: **after UI/UX changes, default to `reload-casper-preview`**. Only rebuild the lived-in pinned Casper (`./scripts/reload.sh --tag casper --name "Casper"`) when the user explicitly asks for it — the pinned app holds open workspaces, terminals, browser panels, and editor state across sessions and should not be disturbed by routine iteration. Both `Casper.app` and `Casper Preview.app` have stable DerivedData paths and can be Dock-pinned independently.
+
 For parallel/isolated builds (e.g., testing a feature alongside the main app), use `--tag` with a short descriptive name:
 
 ```bash

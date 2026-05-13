@@ -569,6 +569,7 @@ if [[ -n "$TAG" && "$APP_NAME" != "$SEARCH_APP_NAME" ]]; then
       set_plist_env "$INFO_PLIST" CMUX_SOCKET_MODE "allowAll"
       set_plist_env "$INFO_PLIST" CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD "1"
       set_plist_env "$INFO_PLIST" CMUXTERM_REPO_ROOT "$PWD"
+      set_plist_env "$INFO_PLIST" CMUX_TAG "$TAG_SLUG"
       set_plist_env "$INFO_PLIST" CMUX_PORT "$CMUX_DEV_PORT"
       set_plist_env "$INFO_PLIST" CMUX_PORT_END "$CMUX_DEV_PORT_END"
       set_plist_env "$INFO_PLIST" CMUX_PORT_RANGE "$CMUX_DEV_PORT_RANGE"
