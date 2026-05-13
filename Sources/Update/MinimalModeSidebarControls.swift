@@ -4,12 +4,13 @@ import SwiftUI
 
 struct MinimalModeSidebarControlActionProxyView: NSViewRepresentable {
     let config: TitlebarControlsStyleConfig
+    var slots: [MinimalModeSidebarControlActionSlot] = TitlebarControlsHitRegions.defaultSlots
     var isEnabled = true
     var requiresRevealedState = false
     let onAction: (MinimalModeSidebarControlActionSlot, NSView, NSPoint) -> Void
 
     func makeNSView(context: Context) -> MinimalModeSidebarControlActionView {
-        let view = MinimalModeSidebarControlActionView()
+        let view = MinimalModeSidebarControlActionView(slots: slots)
         configure(view)
         return view
     }
@@ -20,6 +21,7 @@ struct MinimalModeSidebarControlActionProxyView: NSViewRepresentable {
 
     private func configure(_ view: MinimalModeSidebarControlActionView) {
         view.config = config
+        view.slots = slots
         view.isEnabled = isEnabled
         view.requiresRevealedState = requiresRevealedState
         view.onAction = onAction
@@ -28,14 +30,17 @@ struct MinimalModeSidebarControlActionProxyView: NSViewRepresentable {
 
 enum TitlebarControlsHitRegions {
     static let outerLeadingPadding: CGFloat = 4
-    static let buttonCount = 3
+    static let defaultSlots: [MinimalModeSidebarControlActionSlot] = [.toggleSidebar, .showNotifications, .newTab]
 
-    static func buttonXRanges(config: TitlebarControlsStyleConfig) -> [ClosedRange<CGFloat>] {
+    static func buttonXRanges(
+        config: TitlebarControlsStyleConfig,
+        slots: [MinimalModeSidebarControlActionSlot] = defaultSlots
+    ) -> [ClosedRange<CGFloat>] {
         var ranges: [ClosedRange<CGFloat>] = []
-        ranges.reserveCapacity(buttonCount)
+        ranges.reserveCapacity(slots.count)
 
         var minX = outerLeadingPadding + config.groupPadding.leading
-        for _ in 0..<buttonCount {
+        for _ in 0..<slots.count {
             let maxX = minX + config.buttonSize
             ranges.append(minX...maxX)
             minX = maxX + config.spacing
@@ -44,24 +49,33 @@ enum TitlebarControlsHitRegions {
         return ranges
     }
 
-    static func totalContentWidth(config: TitlebarControlsStyleConfig) -> CGFloat {
-        let buttons = CGFloat(buttonCount) * config.buttonSize
-        let spacings = CGFloat(buttonCount - 1) * config.spacing
+    static func totalContentWidth(
+        config: TitlebarControlsStyleConfig,
+        slots: [MinimalModeSidebarControlActionSlot] = defaultSlots
+    ) -> CGFloat {
+        let count = max(slots.count, 1)
+        let buttons = CGFloat(count) * config.buttonSize
+        let spacings = CGFloat(count - 1) * config.spacing
         return outerLeadingPadding + config.groupPadding.leading + buttons + spacings + config.groupPadding.trailing
     }
 
     static func sidebarActionSlot(
         at point: NSPoint,
-        config: TitlebarControlsStyleConfig
+        config: TitlebarControlsStyleConfig,
+        slots: [MinimalModeSidebarControlActionSlot] = defaultSlots
     ) -> MinimalModeSidebarControlActionSlot? {
-        for (index, range) in buttonXRanges(config: config).enumerated() where range.contains(point.x) {
-            return MinimalModeSidebarControlActionSlot(rawValue: index)
+        for (index, range) in buttonXRanges(config: config, slots: slots).enumerated() where range.contains(point.x) {
+            return slots[index]
         }
         return nil
     }
 
-    static func pointFallsInButtonColumn(_ point: NSPoint, config: TitlebarControlsStyleConfig) -> Bool {
-        sidebarActionSlot(at: point, config: config) != nil
+    static func pointFallsInButtonColumn(
+        _ point: NSPoint,
+        config: TitlebarControlsStyleConfig,
+        slots: [MinimalModeSidebarControlActionSlot] = defaultSlots
+    ) -> Bool {
+        sidebarActionSlot(at: point, config: config, slots: slots) != nil
     }
 }
 
@@ -69,6 +83,14 @@ final class MinimalModeSidebarControlActionView: NSView {
     var config = TitlebarControlsStyle.classic.config
     {
         didSet { needsLayout = true }
+    }
+    var slots: [MinimalModeSidebarControlActionSlot] = TitlebarControlsHitRegions.defaultSlots
+    {
+        didSet {
+            guard slots != oldValue else { return }
+            needsLayout = true
+            syncButtons()
+        }
     }
     var isEnabled = true
     {
@@ -83,12 +105,16 @@ final class MinimalModeSidebarControlActionView: NSView {
     private var cancellables: Set<AnyCancellable> = []
     private let buttons: [MinimalModeSidebarControlActionSlot: MinimalModeSidebarControlButton]
 
-    override init(frame frameRect: NSRect) {
+    init(
+        frame frameRect: NSRect = .zero,
+        slots: [MinimalModeSidebarControlActionSlot] = TitlebarControlsHitRegions.defaultSlots
+    ) {
         var buttons: [MinimalModeSidebarControlActionSlot: MinimalModeSidebarControlButton] = [:]
-        for slot in [MinimalModeSidebarControlActionSlot.toggleSidebar, .showNotifications, .newTab] {
+        for slot in MinimalModeSidebarControlActionSlot.allCases {
             buttons[slot] = Self.makeButton(for: slot)
         }
         self.buttons = buttons
+        self.slots = slots
         super.init(frame: frameRect)
         for (slot, button) in buttons {
             button.target = self
@@ -103,7 +129,7 @@ final class MinimalModeSidebarControlActionView: NSView {
 
     required init?(coder: NSCoder) {
         var buttons: [MinimalModeSidebarControlActionSlot: MinimalModeSidebarControlButton] = [:]
-        for slot in [MinimalModeSidebarControlActionSlot.toggleSidebar, .showNotifications, .newTab] {
+        for slot in MinimalModeSidebarControlActionSlot.allCases {
             buttons[slot] = Self.makeButton(for: slot)
         }
         self.buttons = buttons
@@ -145,7 +171,7 @@ final class MinimalModeSidebarControlActionView: NSView {
 
     override func accessibilityChildren() -> [Any]? {
         guard isRevealed || !requiresRevealedState else { return [] }
-        return [MinimalModeSidebarControlActionSlot.toggleSidebar, .showNotifications, .newTab].compactMap { buttons[$0] }
+        return slots.compactMap { buttons[$0] }
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -159,7 +185,7 @@ final class MinimalModeSidebarControlActionView: NSView {
             return nil
         }
         guard bounds.contains(point) else { return nil }
-        guard let slot = TitlebarControlsHitRegions.sidebarActionSlot(at: point, config: config) else {
+        guard let slot = TitlebarControlsHitRegions.sidebarActionSlot(at: point, config: config, slots: slots) else {
             return nil
         }
         if NSApp.currentEvent?.type == .rightMouseDown, slot != .newTab {
@@ -181,7 +207,7 @@ final class MinimalModeSidebarControlActionView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let localPoint = convert(event.locationInWindow, from: nil)
-        guard let slot = TitlebarControlsHitRegions.sidebarActionSlot(at: localPoint, config: config) else {
+        guard let slot = TitlebarControlsHitRegions.sidebarActionSlot(at: localPoint, config: config, slots: slots) else {
             super.mouseDown(with: event)
             return
         }
@@ -194,7 +220,7 @@ final class MinimalModeSidebarControlActionView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         let localPoint = convert(event.locationInWindow, from: nil)
-        guard let slot = TitlebarControlsHitRegions.sidebarActionSlot(at: localPoint, config: config),
+        guard let slot = TitlebarControlsHitRegions.sidebarActionSlot(at: localPoint, config: config, slots: slots),
               slot == .newTab,
               shouldAcceptAction(at: localPoint) else {
             super.rightMouseDown(with: event)
@@ -205,10 +231,13 @@ final class MinimalModeSidebarControlActionView: NSView {
 
     override func layout() {
         super.layout()
-        let ranges = TitlebarControlsHitRegions.buttonXRanges(config: config)
+        let ranges = TitlebarControlsHitRegions.buttonXRanges(config: config, slots: slots)
+        for (slot, button) in buttons {
+            button.isHidden = !slots.contains(slot)
+        }
         for (index, range) in ranges.enumerated() {
-            guard let slot = MinimalModeSidebarControlActionSlot(rawValue: index),
-                  let button = buttons[slot] else { continue }
+            let slot = slots[index]
+            guard let button = buttons[slot] else { continue }
             button.frame = NSRect(
                 x: range.lowerBound,
                 y: max(0, (bounds.height - config.buttonSize) / 2),
@@ -267,9 +296,10 @@ final class MinimalModeSidebarControlActionView: NSView {
 
     private func syncButtons() {
         let revealed = isRevealed
-        for button in buttons.values {
-            button.isEnabled = isEnabled && (revealed || !requiresRevealedState)
-            button.setAccessibilityElement(revealed || !requiresRevealedState)
+        for (slot, button) in buttons {
+            let isActive = slots.contains(slot)
+            button.isEnabled = isActive && isEnabled && (revealed || !requiresRevealedState)
+            button.setAccessibilityElement(isActive && (revealed || !requiresRevealedState))
         }
     }
 

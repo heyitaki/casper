@@ -9513,7 +9513,6 @@ struct VerticalTabsSidebar: View {
                             HiddenTitlebarSidebarControlsView(
                                 notificationStore: notificationStore,
                                 iconAlignment: .trailing,
-                                onToggleSidebar: onToggleSidebar,
                                 onToggleNotifications: { anchorView in
                                     AppDelegate.shared?.toggleNotificationsPopover(
                                         animated: true,

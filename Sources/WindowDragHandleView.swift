@@ -542,7 +542,7 @@ enum MinimalModeSidebarTitlebarControlsMetrics {
     static let singleButtonHostWidth: CGFloat = hostHeight
 }
 
-enum MinimalModeSidebarControlActionSlot: Int {
+enum MinimalModeSidebarControlActionSlot: Int, CaseIterable {
     case toggleSidebar
     case showNotifications
     case newTab

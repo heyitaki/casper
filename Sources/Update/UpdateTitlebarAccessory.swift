@@ -430,6 +430,11 @@ struct TitlebarControlsView: View {
     let onToggleNotifications: () -> Void
     let onNewTab: () -> Void
     let visibilityMode: TitlebarControlsVisibilityMode
+    /// Slots to render, in order. Defaults to all three (sidebar toggle,
+    /// notifications, new tab); the in-sidebar overlay passes a shorter list
+    /// to drop the sidebar-toggle button while keeping it in the macOS
+    /// titlebar accessory.
+    var slots: [MinimalModeSidebarControlActionSlot] = TitlebarControlsHitRegions.defaultSlots
     /// When set, replaces the default `titlebarHintTrailingInset`. Use 0 to
     /// drop the shortcut-hint shadow clearance when the host is sized to the
     /// natural content width (e.g. right-aligned sidebar icons in windowed mode).
@@ -446,20 +451,14 @@ struct TitlebarControlsView: View {
     private let titlebarHintRightSafetyShift: CGFloat = 10
     private let titlebarHintBaseXShift: CGFloat = -10
 
-    private enum HintSlot: Int, CaseIterable {
-        case toggleSidebar
-        case showNotifications
-        case newTab
-
-        var action: KeyboardShortcutSettings.Action {
-            switch self {
-            case .toggleSidebar:
-                return .toggleSidebar
-            case .showNotifications:
-                return .showNotifications
-            case .newTab:
-                return .newTab
-            }
+    private static func keyboardAction(for slot: MinimalModeSidebarControlActionSlot) -> KeyboardShortcutSettings.Action {
+        switch slot {
+        case .toggleSidebar:
+            return .toggleSidebar
+        case .showNotifications:
+            return .showNotifications
+        case .newTab:
+            return .newTab
         }
     }
 
@@ -537,40 +536,39 @@ struct TitlebarControlsView: View {
     }
 
     @ViewBuilder
-    private func controlsGroup(config: TitlebarControlsStyleConfig) -> some View {
-        let hintLayoutItems = titlebarHintLayoutItems(config: config)
-        let content = HStack(spacing: config.spacing) {
-            #if DEBUG
-            // CASPER: in-app reload for the currently running tag. Hides itself
-            // for non-Casper builds and untagged/non-dev runs. Delete if upstream
-            // adds a generic dev reload affordance.
-            CasperReloadTitlebarButton(config: config)
-            #endif
-
+    private func slotButton(
+        _ slot: MinimalModeSidebarControlActionSlot,
+        config: TitlebarControlsStyleConfig
+    ) -> some View {
+        switch slot {
+        case .toggleSidebar:
             TitlebarControlButton(
                 config: config,
-                accessibilityIdentifier: "titlebarControl.toggleSidebar",
-                accessibilityLabel: String(localized: "titlebar.sidebar.accessibilityLabel", defaultValue: "Toggle Sidebar"),
+                accessibilityIdentifier: slot.accessibilityIdentifier,
+                accessibilityLabel: slot.accessibilityLabel,
                 action: {
-                #if DEBUG
-                cmuxDebugLog("titlebar.toggleSidebar")
-                #endif
-                onToggleSidebar()
-            }) {
+                    #if DEBUG
+                    cmuxDebugLog("titlebar.toggleSidebar")
+                    #endif
+                    onToggleSidebar()
+                }
+            ) {
                 iconLabel(systemName: "sidebar.left", config: config)
             }
             .safeHelp(KeyboardShortcutSettings.Action.toggleSidebar.tooltip(String(localized: "titlebar.sidebar.tooltip", defaultValue: "Show or hide the sidebar")))
 
+        case .showNotifications:
             TitlebarControlButton(
                 config: config,
-                accessibilityIdentifier: "titlebarControl.showNotifications",
-                accessibilityLabel: String(localized: "titlebar.notifications.accessibilityLabel", defaultValue: "Notifications"),
+                accessibilityIdentifier: slot.accessibilityIdentifier,
+                accessibilityLabel: slot.accessibilityLabel,
                 action: {
-                #if DEBUG
-                cmuxDebugLog("titlebar.notifications")
-                #endif
-                onToggleNotifications()
-            }) {
+                    #if DEBUG
+                    cmuxDebugLog("titlebar.notifications")
+                    #endif
+                    onToggleNotifications()
+                }
+            ) {
                 ZStack(alignment: .topTrailing) {
                     iconLabel(systemName: "bell", config: config)
 
@@ -590,23 +588,41 @@ struct TitlebarControlsView: View {
             .background(NotificationsAnchorView { viewModel.notificationsAnchorView = $0 })
             .safeHelp(KeyboardShortcutSettings.Action.showNotifications.tooltip(String(localized: "titlebar.notifications.tooltip", defaultValue: "Show notifications")))
 
+        case .newTab:
             TitlebarControlButton(
                 config: config,
-                accessibilityIdentifier: "titlebarControl.newTab",
-                accessibilityLabel: String(localized: "titlebar.newWorkspace.accessibilityLabel", defaultValue: "New Workspace"),
+                accessibilityIdentifier: slot.accessibilityIdentifier,
+                accessibilityLabel: slot.accessibilityLabel,
                 action: {
-                #if DEBUG
-                cmuxDebugLog("titlebar.newTab")
-                #endif
-                onNewTab()
-            },
+                    #if DEBUG
+                    cmuxDebugLog("titlebar.newTab")
+                    #endif
+                    onNewTab()
+                },
                 rightClickAction: { anchorView, event in
                     _ = AppDelegate.shared?.showNewWorkspaceContextMenu(anchorView: anchorView, event: event)
-                }) {
+                }
+            ) {
                 iconLabel(systemName: "plus", config: config)
             }
             .safeHelp(KeyboardShortcutSettings.Action.newTab.tooltip(String(localized: "titlebar.newWorkspace.tooltip", defaultValue: "New workspace")))
+        }
+    }
 
+    @ViewBuilder
+    private func controlsGroup(config: TitlebarControlsStyleConfig) -> some View {
+        let hintLayoutItems = titlebarHintLayoutItems(config: config)
+        let content = HStack(spacing: config.spacing) {
+            #if DEBUG
+            // CASPER: in-app reload for the currently running tag. Hides itself
+            // for non-Casper builds and untagged/non-dev runs. Delete if upstream
+            // adds a generic dev reload affordance.
+            CasperReloadTitlebarButton(config: config)
+            #endif
+
+            ForEach(slots, id: \.self) { slot in
+                slotButton(slot, config: config)
+            }
         }
 
         let paddedContent = content.padding(config.groupPadding)
@@ -666,17 +682,18 @@ struct TitlebarControlsView: View {
     ) -> [(action: KeyboardShortcutSettings.Action, shortcut: StoredShortcut, width: CGFloat, interval: ClosedRange<CGFloat>)] {
         guard shouldShowTitlebarShortcutHints else { return [] }
 
-        return HintSlot.allCases.compactMap { slot in
-            let shortcut = KeyboardShortcutSettings.shortcut(for: slot.action)
+        return slots.enumerated().compactMap { index, slot in
+            let action = Self.keyboardAction(for: slot)
+            let shortcut = KeyboardShortcutSettings.shortcut(for: action)
             guard shortcut.command else { return nil }
 
             let width = titlebarHintWidth(for: shortcut, config: config)
             let rightEdge = config.groupPadding.leading
-                + titlebarButtonRightEdge(for: slot, config: config)
+                + titlebarButtonRightEdge(forSlotIndex: index, config: config)
                 + xOffset
                 + titlebarHintRightSafetyShift
                 + titlebarHintBaseXShift
-            return (slot.action, shortcut, width, (rightEdge - width)...rightEdge)
+            return (action, shortcut, width, (rightEdge - width)...rightEdge)
         }
     }
 
@@ -686,9 +703,9 @@ struct TitlebarControlsView: View {
         return ceil(textWidth) + 12
     }
 
-    private func titlebarButtonRightEdge(for slot: HintSlot, config: TitlebarControlsStyleConfig) -> CGFloat {
-        let index = CGFloat(slot.rawValue)
-        return (index + 1) * config.buttonSize + index * config.spacing
+    private func titlebarButtonRightEdge(forSlotIndex index: Int, config: TitlebarControlsStyleConfig) -> CGFloat {
+        let i = CGFloat(index)
+        return (i + 1) * config.buttonSize + i * config.spacing
     }
 
     @ViewBuilder
@@ -741,26 +758,30 @@ struct TitlebarControlsView: View {
 
 private struct TitlebarControlsGapDragView: NSViewRepresentable {
     let config: TitlebarControlsStyleConfig
+    var slots: [MinimalModeSidebarControlActionSlot] = TitlebarControlsHitRegions.defaultSlots
 
     func makeNSView(context: Context) -> GapDragView {
         let view = GapDragView()
         view.config = config
+        view.slots = slots
         return view
     }
 
     func updateNSView(_ nsView: GapDragView, context: Context) {
         nsView.config = config
+        nsView.slots = slots
     }
 
     final class GapDragView: NSView {
         var config = TitlebarControlsStyle.classic.config
+        var slots: [MinimalModeSidebarControlActionSlot] = TitlebarControlsHitRegions.defaultSlots
 
         override var mouseDownCanMoveWindow: Bool { false }
 
         override func hitTest(_ point: NSPoint) -> NSView? {
             guard NSApp.currentEvent?.type == .leftMouseDown else { return nil }
             guard bounds.contains(point) else { return nil }
-            guard !TitlebarControlsHitRegions.pointFallsInButtonColumn(point, config: config) else {
+            guard !TitlebarControlsHitRegions.pointFallsInButtonColumn(point, config: config, slots: slots) else {
                 return nil
             }
             return self
@@ -789,20 +810,24 @@ private struct TitlebarControlsGapDragView: NSViewRepresentable {
 
 private struct MinimalModeTitlebarButtonHitRegionView: NSViewRepresentable {
     let config: TitlebarControlsStyleConfig
+    var slots: [MinimalModeSidebarControlActionSlot] = TitlebarControlsHitRegions.defaultSlots
 
     func makeNSView(context: Context) -> ButtonHitRegionView {
         let view = ButtonHitRegionView()
         view.config = config
+        view.slots = slots
         return view
     }
 
     func updateNSView(_ nsView: ButtonHitRegionView, context: Context) {
         nsView.config = config
+        nsView.slots = slots
         MinimalModeTitlebarControlHitRegionRegistry.register(nsView)
     }
 
     final class ButtonHitRegionView: NSView, MinimalModeSidebarControlActionHitRegionProviding {
         var config = TitlebarControlsStyle.classic.config
+        var slots: [MinimalModeSidebarControlActionSlot] = TitlebarControlsHitRegions.defaultSlots
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -820,7 +845,7 @@ private struct MinimalModeTitlebarButtonHitRegionView: NSViewRepresentable {
         }
 
         func minimalModeSidebarControlActionSlot(localPoint: NSPoint) -> MinimalModeSidebarControlActionSlot? {
-            TitlebarControlsHitRegions.sidebarActionSlot(at: localPoint, config: config)
+            TitlebarControlsHitRegions.sidebarActionSlot(at: localPoint, config: config, slots: slots)
         }
 
         deinit {
@@ -835,9 +860,11 @@ struct HiddenTitlebarSidebarControlsView: View {
     /// the host to the natural content width so icons hug the sidebar's right
     /// edge in windowed mode.
     var iconAlignment: HorizontalAlignment = .leading
-    let onToggleSidebar: () -> Void
     let onToggleNotifications: (NSView?) -> Void
     let onNewTab: () -> Void
+    // CASPER: delete and revert to defaults if upstream drops the sidebar
+    // toggle from the in-sidebar overlay.
+    private let slots: [MinimalModeSidebarControlActionSlot] = [.showNotifications, .newTab]
     @StateObject private var viewModel = TitlebarControlsViewModel()
     @ObservedObject private var popoverVisibilityState = NotificationsPopoverVisibilityState.shared
     @State private var isHoveringHost = false
@@ -856,7 +883,7 @@ struct HiddenTitlebarSidebarControlsView: View {
         let style = TitlebarControlsStyle(rawValue: styleRawValue) ?? .classic
         let isTrailing = iconAlignment == .trailing
         let hostWidth: CGFloat = isTrailing
-            ? TitlebarControlsHitRegions.totalContentWidth(config: style.config)
+            ? TitlebarControlsHitRegions.totalContentWidth(config: style.config, slots: slots)
             : MinimalModeSidebarTitlebarControlsMetrics.hostWidth
         let frameAlignment = Alignment(horizontal: iconAlignment, vertical: .center)
         // Trailing-aligned mode zeroes the shortcut-hint clearance so icons
@@ -897,12 +924,13 @@ struct HiddenTitlebarSidebarControlsView: View {
             TitlebarControlsView(
                 notificationStore: notificationStore,
                 viewModel: viewModel,
-                onToggleSidebar: onToggleSidebar,
+                onToggleSidebar: {},
                 onToggleNotifications: { [viewModel] in
                     onToggleNotifications(viewModel.notificationsAnchorView)
                 },
                 onNewTab: onNewTab,
                 visibilityMode: .alwaysVisible,
+                slots: slots,
                 trailingInsetOverride: trailingInsetOverride
             )
             .frame(
@@ -915,7 +943,7 @@ struct HiddenTitlebarSidebarControlsView: View {
             .accessibilityHidden(true)
             .animation(.easeInOut(duration: 0.14), value: shouldPinControls)
 
-            TitlebarControlsGapDragView(config: style.config)
+            TitlebarControlsGapDragView(config: style.config, slots: slots)
                 .frame(
                     width: hostWidth,
                     height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight
@@ -923,11 +951,12 @@ struct HiddenTitlebarSidebarControlsView: View {
 
             MinimalModeSidebarControlActionProxyView(
                 config: style.config,
+                slots: slots,
                 requiresRevealedState: true
             ) { slot, anchorView, _ in
                 switch slot {
                 case .toggleSidebar:
-                    onToggleSidebar()
+                    break
                 case .showNotifications:
                     onToggleNotifications(anchorView)
                 case .newTab:
@@ -951,7 +980,7 @@ struct HiddenTitlebarSidebarControlsView: View {
             height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight,
             alignment: frameAlignment
         )
-        .background(MinimalModeTitlebarButtonHitRegionView(config: style.config))
+        .background(MinimalModeTitlebarButtonHitRegionView(config: style.config, slots: slots))
         .onReceive(MinimalModeSidebarChromeHoverState.shared.$hoveredWindowNumber) { hoveredWindowNumber in
             isHoveringWindowChrome = hostWindowNumber == hoveredWindowNumber
             #if DEBUG
