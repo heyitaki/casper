@@ -27,6 +27,24 @@ struct cmuxApp: App {
             Self.terminateForMissingLaunchTag()
         }
 
+        // CASPER: PR 2 of the casper-hmr migration. The new daemon
+        // (Sources/Casper/HMR/) is on by default for DEBUG; set
+        // CASPER_HMR_NEW=0 to fall back to InjectionLite while it's still
+        // around. PR 3 deletes the InjectionLite branch entirely along with
+        // this gate.
+        #if DEBUG
+        let casperHMRNew = ProcessInfo.processInfo.environment["CASPER_HMR_NEW"] != "0"
+        #else
+        let casperHMRNew = false
+        #endif
+        if casperHMRNew {
+            casperHMRBootstrap() // CASPER: starts the new HMR daemon (FSEvents + dlopen interpose).
+        } else {
+            casperCaptureStdoutForHotReload() // CASPER: capture InjectionLite stdout for Dock launches; no-op in Release.
+            casperPrimeInjectionLogsPath() // CASPER: pre-populate InjectionLite's build-logs path so the first edit can find swiftc commands; no-op in Release.
+            casperHotReloadBootstrap() // CASPER: starts InjectionLite FileWatcher; no-op in Release.
+        }
+
         Self.configureGhosttyEnvironment()
         _ = KeyboardShortcutSettings.settingsFileStore
 
@@ -323,6 +341,8 @@ struct cmuxApp: App {
                 }
 
                 Divider()
+                CasperHMRDebugMenuSection()
+                Divider()
                 Menu("Debug Windows") {
                     Button("Background Debug…") {
                         BackgroundDebugWindowController.shared.show()
@@ -345,6 +365,14 @@ struct cmuxApp: App {
                         )
                     ) {
                         BrowserProfilePopoverDebugWindowController.shared.show()
+                    }
+                    Button(
+                        String(
+                            localized: "casper.hmr.window.recent_swaps.title",
+                            defaultValue: "Casper HMR Recent Swaps"
+                        ) + "…"
+                    ) {
+                        CasperHMRDebugWindow.shared.show()
                     }
                     Button("Debug Window Controls…") {
                         DebugWindowControlsWindowController.shared.show()

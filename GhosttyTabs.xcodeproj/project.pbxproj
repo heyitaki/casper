@@ -95,6 +95,7 @@
 		A5001250 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = A5001251 /* Sentry */; };
 		A5001270 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = A5001271 /* PostHog */; };
 		A5001290 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A5001291 /* MarkdownUI */; };
+		CA9000030000000000000001 /* InjectionLite in Frameworks */ = {isa = PBXBuildFile; productRef = CA9000030000000000000002 /* InjectionLite */; };
 		A50012F1 /* Backport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50012F0 /* Backport.swift */; };
 		A50012F3 /* KeyboardShortcutSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50012F2 /* KeyboardShortcutSettings.swift */; };
 		A50012F5 /* KeyboardLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50012F4 /* KeyboardLayout.swift */; };
@@ -309,6 +310,15 @@
 		CA58400A0000000000000001 /* Casper/Search/CasperFileSearchRanking.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */; };
 		CA58400B0000000000000001 /* Casper/Config/CasperBuildEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */; };
 		CA58400C0000000000000001 /* CasperFileSearchRankingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400C0000000000000002 /* CasperFileSearchRankingTests.swift */; };
+		CA9000020000000000000001 /* Casper/Config/CasperHotReload.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9000020000000000000002 /* Casper/Config/CasperHotReload.swift */; };
+		CAHM00010000000000000001 /* Casper/HMR/CasperHMRConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00010000000000000002 /* Casper/HMR/CasperHMRConfig.swift */; };
+		CAHM00020000000000000001 /* Casper/HMR/CasperHMRReloadable.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00020000000000000002 /* Casper/HMR/CasperHMRReloadable.swift */; };
+		CAHM00030000000000000001 /* Casper/HMR/CasperHMRSourceClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00030000000000000002 /* Casper/HMR/CasperHMRSourceClassifier.swift */; };
+		CAHM00040000000000000001 /* Casper/HMR/CasperHMRSwiftcInvocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00040000000000000002 /* Casper/HMR/CasperHMRSwiftcInvocation.swift */; };
+		CAHM00050000000000000001 /* Casper/HMR/CasperHMRDaemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00050000000000000002 /* Casper/HMR/CasperHMRDaemon.swift */; };
+		CAHM00060000000000000001 /* Casper/HMR/CasperHMRDebugWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00060000000000000002 /* Casper/HMR/CasperHMRDebugWindow.swift */; };
+		CAHM00080000000000000001 /* Casper/HMR/CasperHMRInterposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00080000000000000002 /* Casper/HMR/CasperHMRInterposer.swift */; };
+		CAHM00090000000000000001 /* Casper/HMR/CasperHMRFieldOffsetPatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAHM00090000000000000002 /* Casper/HMR/CasperHMRFieldOffsetPatcher.swift */; };
 		CB23911D7E131E8FBC9B82B6 /* SidebarOrderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC39DE4B96D1931C52AF7D68 /* SidebarOrderingTests.swift */; };
 		D0B10000A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0B10001A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift */; };
 		D0B10002A1B2C3D4E5F60001 /* BonsplitTabBarPassThrough.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0B10003A1B2C3D4E5F60001 /* BonsplitTabBarPassThrough.swift */; };
@@ -813,6 +823,16 @@
 		CA5840090000000000000002 /* Casper/Search/CasperSearchConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperSearchConfig.swift; sourceTree = "<group>"; };
 		CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperFileSearchRanking.swift; sourceTree = "<group>"; };
 		CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Config/CasperBuildEnvironment.swift; sourceTree = "<group>"; };
+		CA9000020000000000000002 /* Casper/Config/CasperHotReload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Config/CasperHotReload.swift; sourceTree = "<group>"; };
+		CAHM00010000000000000002 /* Casper/HMR/CasperHMRConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRConfig.swift; sourceTree = "<group>"; };
+		CAHM00020000000000000002 /* Casper/HMR/CasperHMRReloadable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRReloadable.swift; sourceTree = "<group>"; };
+		CAHM00030000000000000002 /* Casper/HMR/CasperHMRSourceClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRSourceClassifier.swift; sourceTree = "<group>"; };
+		CAHM00040000000000000002 /* Casper/HMR/CasperHMRSwiftcInvocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRSwiftcInvocation.swift; sourceTree = "<group>"; };
+		CAHM00050000000000000002 /* Casper/HMR/CasperHMRDaemon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRDaemon.swift; sourceTree = "<group>"; };
+		CAHM00060000000000000002 /* Casper/HMR/CasperHMRDebugWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRDebugWindow.swift; sourceTree = "<group>"; };
+		CAHM00070000000000000002 /* Configs/Casper-Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Configs/Casper-Debug.xcconfig"; sourceTree = SOURCE_ROOT; };
+		CAHM00080000000000000002 /* Casper/HMR/CasperHMRInterposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRInterposer.swift; sourceTree = "<group>"; };
+		CAHM00090000000000000002 /* Casper/HMR/CasperHMRFieldOffsetPatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/HMR/CasperHMRFieldOffsetPatcher.swift; sourceTree = "<group>"; };
 		CA58400C0000000000000002 /* CasperFileSearchRankingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CasperFileSearchRankingTests.swift; sourceTree = "<group>"; };
 		D0B10001A1B2C3D4E5F60001 /* TerminalPaneDropTargetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneDropTargetView.swift; sourceTree = "<group>"; };
 		D0B10003A1B2C3D4E5F60001 /* BonsplitTabBarPassThrough.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BonsplitTabBarPassThrough.swift; sourceTree = "<group>"; };
@@ -970,6 +990,7 @@
 				A5001250 /* Sentry in Frameworks */,
 				A5001270 /* PostHog in Frameworks */,
 				A5001290 /* MarkdownUI in Frameworks */,
+				CA9000030000000000000001 /* InjectionLite in Frameworks */,
 				613B3DA02FB3BC5400D1A30E /* CodeEditSourceEditor in Frameworks */,
 				5EDB6027B346C46521A93C74 /* CMUXAuthCore in Frameworks */,
 				AA11BB22CC33DD44EE550001 /* CMUXWorkstream in Frameworks */,
@@ -1160,6 +1181,16 @@
 				CA5840090000000000000002 /* Casper/Search/CasperSearchConfig.swift */,
 				CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */,
 				CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */,
+				CA9000020000000000000002 /* Casper/Config/CasperHotReload.swift */,
+				CAHM00010000000000000002 /* Casper/HMR/CasperHMRConfig.swift */,
+				CAHM00020000000000000002 /* Casper/HMR/CasperHMRReloadable.swift */,
+				CAHM00030000000000000002 /* Casper/HMR/CasperHMRSourceClassifier.swift */,
+				CAHM00040000000000000002 /* Casper/HMR/CasperHMRSwiftcInvocation.swift */,
+				CAHM00050000000000000002 /* Casper/HMR/CasperHMRDaemon.swift */,
+				CAHM00060000000000000002 /* Casper/HMR/CasperHMRDebugWindow.swift */,
+				CAHM00080000000000000002 /* Casper/HMR/CasperHMRInterposer.swift */,
+				CAHM00090000000000000002 /* Casper/HMR/CasperHMRFieldOffsetPatcher.swift */,
+				CAHM00070000000000000002 /* Configs/Casper-Debug.xcconfig */,
 				C0DE32470000000000000002 /* ContentViewIdentifierCopyCommands.swift */,
 				9960CC3992F3C44489E7627C /* App/WorkspaceRuntimeSettings.swift */,
 				243632BA1DBBA36FD46E0610 /* Sidebar/SidebarAppearanceSupport.swift */,
@@ -1549,6 +1580,7 @@
 			buildConfigurationList = A5001060 /* Build configuration list for PBXNativeTarget "GhosttyTabs" */;
 			buildPhases = (
 				D2D6E00003A1B2C3D4E5F719 /* Ensure ripgrep */,
+				CAHC00010000000000000003 /* Casper HMR wrapper rebuild */,
 				A5001051 /* Sources */,
 				A5001030 /* Frameworks */,
 				A5001102 /* Resources */,
@@ -1570,6 +1602,7 @@
 				A5001271 /* PostHog */,
 				A5001261 /* Bonsplit */,
 				A5001291 /* MarkdownUI */,
+				CA9000030000000000000002 /* InjectionLite */,
 				29813FE5A6CBC1019289A251 /* CMUXAuthCore */,
 				AA11BB22CC33DD44EE550002 /* CMUXWorkstream */,
 				3069F1D10000000000000006 /* CMUXPasteboardFidelity */,
@@ -1700,6 +1733,7 @@
 				A5001252 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 				A5001272 /* XCRemoteSwiftPackageReference "posthog-ios" */,
 				A5001292 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+				CA9000030000000000000003 /* XCRemoteSwiftPackageReference "InjectionLite" */,
 				A5001260 /* XCLocalSwiftPackageReference "vendor/bonsplit" */,
 				40B63BB4A170F0BD2D1DEFD1 /* XCLocalSwiftPackageReference "Packages/CMUXAuthCore" */,
 				AA11BB22CC33DD44EE550003 /* XCLocalSwiftPackageReference "Packages/CMUXWorkstream" */,
@@ -1780,6 +1814,27 @@
 			shellPath = /bin/sh;
 			shellScript = "set -euo pipefail\nDEST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nGHOSTTY_DEST=\"${DEST}/ghostty\"\nTERMINFO_DEST=\"${DEST}/terminfo\"\nCMUX_SHELL_DEST=\"${DEST}/shell-integration\"\nBIN_DEST=\"${DEST}/bin\"\nSRC_SHARE=\"${SRCROOT}/ghostty/zig-out/share\"\nGHOSTTY_SRC=\"${SRC_SHARE}/ghostty\"\nTERMINFO_SRC=\"${SRC_SHARE}/terminfo\"\nFALLBACK_GHOSTTY=\"${SRCROOT}/Resources/ghostty\"\nFALLBACK_TERMINFO=\"${SRCROOT}/Resources/ghostty/terminfo\"\nTERMINFO_OVERLAY=\"${SRCROOT}/Resources/terminfo-overlay\"\nCMUX_SHELL_SRC=\"${SRCROOT}/Resources/shell-integration\"\nCMUX_GHOSTTY_ZSH_SRC=\"${SRCROOT}/ghostty/src/shell-integration/zsh/ghostty-integration\"\nBUILD_GHOSTTY_HELPER=\"${SRCROOT}/scripts/build-ghostty-cli-helper.sh\"\nGHOSTTY_HELPER_DEST=\"${BIN_DEST}/ghostty\"\nif [ -d \"$GHOSTTY_SRC\" ]; then\n  mkdir -p \"$GHOSTTY_DEST\"\n  rsync -a --delete \"$GHOSTTY_SRC/\" \"$GHOSTTY_DEST/\"\nelif [ -d \"$FALLBACK_GHOSTTY\" ]; then\n  mkdir -p \"$GHOSTTY_DEST\"\n  rsync -a --delete \"$FALLBACK_GHOSTTY/\" \"$GHOSTTY_DEST/\"\nfi\nif [ -d \"$TERMINFO_SRC\" ]; then\n  mkdir -p \"$TERMINFO_DEST\"\n  rsync -a --delete \"$TERMINFO_SRC/\" \"$TERMINFO_DEST/\"\nelif [ -d \"$FALLBACK_TERMINFO\" ]; then\n  mkdir -p \"$TERMINFO_DEST\"\n  rsync -a --delete \"$FALLBACK_TERMINFO/\" \"$TERMINFO_DEST/\"\nfi\n# Overlay any cmux-specific terminfo adjustments.\n# This intentionally does not use --delete so we only patch specific entries.\nif [ -d \"$TERMINFO_OVERLAY\" ]; then\n  mkdir -p \"$TERMINFO_DEST\"\n  rsync -a \"$TERMINFO_OVERLAY/\" \"$TERMINFO_DEST/\"\nfi\nif [ -d \"$CMUX_SHELL_SRC\" ]; then\n  mkdir -p \"$CMUX_SHELL_DEST\"\n  # Use '/.' so dotfiles like .zshenv/.zprofile are copied too.\n  rsync -a \"$CMUX_SHELL_SRC/.\" \"$CMUX_SHELL_DEST/\"\nfi\nif [ -f \"$CMUX_GHOSTTY_ZSH_SRC\" ]; then\n  mkdir -p \"$CMUX_SHELL_DEST\"\n  rsync -a \"$CMUX_GHOSTTY_ZSH_SRC\" \"$CMUX_SHELL_DEST/ghostty-integration.zsh\"\nfi\nif [ ! -x \"$BUILD_GHOSTTY_HELPER\" ]; then\n  echo \"error: missing Ghostty CLI helper build script at $BUILD_GHOSTTY_HELPER\" >&2\n  exit 1\nfi\nARCHS_LIST=\" ${ARCHS:-} \"\nHAS_ARM64=0\nHAS_X86_64=0\nGHOSTTY_HELPER_TARGET=\"\"\ncase \"$ARCHS_LIST\" in\n  *\" arm64 \"*) HAS_ARM64=1 ;;\nesac\ncase \"$ARCHS_LIST\" in\n  *\" x86_64 \"*) HAS_X86_64=1 ;;\nesac\nif [ \"$HAS_ARM64\" -eq 1 ] && [ \"$HAS_X86_64\" -eq 1 ]; then\n  \"$BUILD_GHOSTTY_HELPER\" --universal --output \"$GHOSTTY_HELPER_DEST\"\nelif [ \"$HAS_ARM64\" -eq 1 ]; then\n  GHOSTTY_HELPER_TARGET=\"aarch64-macos\"\nelif [ \"$HAS_X86_64\" -eq 1 ]; then\n  GHOSTTY_HELPER_TARGET=\"x86_64-macos\"\nfi\nif [ -n \"$GHOSTTY_HELPER_TARGET\" ]; then\n  \"$BUILD_GHOSTTY_HELPER\" --target \"$GHOSTTY_HELPER_TARGET\" --output \"$GHOSTTY_HELPER_DEST\"\nelif [ \"$HAS_ARM64\" -eq 0 ] || [ \"$HAS_X86_64\" -eq 0 ]; then\n  \"$BUILD_GHOSTTY_HELPER\" --output \"$GHOSTTY_HELPER_DEST\"\nfi\nif [ ! -x \"$GHOSTTY_HELPER_DEST\" ]; then\n  echo \"error: Ghostty CLI helper was not created at $GHOSTTY_HELPER_DEST\" >&2\n  exit 1\nfi\nINFO_PLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\nCOMMIT=\"$(git -C \"${SRCROOT}\" rev-parse --short=9 HEAD 2>/dev/null || true)\"\nif [ -n \"$COMMIT\" ] && [ -f \"$INFO_PLIST\" ]; then\n  /usr/libexec/PlistBuddy -c \"Set :CMUXCommit $COMMIT\" \"$INFO_PLIST\" >/dev/null 2>&1 || /usr/libexec/PlistBuddy -c \"Add :CMUXCommit string $COMMIT\" \"$INFO_PLIST\" >/dev/null 2>&1 || true\nfi\n";
 		};
+		CAHC00010000000000000003 /* Casper HMR wrapper rebuild */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Tools/Casper/swiftc-wrapper/Sources/casper-swiftc-wrapper/main.swift",
+				"$(SRCROOT)/Tools/Casper/swiftc-wrapper/Package.swift",
+			);
+			name = "Casper HMR wrapper rebuild";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(HOME)/.casper/hmr/tools/bin/casper-swiftc-wrapper",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# CASPER: build casper-swiftc-wrapper before swiftc runs (SWIFT_EXEC target).\n# Only meaningful for Debug; Release configs don't set SWIFT_EXEC.\nset -euo pipefail\nif [ \"${CONFIGURATION:-}\" != \"Debug\" ]; then exit 0; fi\nSRC=\"${SRCROOT}/Tools/Casper/swiftc-wrapper\"\nDEST_DIR=\"${HOME}/.casper/hmr/tools/bin\"\nDEST=\"${DEST_DIR}/casper-swiftc-wrapper\"\nif [ ! -d \"$SRC\" ]; then echo \"error: wrapper source missing at $SRC\" >&2; exit 1; fi\n# Scrub SWIFT_EXEC and SWIFT_USE_INTEGRATED_DRIVER so the wrapper's own SwiftPM\n# build doesn't recurse through itself or hit driver bypass.\nenv -u SWIFT_EXEC -u SWIFT_USE_INTEGRATED_DRIVER swift build --package-path \"$SRC\" -c release >/dev/null\nmkdir -p \"$DEST_DIR\"\nchmod 0700 \"$DEST_DIR\"\ncp \"${SRC}/.build/release/casper-swiftc-wrapper\" \"$DEST\"\nchmod 0700 \"$DEST\"\n";
+		};
 		D2D6E00003A1B2C3D4E5F719 /* Ensure ripgrep */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1844,6 +1899,15 @@
 				CA5840090000000000000001 /* Casper/Search/CasperSearchConfig.swift in Sources */,
 				CA58400A0000000000000001 /* Casper/Search/CasperFileSearchRanking.swift in Sources */,
 				CA58400B0000000000000001 /* Casper/Config/CasperBuildEnvironment.swift in Sources */,
+				CA9000020000000000000001 /* Casper/Config/CasperHotReload.swift in Sources */,
+				CAHM00010000000000000001 /* Casper/HMR/CasperHMRConfig.swift in Sources */,
+				CAHM00020000000000000001 /* Casper/HMR/CasperHMRReloadable.swift in Sources */,
+				CAHM00030000000000000001 /* Casper/HMR/CasperHMRSourceClassifier.swift in Sources */,
+				CAHM00040000000000000001 /* Casper/HMR/CasperHMRSwiftcInvocation.swift in Sources */,
+				CAHM00050000000000000001 /* Casper/HMR/CasperHMRDaemon.swift in Sources */,
+				CAHM00060000000000000001 /* Casper/HMR/CasperHMRDebugWindow.swift in Sources */,
+				CAHM00080000000000000001 /* Casper/HMR/CasperHMRInterposer.swift in Sources */,
+				CAHM00090000000000000001 /* Casper/HMR/CasperHMRFieldOffsetPatcher.swift in Sources */,
 				C0DE32470000000000000001 /* ContentViewIdentifierCopyCommands.swift in Sources */,
 				619D509BC9B1EA946CBD6A8A /* App/WorkspaceRuntimeSettings.swift in Sources */,
 				211A75777F433ED8BA5AE208 /* Sidebar/SidebarAppearanceSupport.swift in Sources */,
@@ -2359,6 +2423,7 @@
 		};
 		A5001082 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CAHM00070000000000000002 /* Configs/Casper-Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Debug";
 				CMUX_AUTH_CALLBACK_SCHEME = "cmux-dev";
@@ -2387,10 +2452,13 @@
 					UniformTypeIdentifiers,
 					"-framework",
 					Carbon,
+					"-Xlinker",
+					"-interposable",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.app.debug;
 				PRODUCT_NAME = "cmux DEV";
 				SPARKLE_PUBLIC_KEY = "avjcgKibf1FTvhIjLBxhd+0HSpsXU4D0IGlVk8cgqRc=";
+				SWIFT_COMPILATION_MODE = incremental;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "cmux-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -2715,6 +2783,14 @@
 				minimumVersion = 2.4.1;
 			};
 		};
+		CA9000030000000000000003 /* XCRemoteSwiftPackageReference "InjectionLite" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/johnno1962/InjectionLite";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -2757,6 +2833,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A5001292 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
+		};
+		CA9000030000000000000002 /* InjectionLite */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CA9000030000000000000003 /* XCRemoteSwiftPackageReference "InjectionLite" */;
+			productName = InjectionLite;
 		};
 		A500D013A1B2C3D4E5F60718 /* CMUXDebugLog */ = {
 			isa = XCSwiftPackageProductDependency;

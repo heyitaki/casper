@@ -181,6 +181,36 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete if upstream cmux ships its own ranked Find-sidebar pipeline (e.g. Zoekt/trigram index) that supersedes this post-hoc grouping.
 
+### Casper HMR daemon (gated; PR 2 of 3 — default-on)
+
+- Files (added):
+  - `Sources/Casper/HMR/CasperHMRConfig.swift`
+  - `Sources/Casper/HMR/CasperHMRReloadable.swift`
+  - `Sources/Casper/HMR/CasperHMRSourceClassifier.swift`
+  - `Sources/Casper/HMR/CasperHMRSwiftcInvocation.swift`
+  - `Sources/Casper/HMR/CasperHMRDaemon.swift`
+  - `Sources/Casper/HMR/CasperHMRDebugWindow.swift`
+  - `Sources/Casper/HMR/CasperHMRInterposer.swift` (Phase 0c step 12: fishhook-based runtime GOT/__la_symbol_ptr rebinding for `-interposable` Swift symbols)
+  - `Sources/Casper/HMR/CasperHMRFieldOffsetPatcher.swift` (Phase 0c step 12 follow-up: copies HOST's runtime-realized Swift field-offset `Wvd` values into the dlopen'd dylib's `__DATA`; without this, NEW.apply uses compile-time placeholder offsets that omit ObjC superclass base size and corrupts NSScrollView ivars)
+  - `Tools/Casper/swiftc-wrapper/` (SwiftPM executable: writes commands.jsonl, execs real swiftc)
+  - `Configs/Casper-Debug.xcconfig` (wired as `baseConfigurationReference` on the cmux Debug build in PR 2; sets `SWIFT_EXEC` to the wrapper and disables the integrated driver scoped to this target)
+- Files (upstream files modified):
+  - `Sources/cmuxApp.swift` (gated branch in `init()`: PR 2 makes `CASPER_HMR_NEW` default-on for DEBUG, i.e. only `CASPER_HMR_NEW=0` falls back to InjectionLite)
+  - `Sources/cmuxApp.swift` (Debug menu: one `CasperHMRDebugMenuSection()` entry + one Debug-Windows button for the Recent Swaps panel)
+  - `Sources/Casper/Config/CasperHotReload.swift` (`CasperInjectionObserver` dual-subscribes to `INJECTION_BUNDLE_NOTIFICATION` and `.casperHMRReloaded`)
+  - `Sources/Casper/Search/CasperFindResultsView.swift` (dual-subscribe same as above)
+  - `scripts/reload.sh` (exports `CASPER_HMR_TAG=$TAG_SLUG` and injects it into the Info.plist `LSEnvironment`)
+  - `Resources/Localizable.xcstrings` (4 new keys: `casper.hmr.menu.enabled`, `casper.hmr.menu.open_recent_swaps`, `casper.hmr.window.recent_swaps.title`, `casper.hmr.window.recent_swaps.empty`)
+  - `GhosttyTabs.xcodeproj/project.pbxproj` (PBXFileReference + PBXBuildFile + Sources entries for the eight HMR Swift files and the xcconfig; `baseConfigurationReference` on the cmux Debug build config)
+- Summary:
+  - In-process Swift hot-reload for Casper-only Debug builds. A `casper-swiftc-wrapper` SwiftPM executable intercepts swiftc invocations during xcodebuild (via `SWIFT_EXEC`) and writes one JSONL record per call to `~/.casper/hmr/<tag>/commands.jsonl`. At runtime, the daemon watches `Sources/Casper/**/*.swift` via FSEvents, recompiles the changed file with the captured argv, links it as a dylib with `-Xlinker -interposable` semantics, ad-hoc codesigns, and dlopens. **Pure-Swift dylibs do not emit `__DATA_CONST,__interpose` sections**, so the spec's static dyld-interpose path does not fire for this pipeline; `CasperHMRInterposer` walks every loaded image and rewrites GOT/`__la_symbol_ptr` slots via fishhook's `rebind_symbols_image` to redirect existing call sites (intra-host calls also route through stub tables because the host is built `-Xlinker -interposable`). Immediately before the rebind, `CasperHMRFieldOffsetPatcher` walks the NEW dylib's `LC_SYMTAB` for every `*Wvd` symbol, looks up the matching symbol in HOST images via the same Mach-O walk (file-private Wvds are not `dlsym`-able), and copies HOST's runtime-realized value into NEW's `__DATA` slot — without this, the Swift runtime's class-metadata realization (which only fires once per class) leaves NEW's Wvds at compile-time placeholders that omit the ObjC superclass base size, and any stored-property access from a swapped method crashes. SwiftUI views get re-rendered via `.casperHotReload()` / `@CasperInject`; AppKit views via `CasperHMRReloadable` protocol + `.casperHMRReloaded` NotificationCenter post.
+  - PR 1 landed the code gated off (`CASPER_HMR_NEW=1` opt-in); `reload.sh` always exported `1`. PR 2 flips the cmuxApp gate default to on for DEBUG (`!= "0"`) and wires `Configs/Casper-Debug.xcconfig` as `baseConfigurationReference` on the cmux Debug build so the wrapper-redirected `SWIFT_EXEC` fires for every Casper-Debug build, not just `reload.sh`. PR 3 deletes the InjectionLite branch entirely along with the gate.
+  - Hardened against accidental production exposure: every HMR file is `#if DEBUG`; the daemon refuses to start under the production bundle id, under `CASPER_HMR_TAG=agent`, or when the wrapper binary isn't owned by the current user. State directory is per-tag (`~/.casper/hmr/<tag>/`) so parallel agents don't collide.
+- Deletion condition:
+  - Delete this entire patch (the `Sources/Casper/HMR/` directory, the `Tools/Casper/swiftc-wrapper/` package, the xcconfig, the gated `init()` branch, the Recent Swaps debug menu entries, the dual-subscribe observers, and the four localized strings) once upstream cmux ships an in-process SwiftUI/AppKit hot-reload story.
+- Verified live (Phase 0c step 12):
+  - Color-change swap of `Sources/Casper/Search/CasperFindResultsView.swift` lands with `result=ok`, `interpose_entries=46`, `fo_patched=21`, `fo_unchanged=5`, `fo_missing=0`; the post-swap `outlineView.reloadData()` (which calls into the swapped `apply`, `numberOfRows`, and stored-property getters) runs without crashing. Recorded in `~/.casper/hmr/casper/events.jsonl`.
+
 ### CodeEditSourceEditor-backed text editor (flag-gated)
 
 - Files (added):
@@ -203,6 +233,8 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
   - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
 - `Sources/AppDelegate.swift`
   - Touched by patch 2 (sidebar reveal mouse-down handlers, `cmux_sendEvent` intercept, `runSidebarRevealEdgeMouseDownLoop`) and patch 3 (new-workspace context menu shortcut display).
+- `Sources/cmuxApp.swift`
+  - Touched by the Casper HMR patch (one-line gated branch in `init()` and two Debug-menu entries). Both regions are bracketed by `// CASPER:` comments and gated on `#if DEBUG`. If upstream refactors `init()` or the Debug `CommandMenu`, expect manual merge.
 - `Sources/WindowDecorationsController.swift`
   - Touched by the minimal-mode window-movable policy (one-line call to `CasperMinimalModeWindowMovable.apply` inside `apply(to:)`). Re-add if upstream rewrites the decorations apply path.
 - `Sources/GhosttyTerminalView.swift`
