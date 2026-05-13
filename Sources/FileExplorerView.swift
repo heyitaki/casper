@@ -31,10 +31,17 @@ struct FileExplorerPanelView: NSViewRepresentable {
     @ObservedObject var store: FileExplorerStore
     @ObservedObject var state: FileExplorerState
     let onOpenFilePreview: (String) -> Void
+    // CASPER: optional open-at-line callback used by the grouped Find UI to jump the editor to the matched line.
+    var onOpenFilePreviewAtLine: ((String, Int, Int) -> Void)?
     var presentation: FileExplorerPanelPresentation = .files
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(store: store, state: state, onOpenFilePreview: onOpenFilePreview)
+        Coordinator(
+            store: store,
+            state: state,
+            onOpenFilePreview: onOpenFilePreview,
+            onOpenFilePreviewAtLine: onOpenFilePreviewAtLine
+        )
     }
 
     func makeNSView(context: Context) -> FileExplorerContainerView {
@@ -47,6 +54,7 @@ struct FileExplorerPanelView: NSViewRepresentable {
         context.coordinator.store = store
         context.coordinator.state = state
         context.coordinator.onOpenFilePreview = onOpenFilePreview
+        context.coordinator.onOpenFilePreviewAtLine = onOpenFilePreviewAtLine
         container.updateHeader(store: store)
         container.updatePresentation(presentation)
         context.coordinator.reloadIfNeeded()
@@ -59,6 +67,7 @@ struct FileExplorerPanelView: NSViewRepresentable {
         var store: FileExplorerStore
         var state: FileExplorerState
         var onOpenFilePreview: (String) -> Void
+        var onOpenFilePreviewAtLine: ((String, Int, Int) -> Void)?
         weak var containerView: FileExplorerContainerView?
         weak var outlineView: NSOutlineView?
         private var lastRootNodeCount: Int = -1
@@ -69,11 +78,13 @@ struct FileExplorerPanelView: NSViewRepresentable {
         init(
             store: FileExplorerStore,
             state: FileExplorerState,
-            onOpenFilePreview: @escaping (String) -> Void
+            onOpenFilePreview: @escaping (String) -> Void,
+            onOpenFilePreviewAtLine: ((String, Int, Int) -> Void)? = nil
         ) {
             self.store = store
             self.state = state
             self.onOpenFilePreview = onOpenFilePreview
+            self.onOpenFilePreviewAtLine = onOpenFilePreviewAtLine
             super.init()
             observeStore()
             styleObserver = NotificationCenter.default.addObserver(
@@ -593,6 +604,8 @@ final class FileExplorerContainerView: NSView {
     private let outlineView: FileExplorerNSOutlineView
     private let searchScrollView: NSScrollView
     let searchResultsView: FileExplorerSearchResultsTableView
+    // CASPER: optional VS Code-style grouped Find view; delete when upstream cmux ships a grouped Find UI.
+    private let casperFindResultsView: CasperFindResultsView?
     private let emptyLabel: NSTextField
     private let loadingIndicator: NSProgressIndicator
     private let searchController: any FileSearchControlling
@@ -616,7 +629,10 @@ final class FileExplorerContainerView: NSView {
     private var presentation: FileExplorerPanelPresentation
     private let coordinator: FileExplorerPanelView.Coordinator
     private let searchDebounceDelayMilliseconds = 200
-    private let searchBarVisibleHeight: CGFloat = 48
+    // CASPER: Casper find UI has no status label below the search field, so the
+    // bottom padding mirrors the top (4pt above + 24pt field + 4pt below). Stock
+    // cmux keeps 48 to leave room for the "First N matches" status line.
+    private var searchBarVisibleHeight: CGFloat { casperFindResultsView != nil ? 32 : 48 }
 
 #if DEBUG
     private var debugLastSearchTextChangeUptime: TimeInterval = 0
@@ -639,6 +655,8 @@ final class FileExplorerContainerView: NSView {
         outlineView = FileExplorerNSOutlineView()
         searchScrollView = NSScrollView()
         searchResultsView = FileExplorerSearchResultsTableView()
+        // CASPER: lazily build the grouped view only when the gate is on so stock cmux skips the AppKit init cost entirely.
+        casperFindResultsView = CasperFindUIConfig.useGroupedFindResults ? CasperFindResultsView() : nil
         emptyLabel = NSTextField(labelWithString: String(localized: "fileExplorer.empty", defaultValue: "No folder open"))
         loadingIndicator = NSProgressIndicator()
         self.searchController = searchController ?? FileSearchController()
@@ -802,6 +820,29 @@ final class FileExplorerContainerView: NSView {
         searchScrollView.isHidden = true
         addSubview(searchScrollView)
 
+        // CASPER: wire the grouped Find view as a sibling overlay of searchScrollView.
+        if let casperFindResultsView {
+            casperFindResultsView.isHidden = true
+            addSubview(casperFindResultsView)
+            casperFindResultsView.onCancel = { [weak self] in
+                self?.closeSearchAndFocusOutline()
+            }
+            casperFindResultsView.onCommit = { [weak self] in
+                self?.openSelectedSearchResult()
+            }
+            casperFindResultsView.onFocus = { [weak self] in
+                guard let self, let window = self.window else { return }
+                AppDelegate.shared?.noteRightSidebarKeyboardFocusIntent(mode: self.representedRightSidebarMode(), in: window)
+            }
+            casperFindResultsView.onOpenFilePreview = { [weak self] path, line, column in
+                if let openAtLine = self?.coordinator.onOpenFilePreviewAtLine {
+                    openAtLine(path, line, column)
+                } else {
+                    self?.coordinator.onOpenFilePreview(path)
+                }
+            }
+        }
+
         self.searchController.onSnapshotChanged = { [weak self] snapshot in
             self?.applySearchSnapshot(snapshot)
         }
@@ -836,7 +877,25 @@ final class FileExplorerContainerView: NSView {
             searchScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             searchScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             searchScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
+        // CASPER: pin the grouped Find view to the same rect as searchScrollView so updateSearchLayout only has to flip the right pair of isHidden flags.
+        // Full-width so the row selection background spans border-to-border; chevron position is handled inside the cell view, not via outer offset.
+        if let casperFindResultsView {
+            // CASPER: add the breathing room above the first result OUTSIDE the
+            // scroll view so the NSClipView's bounds-clipping naturally hides
+            // any rows that scroll past the floating group header — content
+            // can't leak above the float because nothing renders above the
+            // scroll view's bounds.
+            NSLayoutConstraint.activate([
+                casperFindResultsView.topAnchor.constraint(equalTo: searchBarView.bottomAnchor, constant: 6),
+                casperFindResultsView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                casperFindResultsView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                casperFindResultsView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+        }
+
+        NSLayoutConstraint.activate([
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
@@ -1030,6 +1089,10 @@ final class FileExplorerContainerView: NSView {
             if candidate === searchBarView || candidate === searchScrollView || candidate === searchResultsView {
                 return true
             }
+            // CASPER: claim focus for the grouped Find view (and its outline) the same way we do for the legacy table.
+            if let casperFindResultsView, candidate === casperFindResultsView {
+                return true
+            }
             view = candidate.superview
         }
         return false
@@ -1116,7 +1179,13 @@ final class FileExplorerContainerView: NSView {
         let showSearch = isSearchVisible && effectiveHasContent && !effectiveIsLoading
         searchBarView.isHidden = !showSearch
         searchBarHeightConstraint.constant = showSearch ? searchBarVisibleHeight : 0
-        searchScrollView.isHidden = !showSearch
+        // CASPER: when the grouped Find view is active, the legacy flat table stays hidden permanently and the Casper view follows showSearch instead.
+        if let casperFindResultsView {
+            searchScrollView.isHidden = true
+            casperFindResultsView.isHidden = !showSearch
+        } else {
+            searchScrollView.isHidden = !showSearch
+        }
         scrollView.isHidden = showSearch || !effectiveHasContent || effectiveIsLoading
         needsLayout = true
     }
@@ -1130,8 +1199,15 @@ final class FileExplorerContainerView: NSView {
         let previousSelectedRow = searchResultsView.selectedRow
         let previousResults = searchSnapshot.results
         searchSnapshot = snapshot
-        searchStatusLabel.stringValue = statusText(for: snapshot)
+        // CASPER: hide the "%d matches" / "First %d matches" status line — the grouped UI already shows hit counts via per-file badges; delete the conditional if upstream adopts the grouped view.
+        if casperFindResultsView != nil {
+            searchStatusLabel.stringValue = ""
+        } else {
+            searchStatusLabel.stringValue = statusText(for: snapshot)
+        }
         applySearchResultsUpdate(previousResults: previousResults, nextResults: snapshot.results)
+        // CASPER: feed the grouped Find view from the same snapshot stream so the two implementations stay in lockstep.
+        casperFindResultsView?.apply(snapshot)
 #if DEBUG
         logSearchSnapshot(
             snapshot,
@@ -1337,6 +1413,15 @@ final class FileExplorerContainerView: NSView {
     }
 
     private func moveSearchSelection(by delta: Int, focusResults: Bool) {
+        // CASPER: route arrow-key selection into the grouped Find view when it owns the visible results.
+        if let casperFindResultsView {
+            guard casperFindResultsView.rowCount > 0 else { return }
+            casperFindResultsView.moveSelection(by: delta)
+            if focusResults {
+                _ = casperFindResultsView.focusOutline()
+            }
+            return
+        }
         guard !searchSnapshot.results.isEmpty else { return }
         let currentRow = searchResultsView.selectedRow >= 0
             ? searchResultsView.selectedRow
@@ -1359,6 +1444,11 @@ final class FileExplorerContainerView: NSView {
     }
 
     fileprivate func openSelectedSearchResult() {
+        // CASPER: route Enter through the grouped Find view; it handles header vs hit rows itself.
+        if let casperFindResultsView {
+            casperFindResultsView.openSelected()
+            return
+        }
         let row = searchResultsView.selectedRow
         guard row >= 0, row < searchSnapshot.results.count else { return }
         coordinator.onOpenFilePreview(searchSnapshot.results[row].path)

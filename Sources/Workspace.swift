@@ -10465,12 +10465,17 @@ final class Workspace: Identifiable, ObservableObject {
     func openOrFocusFilePreviewSurface(
         inPane paneId: PaneID,
         filePath: String,
-        focus: Bool = true
+        focus: Bool = true,
+        // CASPER: optional 1-indexed scroll target, set by the grouped Find UI.
+        scrollTarget: CasperFilePreviewScrollTarget? = nil
     ) -> FilePreviewPanel? {
         let canonical = (filePath as NSString).resolvingSymlinksInPath
         for (existingId, panel) in panels {
             guard let preview = panel as? FilePreviewPanel else { continue }
             if (preview.filePath as NSString).resolvingSymlinksInPath == canonical {
+                if let scrollTarget {
+                    preview.casperPendingScrollTarget = scrollTarget
+                }
                 if focus {
                     focusPanel(existingId)
                 }
@@ -10478,7 +10483,11 @@ final class Workspace: Identifiable, ObservableObject {
             }
         }
 
-        return newFilePreviewSurface(inPane: paneId, filePath: filePath, focus: focus)
+        let newPanel = newFilePreviewSurface(inPane: paneId, filePath: filePath, focus: focus)
+        if let scrollTarget {
+            newPanel?.casperPendingScrollTarget = scrollTarget
+        }
+        return newPanel
     }
 
     @discardableResult

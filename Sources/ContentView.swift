@@ -2319,6 +2319,12 @@ struct ContentView: View {
             onOpenFilePreview: { filePath in
                 openFilePreviewFromSidebar(filePath: filePath)
             },
+            onOpenFilePreviewAtLine: { filePath, line, column in
+                openFilePreviewFromSidebar(
+                    filePath: filePath,
+                    scrollTarget: CasperFilePreviewScrollTarget(line: line, column: column)
+                )
+            },
             onClose: {
                 #if DEBUG
                 cmuxDebugLog("rightSidebar.closeButton")
@@ -2618,13 +2624,22 @@ struct ContentView: View {
     }
 
     private func openFilePreviewFromSidebar(filePath: String) {
+        openFilePreviewFromSidebar(filePath: filePath, scrollTarget: nil)
+    }
+
+    // CASPER: overload that carries a 1-indexed (line, column) — used by the grouped Find UI so opening a hit jumps the editor to the match.
+    private func openFilePreviewFromSidebar(filePath: String, scrollTarget: CasperFilePreviewScrollTarget?) {
         guard let workspace = tabManager.selectedWorkspace else { return }
         guard let paneId = workspace.bonsplitController.focusedPaneId ?? workspace.bonsplitController.allPaneIds.first else {
             return
         }
 
         sidebarSelectionState.selection = .tabs
-        _ = workspace.openOrFocusFilePreviewSurface(inPane: paneId, filePath: filePath)
+        _ = workspace.openOrFocusFilePreviewSurface(
+            inPane: paneId,
+            filePath: filePath,
+            scrollTarget: scrollTarget
+        )
     }
 
     private func syncFileExplorerDirectory() {

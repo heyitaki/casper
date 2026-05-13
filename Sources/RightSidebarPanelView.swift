@@ -148,6 +148,10 @@ struct RightSidebarPanelView: View {
     let workspaceId: UUID?
     let onResumeSession: ((SessionEntry) -> Void)?
     let onOpenFilePreview: (String) -> Void
+    // CASPER: Optional callback to open a file preview scrolled to a specific line/column,
+    // used by the grouped Find sidebar to navigate to a match. Delete if upstream adopts
+    // line-aware file-preview navigation.
+    let onOpenFilePreviewAtLine: ((String, Int, Int) -> Void)?
     let onClose: () -> Void
 
     @State private var modeShortcutHintMonitor = WindowScopedShortcutHintModifierMonitor(activation: .commandOrControl) { window in
@@ -338,6 +342,7 @@ struct RightSidebarPanelView: View {
                 store: fileExplorerStore,
                 state: fileExplorerState,
                 onOpenFilePreview: onOpenFilePreview,
+                onOpenFilePreviewAtLine: onOpenFilePreviewAtLine,
                 presentation: .files
             )
         case .find:
@@ -345,6 +350,7 @@ struct RightSidebarPanelView: View {
                 store: fileExplorerStore,
                 state: fileExplorerState,
                 onOpenFilePreview: onOpenFilePreview,
+                onOpenFilePreviewAtLine: onOpenFilePreviewAtLine,
                 presentation: .find
             )
         case .sessions:
