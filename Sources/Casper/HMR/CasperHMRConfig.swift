@@ -43,9 +43,9 @@ enum CasperHMRConfig {
     /// Per-subprocess timeout for swiftc, ld, codesign. Hard kill on overrun.
     static let subprocessTimeoutSeconds: TimeInterval = 5
 
-    /// p95 latency budget. Phase 0c step 14 measures real Casper compile
-    /// latency and sets this to `ceil(measured_p95 * 1.5)`. Until then this
-    /// placeholder is informational; the latency-regression test is env-gated.
+    /// p95 latency budget — informational; the latency-regression test is
+    /// env-gated. Update to `ceil(measured_p95 * 1.5)` once dogfood numbers
+    /// settle.
     static let p95BudgetMilliseconds: Int = 1500
 
     /// Dylib-dir size bounds (Req 6). Eviction happens after every swap.
@@ -63,9 +63,8 @@ enum CasperHMRConfig {
 
     /// Source-change classifier mode (Req 21). `.gate` blocks recompile when
     /// the classifier predicts out-of-envelope; `.advisory` compiles anyway
-    /// and surfaces the prediction in the Recent Swaps panel. Phase 0c step
-    /// 14b measures FP rate and decides — defaults to `.gate`, flip to
-    /// `.advisory` if FP rate exceeds 20% after tuning.
+    /// and surfaces the prediction in the Recent Swaps panel. Defaults to
+    /// `.gate`; flip to `.advisory` if dogfood FP rate exceeds 20%.
     static let classifierMode: ClassifierMode = .gate
 
     enum ClassifierMode {

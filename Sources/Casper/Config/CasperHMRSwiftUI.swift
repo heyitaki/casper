@@ -26,6 +26,8 @@ struct CasperInject: DynamicProperty {
     @StateObject private var observer = CasperHMRObserver()
     var wrappedValue: Void { () }
     init() {}
+    // Read generation to register it as a SwiftUI dependency so the enclosing
+    // view's body re-evaluates when the daemon posts a swap notification.
     func update() { _ = observer.generation }
 }
 

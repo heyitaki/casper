@@ -75,8 +75,16 @@ final class CasperHMRRecentSwapsModel: ObservableObject {
             return
         }
         guard let text = String(data: data, encoding: .utf8) else { return }
+        let trim = CasperHMRConfig.recentSwapsDisplayCount
+        // Skim from the tail. The daemon trims events.jsonl to
+        // `eventsJSONLRetention` at boot, but within a session it grows
+        // unbounded — parsing every line would block the main thread when
+        // the user opens the panel after thousands of swaps. We need a
+        // little more than `trim` to absorb any `dlopen_pending` rows that
+        // are filtered out below.
+        let tailLines = text.split(separator: "\n").suffix(trim * 2)
         var loaded: [CasperHMRSwapEvent] = []
-        for line in text.split(separator: "\n") {
+        for line in tailLines {
             guard let lineData = String(line).data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
                 continue
@@ -86,7 +94,6 @@ final class CasperHMRRecentSwapsModel: ObservableObject {
                 loaded.append(event)
             }
         }
-        let trim = CasperHMRConfig.recentSwapsDisplayCount
         if loaded.count > trim {
             events = Array(loaded.suffix(trim))
         } else {

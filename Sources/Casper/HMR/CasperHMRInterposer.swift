@@ -1,5 +1,5 @@
-// CASPER: fishhook-based live symbol rebinding (Phase 0c step 12). After a
-// successful `dlopen`, this scans the new dylib's exported "injectable" Swift
+// CASPER: fishhook-based live symbol rebinding. After a successful `dlopen`,
+// this scans the new dylib's exported "injectable" Swift
 // symbols, dlsym's them to get the new addresses, and walks every loaded
 // image to rewrite `__got` / `__la_symbol_ptr` entries via fishhook's
 // `rebind_symbols_image`. With the host built with `-Xlinker -interposable`,
@@ -106,15 +106,9 @@ enum CasperHMRInterposer {
         // expects `rebindings[i].name` to NOT have one. We stored the
         // stripped form above.
         let nameBuffers: [UnsafeMutablePointer<CChar>] = resolved.map { entry in
-            let utf8 = Array(entry.name.utf8)
-            let buf = UnsafeMutablePointer<CChar>.allocate(capacity: utf8.count + 1)
-            for (i, byte) in utf8.enumerated() {
-                buf[i] = CChar(bitPattern: byte)
-            }
-            buf[utf8.count] = 0
-            return buf
+            entry.name.withCString { strdup($0)! }
         }
-        defer { nameBuffers.forEach { $0.deallocate() } }
+        defer { nameBuffers.forEach { free($0) } }
 
         // Per-symbol "previous value" slot. Fishhook writes the prior pointer
         // into this slot when it actually replaces a GOT entry. We zero it
@@ -140,6 +134,8 @@ enum CasperHMRInterposer {
         for idx in 0..<imageCount {
             guard let namePtr = _dyld_get_image_name(idx) else { continue }
             let imageName = String(cString: namePtr)
+            // Skip system images — they never reference user Swift symbols.
+            if imageName.hasPrefix("/usr/lib/") || imageName.hasPrefix("/System/") { continue }
             // Skip our own previously-loaded HMR dylibs to avoid rebinding
             // into a stale earlier swap of the same source file.
             if !stateDirPrefix.isEmpty && imageName.hasPrefix(stateDirPrefix) { continue }
@@ -147,12 +143,6 @@ enum CasperHMRInterposer {
             if imageName == dylibPath { continue }
             // Reset slots before each image-level rebind.
             for i in 0..<count { replacedSlots[i] = nil }
-            // Refresh `replaced` field on each rebinding entry in case the
-            // pointer needs to be re-seated (defensive — the address is the
-            // same offset into the buffer).
-            for i in 0..<count {
-                rebindings[i].replaced = replacedSlots.advanced(by: i)
-            }
             let header = UnsafeMutableRawPointer(mutating: _dyld_get_image_header(idx))
             let slide = _dyld_get_image_vmaddr_slide(idx)
             _ = rebindings.withUnsafeMutableBufferPointer { buf -> Int32 in
@@ -199,9 +189,17 @@ enum CasperHMRInterposer {
     }
 
     private static func readDylibExports(dylibPath: String) -> [String] {
+        nmExportedSymbols(path: dylibPath).filter { $0.hasPrefix("_") }
+    }
+
+    /// Spawn `/usr/bin/nm -gU <path>` and return the symbol-name column. Used
+    /// for both the just-compiled `.o` (daemon) and the loaded dylib
+    /// (interposer); the daemon converts to a `Set`, the interposer applies
+    /// the `_`-prefix filter.
+    static func nmExportedSymbols(path: String) -> [String] {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/nm")
-        proc.arguments = ["-gU", dylibPath]
+        proc.arguments = ["-gU", path]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = Pipe()
@@ -217,8 +215,7 @@ enum CasperHMRInterposer {
         for line in text.split(separator: "\n") {
             let parts = line.split(separator: " ")
             guard let last = parts.last else { continue }
-            let str = String(last)
-            if str.hasPrefix("_") { result.append(str) }
+            result.append(String(last))
         }
         return result
     }

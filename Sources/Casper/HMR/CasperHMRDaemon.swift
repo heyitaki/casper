@@ -605,9 +605,9 @@ final class CasperHMRDaemon {
             workingDirectory: nil
         )
 
-        // Ad-hoc codesign. Phase 0 picks whether --options=runtime is needed;
-        // PR 1 ships without it (simpler variant). If a dlopen failure pattern
-        // surfaces in dogfood, flip via a CasperHMRConfig constant.
+        // Ad-hoc codesign without --options=runtime (simpler variant). If a
+        // dlopen failure pattern surfaces in dogfood, flip via a
+        // CasperHMRConfig constant.
         let signResult = runSubprocess(
             executable: "/usr/bin/codesign",
             arguments: ["--sign", "-", "--timestamp=none", "--identifier", "casper-hmr-\(hash)", dylibPath],
@@ -806,22 +806,7 @@ final class CasperHMRDaemon {
                 return trimmed
             }
         }
-        // Fall back to xcrun lookup.
-        let xcrun = Process()
-        xcrun.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        xcrun.arguments = ["--find", "swiftc"]
-        let pipe = Pipe()
-        xcrun.standardOutput = pipe
-        xcrun.standardError = Pipe()
-        do {
-            try xcrun.run()
-            xcrun.waitUntilExit()
-        } catch {
-            return "/usr/bin/swiftc"
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let path = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return path.isEmpty ? "/usr/bin/swiftc" : path
+        return xcrunFind("swiftc")
     }
 
     /// Resolve `swift` (frontend entrypoint) sibling to the resolved
@@ -835,22 +820,28 @@ final class CasperHMRDaemon {
         if FileManager.default.isExecutableFile(atPath: sibling) {
             return sibling
         }
-        // Fall back to xcrun --find.
+        return xcrunFind("swift")
+    }
+
+    /// `xcrun --find <tool>`; falls back to `/usr/bin/<tool>` on any failure
+    /// or empty result.
+    private nonisolated func xcrunFind(_ tool: String) -> String {
         let xcrun = Process()
         xcrun.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        xcrun.arguments = ["--find", "swift"]
+        xcrun.arguments = ["--find", tool]
         let pipe = Pipe()
         xcrun.standardOutput = pipe
         xcrun.standardError = Pipe()
+        let fallback = "/usr/bin/\(tool)"
         do {
             try xcrun.run()
             xcrun.waitUntilExit()
         } catch {
-            return "/usr/bin/swift"
+            return fallback
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let path = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return path.isEmpty ? "/usr/bin/swift" : path
+        return path.isEmpty ? fallback : path
     }
 
     // MARK: - Symbol-set extraction
@@ -860,27 +851,7 @@ final class CasperHMRDaemon {
     /// object (vs every `.o` in the dylibs dir) keeps the per-swap budget to a
     /// single `nm` invocation.
     private nonisolated func symbolSetForObject(objectPath: String) -> Set<String> {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/nm")
-        process.arguments = ["-gU", objectPath]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return []
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let str = String(data: data, encoding: .utf8) else { return [] }
-        var symbols: Set<String> = []
-        for line in str.split(separator: "\n") {
-            let parts = line.split(separator: " ")
-            guard let sym = parts.last else { continue }
-            symbols.insert(String(sym))
-        }
-        return symbols
+        Set(CasperHMRInterposer.nmExportedSymbols(path: objectPath))
     }
 
     // MARK: - Events
@@ -1025,7 +996,7 @@ final class CasperHMRDaemon {
     /// (which then classifies as bodyLikely).
     @MainActor
     private func previousBytesForPath(_ file: CasperHMRCanonicalPath) -> Data? {
-        // PR 1: no persistence; classifier always runs against current bytes.
+        // No persistence; classifier always runs against current bytes.
         return nil
     }
 }
