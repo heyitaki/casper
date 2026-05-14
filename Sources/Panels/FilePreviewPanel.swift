@@ -560,17 +560,10 @@ final class FilePreviewPanel: Panel, ObservableObject {
     private weak var textView: NSTextView?
     private let focusCoordinator: FilePreviewFocusCoordinator
 
-    // CASPER: Persists the Casper code editor's TextViewController across workspace
-    // remounts so syntax highlighting survives switching workspaces.
-    // Owned here because the panel outlives SwiftUI's view tree. See
-    // Sources/Casper/Editor/CasperPersistentSourceEditor.swift.
-    // Delete if upstream adds an editor portal layer like TerminalWindowPortal.
-    var casperEditorAttachment: AnyObject?
-
-    // CASPER: Line/column the Casper editor should scroll to on next display.
-    // Set by openOrFocusFilePreviewSurface when invoked from the grouped Find UI.
-    // Consumed (and cleared) by CasperPersistentSourceEditor once it positions the cursor.
-    // Delete if upstream adds a richer file-open API that carries a scroll target.
+    // CASPER: Line/column to scroll to on next display, set by
+    // openOrFocusFilePreviewSurface when invoked from the grouped Find UI.
+    // Currently unconsumed (was wired to the removed CodeEditSourceEditor branch);
+    // re-wire to FilePreviewTextEditor if/when scroll-to-line is needed.
     @Published var casperPendingScrollTarget: CasperFilePreviewScrollTarget?
 
     var fileURL: URL {
@@ -605,9 +598,6 @@ final class FilePreviewPanel: Panel, ObservableObject {
     func close() {
         textView = nil
         focusCoordinator.unregisterAll()
-        // CASPER: Drop the persistent editor attachment so its observers/monitors
-        // deinit. Delete if upstream adds an editor portal layer.
-        casperEditorAttachment = nil
     }
 
     func triggerFlash(reason: WorkspaceAttentionFlashReason) {
@@ -897,11 +887,6 @@ struct FilePreviewPanelView: View {
                 .textSelection(.enabled)
             Spacer(minLength: 8)
             if panel.previewMode == .text {
-                // CASPER: Wrap-lines toggle. Delete with the rest of the
-                // CodeEditSourceEditor branch if upstream removes it.
-                if CasperEditorConfig.useCodeEditorInFilePreview {
-                    CasperWrapLinesToggleButton()
-                }
                 Button {
                     panel.loadTextContent()
                 } label: {
@@ -935,21 +920,12 @@ struct FilePreviewPanelView: View {
         } else {
             switch panel.previewMode {
             case .text:
-                if CasperEditorConfig.useCodeEditorInFilePreview {
-                    CasperCodeEditorView(
-                        panel: panel,
-                        isVisibleInUI: isVisibleInUI,
-                        themeBackgroundColor: themeBackgroundColor,
-                        themeForegroundColor: themeForegroundColor
-                    )
-                } else {
-                    FilePreviewTextEditor(
-                        panel: panel,
-                        isVisibleInUI: isVisibleInUI,
-                        themeBackgroundColor: themeBackgroundColor,
-                        themeForegroundColor: themeForegroundColor
-                    )
-                }
+                FilePreviewTextEditor(
+                    panel: panel,
+                    isVisibleInUI: isVisibleInUI,
+                    themeBackgroundColor: themeBackgroundColor,
+                    themeForegroundColor: themeForegroundColor
+                )
             case .pdf:
                 FilePreviewPDFView(panel: panel, isVisibleInUI: isVisibleInUI)
             case .image:

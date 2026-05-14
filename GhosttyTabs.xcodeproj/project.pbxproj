@@ -40,7 +40,6 @@
 		613B3D992FB3B06700D1A30E /* Bonsplit in Frameworks */ = {isa = PBXBuildFile; productRef = A5001261 /* Bonsplit */; };
 		613B3D9A2FB3B06700D1A30E /* CMUXDebugLog in Frameworks */ = {isa = PBXBuildFile; productRef = A500D013A1B2C3D4E5F60718 /* CMUXDebugLog */; };
 		613B3D9B2FB3B06700D1A30E /* CMUXAgentLaunch in Frameworks */ = {isa = PBXBuildFile; productRef = A5B00002A1B2C3D4E5F60718 /* CMUXAgentLaunch */; };
-		613B3DA02FB3BC5400D1A30E /* CodeEditSourceEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 613B3D9F2FB3BC5400D1A30E /* CodeEditSourceEditor */; };
 		619D509BC9B1EA946CBD6A8A /* App/WorkspaceRuntimeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9960CC3992F3C44489E7627C /* App/WorkspaceRuntimeSettings.swift */; };
 		62270F3DCECB4787D789CCE3 /* SidebarWorkspaceSnapshotRefreshPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F016B5C09357B3226FA2E014 /* SidebarWorkspaceSnapshotRefreshPolicyTests.swift */; };
 		698944F99A6ADFBA24A7BFB9 /* AuthSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1EA8948C5F126FE63CFB4E /* AuthSettingsStore.swift */; };
@@ -300,16 +299,11 @@
 		CA5840010000000000000001 /* Casper/Sidebar/SidebarRevealStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840010000000000000002 /* Casper/Sidebar/SidebarRevealStrip.swift */; };
 		CA5840020000000000000001 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840020000000000000002 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift */; };
 		CA5840030000000000000001 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */; };
-		CA5840040000000000000001 /* Casper/Editor/CasperEditorConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840040000000000000002 /* Casper/Editor/CasperEditorConfig.swift */; };
-		CA5840050000000000000001 /* Casper/Editor/CasperCodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840050000000000000002 /* Casper/Editor/CasperCodeEditorView.swift */; };
-		CA5840070000000000000001 /* Casper/Editor/CasperPersistentSourceEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840070000000000000002 /* Casper/Editor/CasperPersistentSourceEditor.swift */; };
-		CA5840080000000000000001 /* Casper/Editor/CasperMarkdownHighlightProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840080000000000000002 /* Casper/Editor/CasperMarkdownHighlightProvider.swift */; };
 		CA5840060000000000000001 /* Casper/Window/CasperMinimalModeWindowMovable.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840060000000000000002 /* Casper/Window/CasperMinimalModeWindowMovable.swift */; };
 		CA5840090000000000000001 /* Casper/Search/CasperSearchConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840090000000000000002 /* Casper/Search/CasperSearchConfig.swift */; };
 		CA58400A0000000000000001 /* Casper/Search/CasperFileSearchRanking.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */; };
 		CA58400B0000000000000001 /* Casper/Config/CasperBuildEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */; };
 		CA58400C0000000000000001 /* CasperFileSearchRankingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400C0000000000000002 /* CasperFileSearchRankingTests.swift */; };
-		CA58400D0000000000000001 /* Casper/Editor/CasperEditorPortal.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400D0000000000000002 /* Casper/Editor/CasperEditorPortal.swift */; };
 		CA58400E0000000000000001 /* Casper/Search/CasperFindUIConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400E0000000000000002 /* Casper/Search/CasperFindUIConfig.swift */; };
 		CA58400F0000000000000001 /* Casper/Search/CasperFindPreviewSlice.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA58400F0000000000000002 /* Casper/Search/CasperFindPreviewSlice.swift */; };
 		CA5840100000000000000001 /* Casper/Search/CasperFindGroupedResults.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840100000000000000002 /* Casper/Search/CasperFindGroupedResults.swift */; };
@@ -814,16 +808,11 @@
 		CA5840010000000000000002 /* Casper/Sidebar/SidebarRevealStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/SidebarRevealStrip.swift; sourceTree = "<group>"; };
 		CA5840020000000000000002 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift"; sourceTree = "<group>"; };
 		CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift"; sourceTree = "<group>"; };
-		CA5840040000000000000002 /* Casper/Editor/CasperEditorConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperEditorConfig.swift; sourceTree = "<group>"; };
-		CA5840050000000000000002 /* Casper/Editor/CasperCodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperCodeEditorView.swift; sourceTree = "<group>"; };
-		CA5840070000000000000002 /* Casper/Editor/CasperPersistentSourceEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperPersistentSourceEditor.swift; sourceTree = "<group>"; };
-		CA5840080000000000000002 /* Casper/Editor/CasperMarkdownHighlightProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperMarkdownHighlightProvider.swift; sourceTree = "<group>"; };
 		CA5840060000000000000002 /* Casper/Window/CasperMinimalModeWindowMovable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Window/CasperMinimalModeWindowMovable.swift; sourceTree = "<group>"; };
 		CA5840090000000000000002 /* Casper/Search/CasperSearchConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperSearchConfig.swift; sourceTree = "<group>"; };
 		CA58400A0000000000000002 /* Casper/Search/CasperFileSearchRanking.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperFileSearchRanking.swift; sourceTree = "<group>"; };
 		CA58400B0000000000000002 /* Casper/Config/CasperBuildEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Config/CasperBuildEnvironment.swift; sourceTree = "<group>"; };
 		CA58400C0000000000000002 /* CasperFileSearchRankingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CasperFileSearchRankingTests.swift; sourceTree = "<group>"; };
-		CA58400D0000000000000002 /* Casper/Editor/CasperEditorPortal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Editor/CasperEditorPortal.swift; sourceTree = "<group>"; };
 		CA58400E0000000000000002 /* Casper/Search/CasperFindUIConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperFindUIConfig.swift; sourceTree = "<group>"; };
 		CA58400F0000000000000002 /* Casper/Search/CasperFindPreviewSlice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperFindPreviewSlice.swift; sourceTree = "<group>"; };
 		CA5840100000000000000002 /* Casper/Search/CasperFindGroupedResults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Search/CasperFindGroupedResults.swift; sourceTree = "<group>"; };
@@ -988,7 +977,6 @@
 				A5001250 /* Sentry in Frameworks */,
 				A5001270 /* PostHog in Frameworks */,
 				A5001290 /* MarkdownUI in Frameworks */,
-				613B3DA02FB3BC5400D1A30E /* CodeEditSourceEditor in Frameworks */,
 				5EDB6027B346C46521A93C74 /* CMUXAuthCore in Frameworks */,
 				AA11BB22CC33DD44EE550001 /* CMUXWorkstream in Frameworks */,
 				3069F1D10000000000000005 /* CMUXPasteboardFidelity in Frameworks */,
@@ -1170,11 +1158,6 @@
 				CA5840010000000000000002 /* Casper/Sidebar/SidebarRevealStrip.swift */,
 				CA5840020000000000000002 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift */,
 				CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */,
-				CA5840040000000000000002 /* Casper/Editor/CasperEditorConfig.swift */,
-				CA5840050000000000000002 /* Casper/Editor/CasperCodeEditorView.swift */,
-				CA5840070000000000000002 /* Casper/Editor/CasperPersistentSourceEditor.swift */,
-				CA5840080000000000000002 /* Casper/Editor/CasperMarkdownHighlightProvider.swift */,
-				CA58400D0000000000000002 /* Casper/Editor/CasperEditorPortal.swift */,
 				CA58400E0000000000000002 /* Casper/Search/CasperFindUIConfig.swift */,
 				CA58400F0000000000000002 /* Casper/Search/CasperFindPreviewSlice.swift */,
 				CA5840100000000000000002 /* Casper/Search/CasperFindGroupedResults.swift */,
@@ -1604,7 +1587,6 @@
 				A5B00002A1B2C3D4E5F60718 /* CMUXAgentLaunch */,
 				A500D013A1B2C3D4E5F60718 /* CMUXDebugLog */,
 				A8BD195031FC4B82B4354297 /* StackAuth */,
-				613B3D9F2FB3BC5400D1A30E /* CodeEditSourceEditor */,
 			);
 			productName = GhosttyTabs;
 			productReference = A5001000 /* cmux.app */;
@@ -1735,7 +1717,6 @@
 				A5B00001A1B2C3D4E5F60718 /* XCLocalSwiftPackageReference "Packages/CMUXAgentLaunch" */,
 				A500D012A1B2C3D4E5F60718 /* XCLocalSwiftPackageReference "Packages/CMUXDebugLog" */,
 				28B798BB9086C8E6B60C3355 /* XCLocalSwiftPackageReference "vendor/stack-auth-swift-sdk-prerelease" */,
-				613B3D9D2FB3B36400D1A30E /* XCRemoteSwiftPackageReference "CodeEditSourceEditor" */,
 			);
 			productRefGroup = A5001042 /* Products */;
 			projectDirPath = "";
@@ -1863,11 +1844,6 @@
 				CA5840010000000000000001 /* Casper/Sidebar/SidebarRevealStrip.swift in Sources */,
 				CA5840020000000000000001 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift in Sources */,
 				CA5840030000000000000001 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift in Sources */,
-				CA5840040000000000000001 /* Casper/Editor/CasperEditorConfig.swift in Sources */,
-				CA5840050000000000000001 /* Casper/Editor/CasperCodeEditorView.swift in Sources */,
-				CA5840070000000000000001 /* Casper/Editor/CasperPersistentSourceEditor.swift in Sources */,
-				CA5840080000000000000001 /* Casper/Editor/CasperMarkdownHighlightProvider.swift in Sources */,
-				CA58400D0000000000000001 /* Casper/Editor/CasperEditorPortal.swift in Sources */,
 				CA58400E0000000000000001 /* Casper/Search/CasperFindUIConfig.swift in Sources */,
 				CA58400F0000000000000001 /* Casper/Search/CasperFindPreviewSlice.swift in Sources */,
 				CA5840100000000000000001 /* Casper/Search/CasperFindGroupedResults.swift in Sources */,
@@ -2711,14 +2687,6 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		613B3D9D2FB3B36400D1A30E /* XCRemoteSwiftPackageReference "CodeEditSourceEditor" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/CodeEditApp/CodeEditSourceEditor";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.15.2;
-			};
-		};
 		A5001232 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -2763,11 +2731,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3069F1D10000000000000007 /* XCLocalSwiftPackageReference "Packages/CMUXPasteboardFidelity" */;
 			productName = CMUXPasteboardFidelity;
-		};
-		613B3D9F2FB3BC5400D1A30E /* CodeEditSourceEditor */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 613B3D9D2FB3B36400D1A30E /* XCRemoteSwiftPackageReference "CodeEditSourceEditor" */;
-			productName = CodeEditSourceEditor;
 		};
 		A5001231 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
