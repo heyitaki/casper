@@ -106180,13 +106180,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Resume in New Tab"
+            "value": "Resume"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "新しいタブで再開"
+            "value": "再開"
           }
         }
       }

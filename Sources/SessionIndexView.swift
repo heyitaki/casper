@@ -503,7 +503,6 @@ private struct SessionRow: View, Equatable {
     let isPreviewPresented: Bool
     let onPreviewPresentationChange: (Bool) -> Void
     let onResume: ((SessionEntry) -> Void)?
-    @State private var isHovered: Bool = false
 
     static func == (lhs: SessionRow, rhs: SessionRow) -> Bool {
         // Skip body re-eval during scroll when the entry is unchanged.
@@ -533,11 +532,20 @@ private struct SessionRow: View, Equatable {
         .contentShape(Rectangle())
         .background(rowBackground)
         .background(previewPopoverHost)
-        .onHover { isHovered = $0 }
         .help(helpText)
-        .onTapGesture(count: 2) {
+        // Keep these split (not `.onTapGesture(count: 1/2)`) so single-click
+        // opens the preview without the ~250ms disambiguation delay. Double-
+        // click fires count:1 first, so its handler clears the preview before
+        // resuming.
+        .onTapGesture(count: 1) {
             onPreviewPresentationChange(true)
         }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                onPreviewPresentationChange(false)
+                onResume?(entry)
+            }
+        )
         .onDrag {
             sessionDragItemProvider(for: entry)
         } preview: {
@@ -577,9 +585,6 @@ private struct SessionRow: View, Equatable {
     }
 
     private var rowBackgroundColor: Color {
-        if isHovered {
-            return Color.primary.opacity(0.05)
-        }
         if isPreviewPresented {
             return Color.primary.opacity(0.07)
         }
@@ -615,7 +620,7 @@ private func sessionRowMenuItems(entry: SessionEntry, onResume: ((SessionEntry) 
         Button {
             onResume(entry)
         } label: {
-            Text(String(localized: "sessionIndex.row.resume", defaultValue: "Resume in New Tab"))
+            Text(String(localized: "sessionIndex.row.resume", defaultValue: "Resume"))
         }
         Divider()
     }

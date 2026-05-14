@@ -2579,22 +2579,16 @@ struct ContentView: View {
         let inputWithReturn = resumeCommand + "\n"
         let targetCwd = entry.resumeWorkingDirectory
 
-        if let workspace = tabManager.selectedWorkspace, !workspace.isRemoteWorkspace {
+        if let workspace = tabManager.selectedWorkspace {
             let bonsplit = workspace.bonsplitController
-            if let paneId = bonsplit.focusedPaneId ?? bonsplit.allPaneIds.first {
-                if let panelId = idleTerminalPanelId(in: workspace, paneId: paneId),
-                   let panel = workspace.terminalPanel(for: panelId) {
-                    panel.sendInput(inputWithReturn)
-                    return
-                }
-                if workspace.newTerminalSurface(
-                    inPane: paneId,
-                    focus: true,
-                    workingDirectory: targetCwd,
-                    initialInput: inputWithReturn
-                ) != nil {
-                    return
-                }
+            if let paneId = bonsplit.focusedPaneId ?? bonsplit.allPaneIds.first,
+               workspace.newTerminalSurface(
+                inPane: paneId,
+                focus: true,
+                workingDirectory: targetCwd,
+                initialInput: inputWithReturn
+               ) != nil {
+                return
             }
         }
 
@@ -2603,25 +2597,6 @@ struct ContentView: View {
             initialTerminalInput: inputWithReturn
         )
         sidebarState.isVisible = true
-    }
-
-    private func idleTerminalPanelId(in workspace: Workspace, paneId: PaneID) -> UUID? {
-        let bonsplit = workspace.bonsplitController
-        guard let selectedTab = bonsplit.selectedTab(inPane: paneId),
-              selectedTab.kind == Workspace.SurfaceKind.terminal,
-              let panelId = workspace.panelIdFromSurfaceId(selectedTab.id) else {
-            return nil
-        }
-        if let keys = workspace.agentPIDKeysByPanelId[panelId], !keys.isEmpty {
-            return nil
-        }
-        // Require positive evidence the shell is at an idle prompt. Blocking
-        // only .commandRunning would let an agent launched outside cmux's
-        // hooks (e.g. user typed `claude` manually) appear idle in .unknown.
-        guard workspace.panelShellActivityStates[panelId] == .promptIdle else {
-            return nil
-        }
-        return panelId
     }
 
     private func openFilePreviewFromSidebar(filePath: String) {
