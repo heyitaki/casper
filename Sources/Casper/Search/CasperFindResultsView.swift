@@ -861,8 +861,12 @@ enum CasperFindCellLayout {
 final class CasperFindGroupHeaderCellView: NSTableCellView {
     private let chevronView = NSImageView()
     private let iconView = NSImageView()
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let pathLabel = NSTextField(labelWithString: "")
+    // CASPER: filename + dirpath in one NSTextField (not two side-by-side) so
+    // the title's trailing edge can be hard-bound to the badge. With both
+    // pieces in a single string, `.byTruncatingTail` collapses the dirpath
+    // suffix before clipping into the filename, and Auto Layout has no way
+    // to grow the cell past the sidebar width.
+    private let titleLabel = NSTextField(labelWithString: "")
     private let badgeLabel = NSTextField(labelWithString: "")
     private let badgeBackground = NSView()
 
@@ -901,27 +905,20 @@ final class CasperFindGroupHeaderCellView: NSTableCellView {
         iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
         addSubview(iconView)
 
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = .systemFont(ofSize: 13, weight: .regular)
-        nameLabel.textColor = .labelColor
-        nameLabel.lineBreakMode = .byTruncatingMiddle
-        nameLabel.maximumNumberOfLines = 1
-        nameLabel.setContentHuggingPriority(.required, for: .horizontal)
-        nameLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        addSubview(nameLabel)
-
-        pathLabel.translatesAutoresizingMaskIntoConstraints = false
-        pathLabel.font = .systemFont(ofSize: 11, weight: .regular)
-        pathLabel.textColor = .secondaryLabelColor
-        // CASPER: truncate the END of the dirpath when it overflows so the
-        // top-level part of the path stays visible (it's the disambiguating
-        // bit). Truncating the head would hide which root folder the file
-        // lives in.
-        pathLabel.lineBreakMode = .byTruncatingTail
-        pathLabel.maximumNumberOfLines = 1
-        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        pathLabel.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
-        addSubview(pathLabel)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        // CASPER: font/color are set per-run in makeTitle's attributed string;
+        // the field-level lineBreakMode is still required because NSTextField
+        // ignores its own lineBreakMode for `attributedStringValue` unless the
+        // underlying cell is also forced into single-line mode (same gotcha
+        // as CasperFindHitCellView).
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.cell?.usesSingleLineMode = true
+        titleLabel.cell?.wraps = false
+        titleLabel.cell?.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(titleLabel)
 
         badgeBackground.translatesAutoresizingMaskIntoConstraints = false
         badgeBackground.wantsLayer = true
@@ -949,15 +946,11 @@ final class CasperFindGroupHeaderCellView: NSTableCellView {
             iconView.widthAnchor.constraint(equalToConstant: CasperFindCellLayout.iconWidth),
             iconView.heightAnchor.constraint(equalToConstant: CasperFindCellLayout.iconWidth),
 
-            nameLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
-            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            pathLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
-            // CASPER: baseline-align the smaller dirpath text with the larger
-            // filename so they sit on the same visual line instead of the
-            // dirpath floating above center.
-            pathLabel.firstBaselineAnchor.constraint(equalTo: nameLabel.firstBaselineAnchor),
-            pathLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeBackground.leadingAnchor, constant: -6),
+            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // CASPER: hard trailing bound — title can never push past the
+            // badge, so the cell always fits within the sidebar width.
+            titleLabel.trailingAnchor.constraint(equalTo: badgeBackground.leadingAnchor, constant: -6),
 
             badgeBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             badgeBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -978,11 +971,36 @@ final class CasperFindGroupHeaderCellView: NSTableCellView {
         chevronView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
         iconView.image = CasperFindFileIcon.symbol(forRelativePath: group.relativePath)
         iconView.contentTintColor = CasperFindFileIcon.symbolTint(forRelativePath: group.relativePath)
-        nameLabel.stringValue = group.filename
-        pathLabel.stringValue = group.directoryDisplay
-        pathLabel.isHidden = group.directoryDisplay.isEmpty
+        titleLabel.attributedStringValue = Self.makeTitle(
+            filename: group.filename,
+            directoryDisplay: group.directoryDisplay
+        )
         badgeLabel.stringValue = "\(group.hits.count)"
         toolTip = group.relativePath
+    }
+
+    private static func makeTitle(filename: String, directoryDisplay: String) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let result = NSMutableAttributedString(string: filename, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .regular),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraph,
+        ])
+        if !directoryDisplay.isEmpty {
+            // CASPER: kern widens the inter-token space to ~6pt (filename↔dirpath gap).
+            result.append(NSAttributedString(string: " ", attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+                .kern: NSNumber(value: 3.0),
+                .paragraphStyle: paragraph,
+            ]))
+            result.append(NSAttributedString(string: directoryDisplay, attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: paragraph,
+            ]))
+        }
+        return result
     }
 }
 
