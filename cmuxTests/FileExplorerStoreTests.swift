@@ -506,6 +506,85 @@ final class FileExplorerStoreTests: XCTestCase {
         store.expand(node: node)
         XCTAssertFalse(store.isExpanded(node))
     }
+
+    // MARK: - Per-workspace state
+
+    func testFindStateAndExpansionPersistAcrossSameWorkspaceCalls() {
+        let store = FileExplorerStore()
+        let workspaceId = UUID()
+        store.beginWorkspace(workspaceId)
+
+        let node = FileExplorerNode(name: "src", path: "/project/src", isDirectory: true)
+        node.children = []
+        store.expand(node: node)
+        store.setFindQuery("login")
+        store.setFindSnapshot(FileSearchSnapshot(
+            query: "login",
+            results: [
+                FileSearchResult(
+                    path: "/project/src/auth.swift",
+                    relativePath: "src/auth.swift",
+                    lineNumber: 12,
+                    columnNumber: 3,
+                    preview: "func login() {}"
+                ),
+            ],
+            status: .matches,
+            isSearching: false
+        ))
+
+        // Re-binding to the same workspace id is a no-op; per-workspace state
+        // survives so re-mounting the sidebar tab restores the user's query
+        // and tree expansion without losing context.
+        store.beginWorkspace(workspaceId)
+
+        XCTAssertEqual(store.findQuery, "login")
+        XCTAssertEqual(store.findSnapshot.results.count, 1)
+        XCTAssertTrue(store.expandedPaths.contains("/project/src"))
+    }
+
+    func testBeginWorkspaceWithDifferentIdClearsFindAndExpansion() {
+        let store = FileExplorerStore()
+        store.beginWorkspace(UUID())
+
+        let node = FileExplorerNode(name: "src", path: "/project/src", isDirectory: true)
+        node.children = []
+        store.expand(node: node)
+        store.setFindQuery("login")
+        store.setFindSnapshot(FileSearchSnapshot(
+            query: "login",
+            results: [
+                FileSearchResult(
+                    path: "/project/src/auth.swift",
+                    relativePath: "src/auth.swift",
+                    lineNumber: 12,
+                    columnNumber: 3,
+                    preview: "func login() {}"
+                ),
+            ],
+            status: .matches,
+            isSearching: false
+        ))
+
+        store.beginWorkspace(UUID())
+
+        XCTAssertEqual(store.findQuery, "")
+        XCTAssertEqual(store.findSnapshot, .empty)
+        XCTAssertTrue(store.expandedPaths.isEmpty)
+        XCTAssertNil(store.selectedPath)
+        XCTAssertTrue(store.selectedPaths.isEmpty)
+    }
+
+    func testBeginWorkspaceNilAlsoClearsState() {
+        let store = FileExplorerStore()
+        store.beginWorkspace(UUID())
+        store.setFindQuery("login")
+
+        store.beginWorkspace(nil)
+
+        XCTAssertEqual(store.findQuery, "")
+        XCTAssertNil(store.findSnapshot.results.first)
+    }
 }
 
 @MainActor

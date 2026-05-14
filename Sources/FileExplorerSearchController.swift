@@ -99,8 +99,19 @@ struct FileSearchSnapshot: Equatable, Sendable {
     var results: [FileSearchResult]
     var status: Status
     var isSearching: Bool
+    // CASPER: pagination — true when the search controller knows there are more
+    // results to deliver (rg still running, or buffered results past what's
+    // currently displayed). The Find view uses this to gate scroll-triggered
+    // loadMore(). Delete if upstream introduces its own paginated Find pipeline.
+    var hasMore: Bool
 
-    static let empty = FileSearchSnapshot(query: "", results: [], status: .idle, isSearching: false)
+    static let empty = FileSearchSnapshot(
+        query: "",
+        results: [],
+        status: .idle,
+        isSearching: false,
+        hasMore: false
+    )
 }
 
 @MainActor
@@ -109,6 +120,9 @@ protocol FileSearchControlling: AnyObject {
 
     func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int)
     func cancel(clear: Bool)
+    // CASPER: scroll-triggered "load next page" hook for the grouped Find view.
+    // Idempotent: extra calls when nothing new is buffered are no-ops.
+    func loadMore()
 }
 
 struct FileSearchPipelineUpdate: Sendable {
@@ -168,25 +182,45 @@ private actor FileSearchTerminationSignal {
 
 actor FileSearchOutputPipeline {
     private let rootPath: String
-    private let maxResults: Int
-    private let snapshotInterval: TimeInterval
+    private let hardMaxResults: Int
     private var stdoutBuffer = Data()
     private var stderrBuffer = Data()
     private var results: [FileSearchResult] = []
-    private var lastSnapshotEmissionDate = Date.distantPast
     private var isFinished = false
     private var terminalUpdate: FileSearchPipelineUpdate?
+    // CASPER: pagination — the pipeline buffers up to `hardMaxResults` results
+    // but only emits a settled `.matches` snapshot to the controller when the
+    // buffer first reaches `pendingEmissionTarget`. Initial target = the first
+    // page size; subsequent targets are bumped by the controller from
+    // `requestNextEmission` in response to user scroll. Once a target is hit
+    // the field is cleared until the next request — this is what suppresses
+    // the previous interval-based intermediate-snapshot flicker.
+    private var pendingEmissionTarget: Int?
 
-    init(rootPath: String, maxResults: Int, snapshotInterval: TimeInterval) {
+    init(rootPath: String, hardMaxResults: Int, initialEmissionTarget: Int) {
         self.rootPath = rootPath
-        self.maxResults = maxResults
-        self.snapshotInterval = snapshotInterval
+        self.hardMaxResults = hardMaxResults
+        self.pendingEmissionTarget = initialEmissionTarget
     }
 
     func consumeStdout(_ data: Data) -> FileSearchPipelineUpdate? {
         guard !isFinished else { return nil }
         stdoutBuffer.append(data)
         return consumeBufferedStdout(includeTrailingLine: false)
+    }
+
+    /// Asks the pipeline to emit a settled `.matches` update once the buffer
+    /// reaches `targetCount` results (or immediately, if it's already there).
+    /// Returning a non-nil update means the controller should apply it now.
+    func requestNextEmission(targetCount: Int) -> FileSearchPipelineUpdate? {
+        guard !isFinished else { return nil }
+        let clampedTarget = min(targetCount, hardMaxResults)
+        if results.count >= clampedTarget {
+            pendingEmissionTarget = nil
+            return matchesUpdate(shouldStopProcess: false)
+        }
+        pendingEmissionTarget = clampedTarget
+        return nil
     }
 
     private func consumeBufferedStdout(includeTrailingLine: Bool) -> FileSearchPipelineUpdate? {
@@ -218,28 +252,25 @@ actor FileSearchOutputPipeline {
             return nil
         }
         results.append(result)
-        if results.count >= maxResults {
-            let update = FileSearchPipelineUpdate(
-                results: results,
-                status: .limited(maxResults),
-                isSearching: false,
-                shouldStopProcess: true
-            )
+        if results.count >= hardMaxResults {
+            let update = matchesUpdate(shouldStopProcess: true)
             isFinished = true
             terminalUpdate = update
             return update
         }
-
-        let now = Date()
-        guard now.timeIntervalSince(lastSnapshotEmissionDate) >= snapshotInterval else {
-            return nil
+        if let target = pendingEmissionTarget, results.count >= target {
+            pendingEmissionTarget = nil
+            return matchesUpdate(shouldStopProcess: false)
         }
-        lastSnapshotEmissionDate = now
-        return FileSearchPipelineUpdate(
+        return nil
+    }
+
+    private func matchesUpdate(shouldStopProcess: Bool) -> FileSearchPipelineUpdate {
+        FileSearchPipelineUpdate(
             results: results,
-            status: .searching,
-            isSearching: true,
-            shouldStopProcess: false
+            status: results.isEmpty ? .noMatches : .matches,
+            isSearching: false,
+            shouldStopProcess: shouldStopProcess
         )
     }
 
@@ -356,8 +387,12 @@ final class FileSearchController: FileSearchControlling {
 
     var onSnapshotChanged: ((FileSearchSnapshot) -> Void)?
 
-    private let maxResults = 500
-    private let snapshotInterval: TimeInterval = 0.05
+    // CASPER: paginated Find — first chunk shown ASAP, more loaded on scroll
+    // up to the hard cap. Initial page is small so the user sees results within
+    // a frame of ripgrep producing them; the cap protects model + UI from
+    // unbounded queries.
+    private let pageSize = 100
+    private let hardMaxResults = 5000
     private let excludedSearchGlobs = [
         "!.git/**",
         "!**/.git/**",
@@ -374,6 +409,11 @@ final class FileSearchController: FileSearchControlling {
     private var generation = 0
     private var request: Request?
     private var results: [FileSearchResult] = []
+    // CASPER: append-only "what's currently rendered" view of `results`. Each
+    // page boundary re-ranks ONLY the new tail and appends — earlier rows stay
+    // in place so scroll position never jumps. `displayedResults.count` is the
+    // cursor into `results` for the next page.
+    private var displayedResults: [FileSearchResult] = []
     private var pipeline: FileSearchOutputPipeline?
     private var searchTask: Task<Void, Never>?
 
@@ -392,6 +432,7 @@ final class FileSearchController: FileSearchControlling {
 
         stopAndAdvanceGeneration()
         results.removeAll()
+        displayedResults.removeAll()
 
         guard !query.isEmpty else {
             emit(status: .idle, isSearching: false)
@@ -441,8 +482,8 @@ final class FileSearchController: FileSearchControlling {
         process.standardError = stderr
         let pipeline = FileSearchOutputPipeline(
             rootPath: rootPath,
-            maxResults: maxResults,
-            snapshotInterval: snapshotInterval
+            hardMaxResults: hardMaxResults,
+            initialEmissionTarget: pageSize
         )
         self.pipeline = pipeline
         let terminationSignal = FileSearchTerminationSignal()
@@ -502,7 +543,30 @@ final class FileSearchController: FileSearchControlling {
         stopAndAdvanceGeneration()
         if clear {
             results.removeAll()
+            displayedResults.removeAll()
             emit(status: .idle, isSearching: false)
+        }
+    }
+
+    func loadMore() {
+        // Drop stale scroll-triggered loadMore after cancel(clear:false), else
+        // we'd re-emit the previous query's buffered results under empty query.
+        guard request != nil else { return }
+        guard displayedResults.count < hardMaxResults else { return }
+        // Fast path: pipeline already buffered more than we've shown (hardMax
+        // burst or post-finish() drain). Drain a page locally instead of
+        // round-tripping the actor.
+        if results.count > displayedResults.count {
+            appendNewlyBufferedToDisplay()
+            emit(status: settledStatus(forFallback: .matches), isSearching: false)
+            return
+        }
+        guard let pipeline else { return }
+        let target = min(displayedResults.count + pageSize, hardMaxResults)
+        let searchGeneration = generation
+        Task { [weak self] in
+            guard let update = await pipeline.requestNextEmission(targetCount: target) else { return }
+            self?.applyPipelineUpdate(update, generation: searchGeneration)
         }
     }
 
@@ -512,7 +576,8 @@ final class FileSearchController: FileSearchControlling {
         if update.shouldStopProcess {
             stopAndAdvanceGeneration()
         }
-        emit(status: update.status, isSearching: update.isSearching)
+        appendNewlyBufferedToDisplay()
+        emit(status: settledStatus(forFallback: update.status), isSearching: update.isSearching)
     }
 
     private func finish(generation searchGeneration: Int, update: FileSearchPipelineUpdate) {
@@ -521,19 +586,55 @@ final class FileSearchController: FileSearchControlling {
         pipeline = nil
         searchTask = nil
         results = update.results
-        emit(status: update.status, isSearching: update.isSearching)
+        appendNewlyBufferedToDisplay()
+        emit(status: settledStatus(forFallback: update.status), isSearching: update.isSearching)
+    }
+
+    /// Re-rank the next `pageSize` slice of `results` past `displayedResults`
+    /// and append. Earlier display order stays frozen so the user's scroll
+    /// position never jumps; ranking quality therefore drops across page
+    /// boundaries (a tier-0 basename match in page 2 cannot bubble above a
+    /// tier-2 hit in page 1) — the deliberate trade-off vs full-buffer re-rank.
+    private func appendNewlyBufferedToDisplay() {
+        let start = displayedResults.count
+        guard start < results.count else { return }
+        // CASPER: cap each appended chunk at `pageSize`. A single pipeline
+        // emission can carry far more than a page (the hard-cap stop can hand
+        // us up to 5000 rows at once, or `finish()` drains trailing buffered
+        // rows beyond what the user has scrolled to). Leftovers surface via
+        // subsequent `loadMore` calls without going back to rg.
+        let endIndex = min(start + pageSize, results.count)
+        let newChunk = Array(results[start..<endIndex])
+        let query = request?.query ?? ""
+        let rankedChunk = CasperFileSearchRanking.apply(to: newChunk, query: query)
+        displayedResults.append(contentsOf: rankedChunk)
+    }
+
+    private func settledStatus(forFallback fallback: FileSearchSnapshot.Status) -> FileSearchSnapshot.Status {
+        // Pipeline-derived `.failed` / `.unsupported` pass through unchanged.
+        switch fallback {
+        case .failed, .unsupported:
+            return fallback
+        case .idle, .searching, .noMatches, .matches, .limited:
+            return displayedResults.isEmpty ? .noMatches : .matches
+        }
     }
 
     private func emit(status: FileSearchSnapshot.Status, isSearching: Bool) {
         let query = request?.query ?? ""
-        // CASPER: re-rank arrival-order rg matches into per-file tier buckets; delete if upstream adds its own ranked Find pipeline.
-        let displayResults = CasperFileSearchRanking.rank(results, query: query)
         onSnapshotChanged?(FileSearchSnapshot(
             query: query,
-            results: displayResults,
+            results: displayedResults,
             status: status,
-            isSearching: isSearching
+            isSearching: isSearching,
+            hasMore: computeHasMore()
         ))
+    }
+
+    private func computeHasMore() -> Bool {
+        if displayedResults.count >= hardMaxResults { return false }
+        if results.count > displayedResults.count { return true }
+        return process?.isRunning == true
     }
 
     private func stopAndAdvanceGeneration() {

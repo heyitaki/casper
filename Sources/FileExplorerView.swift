@@ -31,16 +31,13 @@ struct FileExplorerPanelView: NSViewRepresentable {
     @ObservedObject var store: FileExplorerStore
     @ObservedObject var state: FileExplorerState
     let onOpenFilePreview: (String) -> Void
-    // CASPER: optional open-at-line callback used by the grouped Find UI to jump the editor to the matched line.
-    var onOpenFilePreviewAtLine: ((String, Int, Int) -> Void)?
     var presentation: FileExplorerPanelPresentation = .files
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             store: store,
             state: state,
-            onOpenFilePreview: onOpenFilePreview,
-            onOpenFilePreviewAtLine: onOpenFilePreviewAtLine
+            onOpenFilePreview: onOpenFilePreview
         )
     }
 
@@ -54,9 +51,18 @@ struct FileExplorerPanelView: NSViewRepresentable {
         context.coordinator.store = store
         context.coordinator.state = state
         context.coordinator.onOpenFilePreview = onOpenFilePreview
-        context.coordinator.onOpenFilePreviewAtLine = onOpenFilePreviewAtLine
-        container.updateHeader(store: store)
+        // Order matters here:
+        //  1. syncFindStateFromStoreIfNeeded pulls externally-driven Find
+        //     resets (workspace change clears store.findQuery/findSnapshot
+        //     via beginWorkspace) into the AppKit field/results.
+        //  2. updatePresentation flips isSearchVisible to match the current
+        //     sidebar mode — must run BEFORE updateHeader so a scope change
+        //     can actually trigger refreshSearchIfNeeded for the Find tab.
+        //  3. updateHeader fires refreshSearchIfNeeded when the workspace
+        //     root changes, reconciling cached results with the new tree.
+        container.syncFindStateFromStoreIfNeeded()
         container.updatePresentation(presentation)
+        container.updateHeader(store: store)
         context.coordinator.reloadIfNeeded()
         container.registerWithKeyboardFocusCoordinatorIfNeeded()
     }
@@ -67,7 +73,6 @@ struct FileExplorerPanelView: NSViewRepresentable {
         var store: FileExplorerStore
         var state: FileExplorerState
         var onOpenFilePreview: (String) -> Void
-        var onOpenFilePreviewAtLine: ((String, Int, Int) -> Void)?
         weak var containerView: FileExplorerContainerView?
         weak var outlineView: NSOutlineView?
         private var lastRootNodeCount: Int = -1
@@ -78,13 +83,11 @@ struct FileExplorerPanelView: NSViewRepresentable {
         init(
             store: FileExplorerStore,
             state: FileExplorerState,
-            onOpenFilePreview: @escaping (String) -> Void,
-            onOpenFilePreviewAtLine: ((String, Int, Int) -> Void)? = nil
+            onOpenFilePreview: @escaping (String) -> Void
         ) {
             self.store = store
             self.state = state
             self.onOpenFilePreview = onOpenFilePreview
-            self.onOpenFilePreviewAtLine = onOpenFilePreviewAtLine
             super.init()
             observeStore()
             styleObserver = NotificationCenter.default.addObserver(
@@ -628,7 +631,19 @@ final class FileExplorerContainerView: NSView {
     }
     private var presentation: FileExplorerPanelPresentation
     private let coordinator: FileExplorerPanelView.Coordinator
-    private let searchDebounceDelayMilliseconds = 200
+    // Short debounce so the search feels near-instant on typing. The previous
+    // 200ms was tuned for the streaming-snapshot era when each keystroke
+    // visibly re-rendered the results; now we wait for the settled snapshot
+    // and replace atomically, so every millisecond of debounce is straight
+    // added latency. 50ms still batches very-rapid keystrokes (the in-flight
+    // rg process is canceled by the next request anyway via the controller's
+    // dedupe) without making the user wait.
+    private let searchDebounceDelayMilliseconds = 50
+    // When the user re-enters the Find tab we display the previously-cached
+    // results immediately and kick off a fresh search in the background. While
+    // this flag is set, we suppress the controller's first
+    // "isSearching, results=[]" emission so the cached rows don't flash empty.
+    private var isReseedingFindFromCache = false
     // CASPER: Casper find UI has no status label below the search field, so the
     // bottom padding mirrors the top (4pt above + 24pt field + 4pt below). Stock
     // cmux keeps 48 to leave room for the "First N matches" status line.
@@ -834,12 +849,15 @@ final class FileExplorerContainerView: NSView {
                 guard let self, let window = self.window else { return }
                 AppDelegate.shared?.noteRightSidebarKeyboardFocusIntent(mode: self.representedRightSidebarMode(), in: window)
             }
-            casperFindResultsView.onOpenFilePreview = { [weak self] path, line, column in
-                if let openAtLine = self?.coordinator.onOpenFilePreviewAtLine {
-                    openAtLine(path, line, column)
-                } else {
-                    self?.coordinator.onOpenFilePreview(path)
-                }
+            casperFindResultsView.onOpenFilePreview = { [weak self] path in
+                self?.coordinator.onOpenFilePreview(path)
+            }
+            // CASPER: scroll-driven pagination. The view fires when the user
+            // is within the load-more threshold of the document bottom AND the
+            // last snapshot reported `hasMore`; the controller computes the
+            // next emission target and replies with an appended snapshot.
+            casperFindResultsView.onLoadMoreRequested = { [weak self] in
+                self?.searchController.loadMore()
             }
         }
 
@@ -902,6 +920,23 @@ final class FileExplorerContainerView: NSView {
             loadingIndicator.centerXAnchor.constraint(equalTo: centerXAnchor),
             loadingIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+
+        // Seed the Find field + cached results from the per-workspace store so
+        // mounting a fresh container (e.g. returning to the Find/Files tab
+        // after Sessions/Feed/Dock destroyed the prior representable) restores
+        // the user's previous query and results immediately. updateHeader will
+        // kick off a background refresh once the root is known; the
+        // isReseedingFindFromCache flag suppresses the empty intermediate so
+        // the cached rows stay on screen.
+        let initialQuery = coordinator.store.findQuery
+        if !initialQuery.isEmpty {
+            searchField.stringValue = initialQuery
+        }
+        let cachedSnapshot = coordinator.store.findSnapshot
+        if !cachedSnapshot.results.isEmpty {
+            applySearchSnapshot(cachedSnapshot)
+            isReseedingFindFromCache = true
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -969,6 +1004,36 @@ final class FileExplorerContainerView: NSView {
         presentation.rightSidebarMode
     }
 
+    /// Reconcile the AppKit field/results with the per-workspace store.
+    /// Called from `updateNSView` so a store-level reset (notably
+    /// `beginWorkspace`'s clear on workspace change) is reflected in the
+    /// container even though the AppKit view itself wasn't recreated.
+    /// Self-initiated writes (typing, controller snapshots) write through
+    /// the store's equality-checking setters first, so by the time SwiftUI
+    /// re-renders both values already match and this method is a no-op.
+    func syncFindStateFromStoreIfNeeded() {
+        let storeQuery = coordinator.store.findQuery
+        let storeSnapshot = coordinator.store.findSnapshot
+        let fieldMismatch = searchField.stringValue != storeQuery
+        let snapshotMismatch = searchSnapshot != storeSnapshot
+        guard fieldMismatch || snapshotMismatch else { return }
+
+        if fieldMismatch {
+            searchField.stringValue = storeQuery
+        }
+        // The previous query's search may still be in flight; stop it so its
+        // results don't write back into the freshly-cleared store. `clear:
+        // false` skips the controller's idle emission since the store
+        // already reflects the desired snapshot.
+        searchController.cancel(clear: false)
+        cancelPendingSearchRefresh()
+        pendingSearchRefreshAfterSettled = false
+        isReseedingFindFromCache = false
+        if snapshotMismatch {
+            applySearchSnapshot(storeSnapshot)
+        }
+    }
+
     func updatePresentation(_ nextPresentation: FileExplorerPanelPresentation) {
         guard presentation != nextPresentation else {
             if presentation == .find {
@@ -985,7 +1050,19 @@ final class FileExplorerContainerView: NSView {
             searchController.cancel(clear: false)
         case .find:
             isSearchVisible = true
-            refreshSearchIfNeeded()
+            // Returning to the Find tab from Files: skip the background
+            // re-search if the input hasn't changed since the snapshot was
+            // produced. The user explicitly does not want a fresh search to
+            // run every time they switch tabs back — only when the query (or
+            // root, handled separately in updateHeader) genuinely changes.
+            // Editing the query, switching workspaces, or content-revision
+            // bumps still trigger a refresh through their own code paths.
+            if !shouldSkipFindReentryRefresh() {
+                if !searchSnapshot.results.isEmpty {
+                    isReseedingFindFromCache = true
+                }
+                refreshSearchIfNeeded()
+            }
         }
         updateSearchLayout()
         registerWithKeyboardFocusCoordinatorIfNeeded()
@@ -1060,6 +1137,7 @@ final class FileExplorerContainerView: NSView {
             isSearchVisible = false
             searchController.cancel(clear: true)
             searchField.stringValue = ""
+            coordinator.store.setFindQuery("")
             searchSnapshot = .empty
             searchResultsView.reloadData()
             updateSearchLayout()
@@ -1096,6 +1174,20 @@ final class FileExplorerContainerView: NSView {
             view = candidate.superview
         }
         return false
+    }
+
+    /// Decides whether the Find-tab re-entry refresh should be elided. We
+    /// elide it when the search field still holds exactly the query that
+    /// produced the currently-displayed snapshot, the snapshot has settled,
+    /// and the cached query is non-empty. In that case the cached rows are
+    /// already the answer for the user's input, and re-running rg would just
+    /// flicker the list without any user-visible benefit.
+    private func shouldSkipFindReentryRefresh() -> Bool {
+        let fieldQuery = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fieldQuery.isEmpty else { return false }
+        guard fieldQuery == searchSnapshot.query else { return false }
+        guard !searchSnapshot.isSearching else { return false }
+        return true
     }
 
     private func refreshSearchIfNeeded() {
@@ -1191,6 +1283,19 @@ final class FileExplorerContainerView: NSView {
     }
 
     private func applySearchSnapshot(_ snapshot: FileSearchSnapshot) {
+        // Drop every in-flight snapshot. We render only the settled terminal
+        // state for each query (`.idle`, `.noMatches`, `.matches`, `.limited`,
+        // `.failed`, `.unsupported`) so the result list flips atomically from
+        // the prior query's results to the new query's results. Streaming the
+        // 50ms-interval partial frames in between caused visible "jumping" as
+        // rows appeared and the diff re-laid them out — ripgrep is fast
+        // enough that the perceived latency is "instant" without it, and the
+        // brief stale-display of the prior query's rows matches VS Code's
+        // behavior.
+        if snapshot.isSearching {
+            return
+        }
+        isReseedingFindFromCache = false
 #if DEBUG
         let debugApplyStart = ProcessInfo.processInfo.systemUptime
         let previousStatusName = debugSearchStatusName(searchSnapshot.status)
@@ -1199,6 +1304,7 @@ final class FileExplorerContainerView: NSView {
         let previousSelectedRow = searchResultsView.selectedRow
         let previousResults = searchSnapshot.results
         searchSnapshot = snapshot
+        coordinator.store.setFindSnapshot(snapshot)
         // CASPER: hide the "%d matches" / "First %d matches" status line — the grouped UI already shows hit counts via per-file badges; delete the conditional if upstream adopts the grouped view.
         if casperFindResultsView != nil {
             searchStatusLabel.stringValue = ""
@@ -1222,10 +1328,10 @@ final class FileExplorerContainerView: NSView {
             pendingSearchRefreshAfterSettled = false
         }
 
-        if !snapshot.results.isEmpty {
-            let selectedRow = previousSelectedRow >= 0
-                ? min(previousSelectedRow, snapshot.results.count - 1)
-                : 0
+        // Preserve a prior selection (clamped) but never auto-select row 0 on
+        // a fresh query — that would steal keyboard focus context.
+        if !snapshot.results.isEmpty, previousSelectedRow >= 0 {
+            let selectedRow = min(previousSelectedRow, snapshot.results.count - 1)
             searchResultsView.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
         }
 
@@ -1389,6 +1495,7 @@ final class FileExplorerContainerView: NSView {
             pendingSearchRefreshAfterSettled = false
             searchController.cancel(clear: true)
             searchField.stringValue = ""
+            coordinator.store.setFindQuery("")
             applySearchSnapshot(.empty)
             updateSearchLayout()
             if hadQuery {
@@ -1405,6 +1512,7 @@ final class FileExplorerContainerView: NSView {
         isSearchVisible = false
         searchController.cancel(clear: true)
         searchField.stringValue = ""
+        coordinator.store.setFindQuery("")
         pendingSearchRefreshAfterSettled = false
         searchSnapshot = .empty
         searchResultsView.reloadData()
@@ -1489,6 +1597,7 @@ final class FileExplorerContainerView: NSView {
 extension FileExplorerContainerView: NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     func controlTextDidChange(_ notification: Notification) {
         guard notification.object as? NSTextField === searchField else { return }
+        coordinator.store.setFindQuery(searchField.stringValue)
         scrollSearchFieldEditorToInsertionPoint()
         Task { @MainActor [weak self] in
             self?.scrollSearchFieldEditorToInsertionPoint()

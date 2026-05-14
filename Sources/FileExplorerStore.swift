@@ -601,8 +601,26 @@ final class FileExplorerStore: ObservableObject {
     /// Watches the root directory for filesystem changes (local only).
     private var directoryWatcher: FileExplorerDirectoryWatcher?
 
-    /// Paths that are logically expanded (persisted across provider changes)
+    /// Paths that are logically expanded. Reset when the workspace changes
+    /// (see `beginWorkspace(_:)`); preserved across sidebar-tab switches and
+    /// within-workspace cwd changes.
     private(set) var expandedPaths: Set<String> = []
+
+    /// Last text typed into the Find sidebar, kept so switching sidebar tabs
+    /// (Find → Files → Sessions → Find) preserves the query. Reset on
+    /// workspace change.
+    @Published private(set) var findQuery: String = ""
+
+    /// Last results delivered by the Find sidebar's search controller, kept so
+    /// the user sees their previous results immediately on returning to the
+    /// Find tab. A refresh runs in the background to reconcile in case the
+    /// filesystem changed. Reset on workspace change.
+    @Published private(set) var findSnapshot: FileSearchSnapshot = .empty
+
+    /// Identifier (tab UUID) for the workspace currently bound to this store.
+    /// Tracked separately from `rootPath` so that within-workspace cwd changes
+    /// don't trigger a state reset.
+    private var currentWorkspaceId: UUID?
 
     /// Stable navigation selection. The outline view mirrors this path after reloads.
     private(set) var selectedPath: String?
@@ -636,6 +654,33 @@ final class FileExplorerStore: ObservableObject {
             return "ssh://\(sshProvider.displayTarget):\(rootPath)"
         }
         return FileExplorerRootResolver.displayPath(for: rootPath, homePath: provider?.homePath)
+    }
+
+    // MARK: - Find sidebar state
+
+    func setFindQuery(_ query: String) {
+        guard query != findQuery else { return }
+        findQuery = query
+    }
+
+    func setFindSnapshot(_ snapshot: FileSearchSnapshot) {
+        guard snapshot != findSnapshot else { return }
+        findSnapshot = snapshot
+    }
+
+    /// Bind this store to a workspace (tab). When the workspace identity
+    /// changes, clear per-workspace UI state: expansion, selection, and the
+    /// Find sidebar's query/results. Within-workspace transitions (e.g. the
+    /// terminal `cd`-ing to a subdirectory) keep state intact.
+    func beginWorkspace(_ workspaceId: UUID?) {
+        guard workspaceId != currentWorkspaceId else { return }
+        currentWorkspaceId = workspaceId
+        expandedPaths = []
+        selectedPath = nil
+        selectedPaths = []
+        pendingDescendIntoFirstChildPath = nil
+        findQuery = ""
+        findSnapshot = .empty
     }
 
     // MARK: - Public API

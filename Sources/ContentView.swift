@@ -1054,6 +1054,7 @@ struct ContentView: View {
     @EnvironmentObject var sidebarSelectionState: SidebarSelectionState
     @EnvironmentObject var cmuxConfigStore: CmuxConfigStore
     @EnvironmentObject var fileExplorerState: FileExplorerState
+    @EnvironmentObject var sidebarRevealHoverState: SidebarRevealHoverState
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("titlebarControlsStyle") private var titlebarControlsStyleRawValue = TitlebarControlsStyle.classic.rawValue
     @State private var sidebarWidth: CGFloat = 200
@@ -2082,7 +2083,8 @@ struct ContentView: View {
     /// sidebar while drags resize the window.
     private var sidebarRevealStripOverlay: some View {
         SidebarRevealStripView(
-            label: String(localized: "sidebarRevealStrip.label", defaultValue: "Show Sidebar")
+            label: String(localized: "sidebarRevealStrip.label", defaultValue: "Show Sidebar"),
+            edge: .leading
         )
         .frame(width: SidebarRevealStripMetrics.width)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -2091,7 +2093,8 @@ struct ContentView: View {
 
     private var rightSidebarRevealStripOverlay: some View {
         SidebarRevealStripView(
-            label: String(localized: "rightSidebarRevealStrip.label", defaultValue: "Show Right Sidebar")
+            label: String(localized: "rightSidebarRevealStrip.label", defaultValue: "Show Right Sidebar"),
+            edge: .trailing
         )
         .frame(width: SidebarRevealStripMetrics.width)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -2162,14 +2165,13 @@ struct ContentView: View {
     ) -> CGFloat {
         guard isMinimalMode else { return WindowChromeMetrics.appTitlebarHeight }
         guard !isFullScreen else { return 0 }
-        // Windowed minimal mode: when the sidebar is visible the traffic lights
-        // sit over the sidebar, so terminal content can extend to the top.
-        // When the sidebar is hidden, reserve the titlebar height so window
-        // buttons get their own bar instead of overlapping terminal text.
-        // In either case cancel any host-reported safe-area inset first.
-        let cancelHostSafeArea = -max(0, min(titlebarPadding, hostingSafeAreaTop))
-        if isSidebarVisible { return cancelHostSafeArea }
-        return WindowChromeMetrics.appTitlebarHeight + cancelHostSafeArea
+        // Windowed minimal mode: tabs overlay the titlebar in both
+        // sidebar-visible and sidebar-hidden states. With the sidebar visible,
+        // traffic lights sit over the sidebar; with it hidden, the tab strip's
+        // 80pt trafficLightTabBarLeadingInset reserves space for them at the
+        // leading edge. Cancel any host-reported safe-area inset so we render
+        // edge-to-edge in either case.
+        return -max(0, min(titlebarPadding, hostingSafeAreaTop))
     }
 
     private func terminalContent(appearance: WindowAppearanceSnapshot) -> some View {
@@ -2316,15 +2318,7 @@ struct ContentView: View {
             onResumeSession: { entry in
                 resumeSession(entry: entry)
             },
-            onOpenFilePreview: { filePath in
-                openFilePreviewFromSidebar(filePath: filePath)
-            },
-            onOpenFilePreviewAtLine: { filePath, line, column in
-                openFilePreviewFromSidebar(
-                    filePath: filePath,
-                    scrollTarget: CasperFilePreviewScrollTarget(line: line, column: column)
-                )
-            },
+            onOpenFilePreview: openFilePreviewFromSidebar,
             onClose: {
                 #if DEBUG
                 cmuxDebugLog("rightSidebar.closeButton")
@@ -2585,50 +2579,52 @@ struct ContentView: View {
         let inputWithReturn = resumeCommand + "\n"
         let targetCwd = entry.resumeWorkingDirectory
 
-        // Smart placement: if the focused workspace's tracked cwd matches, open a
-        // new tab inside that workspace. Otherwise create a new workspace.
-        // Remote workspaces are excluded from cwd-match: a session indexed from
-        // the local filesystem must not be resumed inside a remote shell just
-        // because the path string happens to coincide.
-        let selected = tabManager.selectedWorkspace
-        let selectedTab = tabManager.selectedTabId.flatMap { id in
-            tabManager.tabs.first(where: { $0.id == id })
-        }
-        let isRemoteSelection = selectedTab?.isRemoteWorkspace ?? false
-        let workspaceCwd = selected?.currentDirectory
-        let pwdMatches: Bool = {
-            guard !isRemoteSelection,
-                  let targetCwd, !targetCwd.isEmpty,
-                  let workspaceCwd, !workspaceCwd.isEmpty else { return false }
-            let lhs = (targetCwd as NSString).standardizingPath
-            let rhs = (workspaceCwd as NSString).standardizingPath
-            return lhs == rhs
-        }()
-
-        if pwdMatches,
-           let workspace = selected,
-           let paneId = workspace.bonsplitController.focusedPaneId {
-            workspace.newTerminalSurface(
-                inPane: paneId,
-                focus: true,
-                workingDirectory: targetCwd,
-                initialInput: inputWithReturn
-            )
-            return
+        if let workspace = tabManager.selectedWorkspace, !workspace.isRemoteWorkspace {
+            let bonsplit = workspace.bonsplitController
+            if let paneId = bonsplit.focusedPaneId ?? bonsplit.allPaneIds.first {
+                if let panelId = idleTerminalPanelId(in: workspace, paneId: paneId),
+                   let panel = workspace.terminalPanel(for: panelId) {
+                    panel.sendInput(inputWithReturn)
+                    return
+                }
+                if workspace.newTerminalSurface(
+                    inPane: paneId,
+                    focus: true,
+                    workingDirectory: targetCwd,
+                    initialInput: inputWithReturn
+                ) != nil {
+                    return
+                }
+            }
         }
 
         tabManager.addWorkspace(
             workingDirectory: targetCwd,
             initialTerminalInput: inputWithReturn
         )
+        sidebarState.isVisible = true
+    }
+
+    private func idleTerminalPanelId(in workspace: Workspace, paneId: PaneID) -> UUID? {
+        let bonsplit = workspace.bonsplitController
+        guard let selectedTab = bonsplit.selectedTab(inPane: paneId),
+              selectedTab.kind == Workspace.SurfaceKind.terminal,
+              let panelId = workspace.panelIdFromSurfaceId(selectedTab.id) else {
+            return nil
+        }
+        if let keys = workspace.agentPIDKeysByPanelId[panelId], !keys.isEmpty {
+            return nil
+        }
+        // Require positive evidence the shell is at an idle prompt. Blocking
+        // only .commandRunning would let an agent launched outside cmux's
+        // hooks (e.g. user typed `claude` manually) appear idle in .unknown.
+        guard workspace.panelShellActivityStates[panelId] == .promptIdle else {
+            return nil
+        }
+        return panelId
     }
 
     private func openFilePreviewFromSidebar(filePath: String) {
-        openFilePreviewFromSidebar(filePath: filePath, scrollTarget: nil)
-    }
-
-    // CASPER: overload that carries a 1-indexed (line, column) — used by the grouped Find UI so opening a hit jumps the editor to the match.
-    private func openFilePreviewFromSidebar(filePath: String, scrollTarget: CasperFilePreviewScrollTarget?) {
         guard let workspace = tabManager.selectedWorkspace else { return }
         guard let paneId = workspace.bonsplitController.focusedPaneId ?? workspace.bonsplitController.allPaneIds.first else {
             return
@@ -2637,8 +2633,7 @@ struct ContentView: View {
         sidebarSelectionState.selection = .tabs
         _ = workspace.openOrFocusFilePreviewSurface(
             inPane: paneId,
-            filePath: filePath,
-            scrollTarget: scrollTarget
+            filePath: filePath
         )
     }
 
@@ -2648,10 +2643,15 @@ struct ContentView: View {
             // No selection means we have no local cwd to scope by; clear so the
             // sessions panel doesn't keep filtering by a stale previous tab.
             sessionIndexStore.setCurrentDirectoryIfChanged(nil)
+            fileExplorerStore.beginWorkspace(nil)
             fileExplorerStore.applyWorkspaceRoot(.none)
             return
         }
 
+        // Bind the explorer store to the active tab so changing workspaces
+        // resets Find state, expansion, and selection. Within-workspace cwd
+        // changes (e.g. terminal cd) keep state via the same-id no-op path.
+        fileExplorerStore.beginWorkspace(tab.id)
         fileExplorerStore.showHiddenFiles = true
 
         if tab.isRemoteWorkspace {
@@ -3475,6 +3475,7 @@ struct ContentView: View {
                 sidebarState: sidebarState,
                 sidebarSelectionState: sidebarSelectionState,
                 fileExplorerState: fileExplorerState,
+                sidebarRevealHoverState: sidebarRevealHoverState,
                 cmuxConfigStore: cmuxConfigStore
             )
             installFileDropOverlayWhenReady(on: window, tabManager: tabManager)

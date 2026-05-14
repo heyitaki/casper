@@ -7,10 +7,14 @@ final class CasperFindResultsView: NSScrollView {
     var onCommit: (() -> Void)?
     var onCancel: (() -> Void)?
     var onFocus: (() -> Void)?
-    /// Called with the absolute path of the row's file plus the 1-indexed
-    /// (line, column) of the match. For group-header rows `(1, 1)` is sent
-    /// (open the file at the top).
-    var onOpenFilePreview: ((String, Int, Int) -> Void)?
+    /// Called with the absolute path of the row's file. The file opens at
+    /// the top regardless of whether a hit row or group-header row was clicked.
+    var onOpenFilePreview: ((String) -> Void)?
+    /// Fired when the user has scrolled within `loadMoreScrollThresholdPoints`
+    /// of the document bottom AND `snapshotHasMore` is true. Deduped per
+    /// snapshot result count so a single near-bottom region fires at most
+    /// once per arriving page.
+    var onLoadMoreRequested: (() -> Void)?
 
     private let outlineView: CasperFindOutlineView
     private let dataSource: CasperFindOutlineDataSource
@@ -29,6 +33,17 @@ final class CasperFindResultsView: NSScrollView {
     private var query: String = ""
     private var groupItems: [CasperFindGroupItem] = []
     private var collapsedPaths: Set<String> = []
+
+    // CASPER: pagination state. `snapshotHasMore` mirrors the latest snapshot's
+    // hasMore field; `lastLoadMoreRequestedAtCount` is the result count that
+    // was visible when we last asked the controller for more. The next request
+    // only fires once the count has grown past that value (i.e. the previous
+    // request has actually delivered) — prevents firing 10 requests in a row
+    // while a page is still in flight.
+    private var snapshotHasMore = false
+    private var lastSnapshotResultCount = 0
+    private var lastLoadMoreRequestedAtCount = -1
+    private let loadMoreScrollThresholdPoints: CGFloat = 240
 
     init() {
         outlineView = CasperFindOutlineView()
@@ -159,9 +174,29 @@ final class CasperFindResultsView: NSScrollView {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.updateStickyHeader()
+                self?.maybeRequestLoadMore()
             }
         }
         updateStickyHeader()
+    }
+
+    /// Fires `onLoadMoreRequested` when (a) the latest snapshot reports more
+    /// results are available, (b) the user has scrolled within
+    /// `loadMoreScrollThresholdPoints` of the document bottom, and (c) we
+    /// haven't already requested at this exact result count.
+    private func maybeRequestLoadMore() {
+        guard snapshotHasMore else { return }
+        guard lastSnapshotResultCount > lastLoadMoreRequestedAtCount else { return }
+        // Hidden / pre-layout views trivially satisfy the bottom-of-document
+        // check (both maxYs are 0), so we'd fire load-more without any scroll.
+        guard !isHidden else { return }
+        guard outlineView.numberOfRows > 0 else { return }
+        guard outlineView.frame.height > 0 else { return }
+        let visibleMaxY = contentView.documentVisibleRect.maxY
+        let docMaxY = outlineView.frame.maxY
+        guard docMaxY - visibleMaxY <= loadMoreScrollThresholdPoints else { return }
+        lastLoadMoreRequestedAtCount = lastSnapshotResultCount
+        onLoadMoreRequested?()
     }
 
     private func updateStickyHeader() {
@@ -212,19 +247,257 @@ final class CasperFindResultsView: NSScrollView {
     // MARK: - Snapshot ingestion
 
     func apply(_ snapshot: FileSearchSnapshot) {
-        query = snapshot.query
+        // CASPER: diff-aware update path. The previous implementation called
+        // `outlineView.reloadData()` on every snapshot, which tears down all
+        // row views and rebuilds them — visible as a flash on Find-tab
+        // re-entry (cache reseed → background re-search → identical results
+        // come back) and on every keystroke during slow typing. The new
+        // logic:
+        //   1. Fast-path: structure unchanged → only refresh hit-cell
+        //      highlights if the query string changed.
+        //   2. Same groups, hits differ → mutate group items in place and
+        //      apply per-group hit-level insert/remove diffs.
+        //   3. Group structure changed → batch group-level insert/remove
+        //      around in-place mutation of matched groups.
+        //   4. Worst-case fallback → reloadData (only when the diff can't
+        //      preserve relative order of common groups).
+        let newQuery = snapshot.query
+        let queryChanged = newQuery != query
+        query = newQuery
+
+        // Reset pagination dedupe when the query changes — a fresh query starts
+        // a fresh load-more cursor, regardless of prior result counts.
+        if queryChanged {
+            lastLoadMoreRequestedAtCount = -1
+        }
+        snapshotHasMore = snapshot.hasMore
+        lastSnapshotResultCount = snapshot.results.count
+
         let groups = CasperFindGrouper.group(snapshot.results)
         let nextItems = groups.map { CasperFindGroupItem(group: $0) }
+
+        if applyIncrementalUpdate(nextItems: nextItems, queryChanged: queryChanged) {
+            updateStickyHeader()
+            maybeRequestLoadMore()
+            return
+        }
+
+        // Fallback: structural change too tangled to diff. Full reload.
         groupItems = nextItems
         outlineView.reloadData()
         for item in nextItems where !collapsedPaths.contains(item.group.relativePath) {
             outlineView.expandItem(item)
         }
-        if outlineView.selectedRow < 0, outlineView.numberOfRows > 0 {
-            outlineView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        }
         updateStickyHeader()
+        maybeRequestLoadMore()
     }
+
+    /// Attempts an incremental update of `outlineView` to match `nextItems`.
+    /// Returns `false` if the diff would be malformed (common groups out of
+    /// order between old and new); callers should fall back to `reloadData`.
+    private func applyIncrementalUpdate(
+        nextItems: [CasperFindGroupItem],
+        queryChanged: Bool
+    ) -> Bool {
+        // Build old-by-path lookup.
+        var oldByPath: [String: CasperFindGroupItem] = [:]
+        oldByPath.reserveCapacity(groupItems.count)
+        for item in groupItems {
+            oldByPath[item.group.relativePath] = item
+        }
+
+        let oldPaths = groupItems.map { $0.group.relativePath }
+        let newPaths = nextItems.map { $0.group.relativePath }
+
+        // For a clean incremental diff we require that the relative order of
+        // groups that exist in BOTH old and new is preserved. Otherwise we'd
+        // need a real LCS or move operations — fall back to reloadData.
+        let newSet = Set(newPaths)
+        let oldSet = Set(oldPaths)
+        let commonOldOrder = oldPaths.filter { newSet.contains($0) }
+        let commonNewOrder = newPaths.filter { oldSet.contains($0) }
+        guard commonOldOrder == commonNewOrder else { return false }
+
+        // Indices to remove (in old space) and insert (in new space).
+        var removeIndexes = IndexSet()
+        for (i, path) in oldPaths.enumerated() where !newSet.contains(path) {
+            removeIndexes.insert(i)
+        }
+        var insertIndexes = IndexSet()
+        for (i, path) in newPaths.enumerated() where !oldSet.contains(path) {
+            insertIndexes.insert(i)
+        }
+
+        // Build the rebuilt list, reusing old refs where matched. For matched
+        // groups, mutate the underlying data so future reconfigures see the
+        // new state.
+        var rebuilt: [CasperFindGroupItem] = []
+        rebuilt.reserveCapacity(nextItems.count)
+        var matchedForHitDiff: [(item: CasperFindGroupItem, newHits: [CasperFindHitItem])] = []
+        var matchedForHeaderRefresh: [CasperFindGroupItem] = []
+        for newItem in nextItems {
+            if let oldItem = oldByPath[newItem.group.relativePath] {
+                let badgeChanged = oldItem.group.hits.count != newItem.group.hits.count
+                let directoryChanged = oldItem.group.directoryDisplay != newItem.group.directoryDisplay
+                let filenameChanged = oldItem.group.filename != newItem.group.filename
+                oldItem.group = newItem.group
+                if badgeChanged || directoryChanged || filenameChanged {
+                    matchedForHeaderRefresh.append(oldItem)
+                }
+                matchedForHitDiff.append((oldItem, newItem.hitItems))
+                rebuilt.append(oldItem)
+            } else {
+                rebuilt.append(newItem)
+            }
+        }
+
+        let structurallyIdentical = removeIndexes.isEmpty
+            && insertIndexes.isEmpty
+            && matchedForHitDiff.allSatisfy { hitsAreIdentical($0.item.hitItems, $0.newHits) }
+
+        if structurallyIdentical {
+            // Nothing visibly changed except possibly the query string (which
+            // affects hit-cell match highlighting).
+            if queryChanged {
+                refreshVisibleHitCells()
+            }
+            return true
+        }
+
+        // Apply group-level structure changes batched together with hit-level
+        // diffs so AppKit animates a single update pass.
+        outlineView.beginUpdates()
+
+        // Data source must already reflect the post-update state before the
+        // outline view re-queries during endUpdates().
+        groupItems = rebuilt
+
+        if !removeIndexes.isEmpty {
+            outlineView.removeItems(at: removeIndexes, inParent: nil, withAnimation: [])
+        }
+        if !insertIndexes.isEmpty {
+            outlineView.insertItems(at: insertIndexes, inParent: nil, withAnimation: [])
+        }
+
+        // Per-matched-group hit diff. Each entry's `item` was already mutated
+        // up above so its `group` reflects the new metadata; `hitItems` still
+        // holds the OLD hits which we use to compute the per-row diff before
+        // overwriting.
+        for (item, newHits) in matchedForHitDiff {
+            applyHitDiff(in: item, newHits: newHits)
+        }
+
+        outlineView.endUpdates()
+
+        // Expand newly-inserted groups (unless the user had them collapsed
+        // earlier under the same relative path).
+        for idx in insertIndexes {
+            let item = rebuilt[idx]
+            if !collapsedPaths.contains(item.group.relativePath) {
+                outlineView.expandItem(item)
+            }
+        }
+
+        // Refresh visible group header cells (badge count / filename / dir).
+        for item in matchedForHeaderRefresh {
+            refreshVisibleGroupCell(for: item)
+        }
+
+        // Refresh visible hit cells when the query changed (highlight ranges
+        // depend on the query). We do this after the hit-diff above so we
+        // hit the right rows (insert/remove already created cells for the
+        // newly-inserted hits with the new query).
+        if queryChanged {
+            refreshVisibleHitCells()
+        }
+
+        return true
+    }
+
+    /// Diffs `item.hitItems` against `newHits` and applies the minimal set of
+    /// outline-view insert/remove calls. Mutates `item.hitItems` to `newHits`.
+    /// Must be called inside a `beginUpdates()`/`endUpdates()` block.
+    private func applyHitDiff(in item: CasperFindGroupItem, newHits: [CasperFindHitItem]) {
+        let oldHits = item.hitItems
+        if hitsAreIdentical(oldHits, newHits) {
+            return
+        }
+
+        // Prefix-extension: oldHits is a strict prefix of newHits.
+        if newHits.count > oldHits.count && hitsAreIdentical(oldHits, Array(newHits.prefix(oldHits.count))) {
+            item.hitItems = newHits
+            let inserted = IndexSet(integersIn: oldHits.count..<newHits.count)
+            outlineView.insertItems(at: inserted, inParent: item, withAnimation: [])
+            return
+        }
+
+        // Prefix-truncation: newHits is a strict prefix of oldHits.
+        if newHits.count < oldHits.count && hitsAreIdentical(newHits, Array(oldHits.prefix(newHits.count))) {
+            item.hitItems = newHits
+            let removed = IndexSet(integersIn: newHits.count..<oldHits.count)
+            outlineView.removeItems(at: removed, inParent: item, withAnimation: [])
+            return
+        }
+
+        // General case: replace all children. Still uses insert/remove rather
+        // than reloadItem(reloadChildren:) because the latter tears down the
+        // subtree visibly.
+        item.hitItems = newHits
+        if !oldHits.isEmpty {
+            outlineView.removeItems(
+                at: IndexSet(integersIn: 0..<oldHits.count),
+                inParent: item,
+                withAnimation: []
+            )
+        }
+        if !newHits.isEmpty {
+            outlineView.insertItems(
+                at: IndexSet(integersIn: 0..<newHits.count),
+                inParent: item,
+                withAnimation: []
+            )
+        }
+    }
+
+    private func hitsAreIdentical(_ lhs: [CasperFindHitItem], _ rhs: [CasperFindHitItem]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        for i in 0..<lhs.count where !lhs[i].isEqual(rhs[i]) {
+            return false
+        }
+        return true
+    }
+
+    /// Reconfigures the visible group header cell for `item` without going
+    /// through `reloadItem`, which would tear down and recreate the cell view
+    /// (and produce the flash this whole code path is trying to avoid).
+    private func refreshVisibleGroupCell(for item: CasperFindGroupItem) {
+        let row = outlineView.row(forItem: item)
+        guard row >= 0 else { return }
+        if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+            as? CasperFindGroupHeaderCellView {
+            cell.configure(with: item.group, isExpanded: outlineView.isItemExpanded(item))
+        }
+    }
+
+    /// Reconfigures every visible hit cell so its match highlights reflect
+    /// the current `query`. Used when the query string changes but the result
+    /// set stays the same (rare but possible — e.g. case-insensitive matches).
+    private func refreshVisibleHitCells() {
+        let visibleRows = outlineView.rows(in: outlineView.visibleRect)
+        guard visibleRows.length > 0 else { return }
+        let upper = visibleRows.location + visibleRows.length
+        for row in visibleRows.location..<upper {
+            guard let hit = outlineView.item(atRow: row) as? CasperFindHitItem,
+                  let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+                    as? CasperFindHitCellView else { continue }
+            cell.configure(with: hit.hit, query: query)
+        }
+    }
+
+    // CASPER: no auto-select on apply. Selection is a user-driven action
+    // (click or arrow key). `moveSelection(by:)` handles `selectedRow < 0`
+    // by jumping to row 0 on the first arrow press, so keyboard navigation
+    // still works without any initial selection.
 
     // MARK: - Selection / keyboard interop
 
@@ -271,9 +544,9 @@ final class CasperFindResultsView: NSScrollView {
     private func openItem(atRow row: Int) {
         guard let item = outlineView.item(atRow: row) else { return }
         if let hit = item as? CasperFindHitItem {
-            onOpenFilePreview?(hit.hit.path, hit.hit.lineNumber, hit.hit.columnNumber)
+            onOpenFilePreview?(hit.hit.path)
         } else if let group = item as? CasperFindGroupItem {
-            onOpenFilePreview?(group.group.path, 1, 1)
+            onOpenFilePreview?(group.group.path)
         }
     }
 
@@ -342,8 +615,13 @@ final class CasperFindOutlineView: NSOutlineView {
 
 @MainActor
 final class CasperFindGroupItem: NSObject {
-    let group: CasperFindFileGroup
-    let hitItems: [CasperFindHitItem]
+    // CASPER: mutable so `CasperFindResultsView.apply` can update a reused
+    // item's underlying data in place when results change. Diff-aware updates
+    // depend on keeping the same NSObject reference across snapshots (the
+    // outline view caches items by hash/equality) while swapping the data
+    // they carry.
+    var group: CasperFindFileGroup
+    var hitItems: [CasperFindHitItem]
 
     init(group: CasperFindFileGroup) {
         self.group = group
