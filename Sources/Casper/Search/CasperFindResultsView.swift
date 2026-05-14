@@ -45,6 +45,12 @@ final class CasperFindResultsView: NSScrollView {
     private var lastLoadMoreRequestedAtCount = -1
     private let loadMoreScrollThresholdPoints: CGFloat = 240
 
+    // CASPER: empty-state label shown only on terminal `.noMatches` snapshots
+    // (not on `.idle`, which renders blank). Sits in the scroll view's own
+    // coordinate space so it doesn't scroll, and stays hidden whenever
+    // `groupItems` is non-empty.
+    private let emptyStateLabel = NSTextField(labelWithString: "")
+
     init() {
         outlineView = CasperFindOutlineView()
         dataSource = CasperFindOutlineDataSource()
@@ -136,6 +142,39 @@ final class CasperFindResultsView: NSScrollView {
         documentView = outlineView
 
         setupStickyHeader()
+        setupEmptyState()
+    }
+
+    private func shouldShowEmptyState(_ status: FileSearchSnapshot.Status) -> Bool {
+        // `.failed`/`.unsupported` carry their own user-facing copy in
+        // `FileExplorerView.searchStatusLabel`; overlaying a generic
+        // "No results found" on top of those would hide the real reason.
+        switch status {
+        case .noMatches: return true
+        case .idle, .searching, .matches, .limited, .failed, .unsupported: return false
+        }
+    }
+
+    private func setupEmptyState() {
+        emptyStateLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateLabel.stringValue = String(
+            localized: "fileExplorer.search.noResultsFound",
+            defaultValue: "No results found"
+        )
+        emptyStateLabel.textColor = .secondaryLabelColor
+        emptyStateLabel.font = .systemFont(ofSize: 12)
+        emptyStateLabel.alignment = .center
+        emptyStateLabel.isHidden = true
+        // CASPER: addFloatingSubview pins us in the scroll view's coordinate
+        // space (won't scroll, won't get re-tiled behind the clip view's
+        // background), same trick the sticky group header uses.
+        addFloatingSubview(emptyStateLabel, for: .vertical)
+        NSLayoutConstraint.activate([
+            emptyStateLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            emptyStateLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            emptyStateLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 12),
+            emptyStateLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -12),
+        ])
     }
 
     private func setupStickyHeader() {
@@ -275,6 +314,7 @@ final class CasperFindResultsView: NSScrollView {
 
         let groups = CasperFindGrouper.group(snapshot.results)
         let nextItems = groups.map { CasperFindGroupItem(group: $0) }
+        emptyStateLabel.isHidden = !nextItems.isEmpty || !shouldShowEmptyState(snapshot.status)
 
         if applyIncrementalUpdate(nextItems: nextItems, queryChanged: queryChanged) {
             updateStickyHeader()

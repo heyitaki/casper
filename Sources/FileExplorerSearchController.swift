@@ -196,6 +196,11 @@ actor FileSearchOutputPipeline {
     // the field is cleared until the next request — this is what suppresses
     // the previous interval-based intermediate-snapshot flicker.
     private var pendingEmissionTarget: Int?
+    // CASPER: gate for the early-paint branch — once any pre-finish emit has
+    // been delivered, suppress further early paints. Every emit becomes a
+    // MainActor hop + NSOutlineView diff, so capping pre-finish emits at one
+    // keeps the main thread free for input under heavy `rg`s.
+    private var hasDeliveredInitialEmit = false
 
     init(rootPath: String, hardMaxResults: Int, initialEmissionTarget: Int) {
         self.rootPath = rootPath
@@ -224,6 +229,7 @@ actor FileSearchOutputPipeline {
     }
 
     private func consumeBufferedStdout(includeTrailingLine: Bool) -> FileSearchPipelineUpdate? {
+        let resultsCountBefore = results.count
         var latestUpdate: FileSearchPipelineUpdate?
         while let newlineIndex = stdoutBuffer.firstIndex(of: 10) {
             let lineData = stdoutBuffer[..<newlineIndex]
@@ -243,6 +249,20 @@ actor FileSearchOutputPipeline {
             }
         }
 
+        // CASPER: one-shot early paint so sparse queries don't wait on rg's
+        // full tree walk. Clearing `pendingEmissionTarget` here makes the
+        // target-met branch in `consumeStdoutLine` a no-op for the rest of
+        // the query (loadMore can re-arm it explicitly); together with
+        // `hasDeliveredInitialEmit` this caps pre-finish emits at one.
+        if latestUpdate == nil,
+           !isFinished,
+           !hasDeliveredInitialEmit,
+           results.count > resultsCountBefore {
+            hasDeliveredInitialEmit = true
+            pendingEmissionTarget = nil
+            latestUpdate = matchesUpdate(shouldStopProcess: false)
+        }
+
         return latestUpdate
     }
 
@@ -256,10 +276,12 @@ actor FileSearchOutputPipeline {
             let update = matchesUpdate(shouldStopProcess: true)
             isFinished = true
             terminalUpdate = update
+            hasDeliveredInitialEmit = true
             return update
         }
         if let target = pendingEmissionTarget, results.count >= target {
             pendingEmissionTarget = nil
+            hasDeliveredInitialEmit = true
             return matchesUpdate(shouldStopProcess: false)
         }
         return nil
@@ -417,6 +439,18 @@ final class FileSearchController: FileSearchControlling {
     private var pipeline: FileSearchOutputPipeline?
     private var searchTask: Task<Void, Never>?
 
+    // CASPER: main-thread coalescing slot. Multiple pipeline updates can arrive
+    // close together (e.g. early-streaming emit immediately followed by the
+    // hard-cap or finish emit when `rg` is fast); without a coalesce step they
+    // each queue an independent MainActor hop and each runs the full
+    // grouping + NSOutlineView diff + group `expandItem` walk in
+    // `CasperFindResultsView.apply`. Under heavy queries this saturated the
+    // main thread and blocked search-bar / terminal-panel input. With the
+    // slot, any update arriving while a drain is pending overwrites the slot
+    // — only the latest one ever reaches `applyPipelineUpdate`.
+    private var pendingPipelineUpdate: (update: FileSearchPipelineUpdate, generation: Int)?
+    private var pendingPipelineDrainScheduled = false
+
     func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int = 0) {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let nextRequest = Request(
@@ -495,47 +529,71 @@ final class FileSearchController: FileSearchControlling {
             }
         }
 
-        do {
-            try process.run()
-            self.process = process
-            let stdoutReadHandle = FileSearchReadHandle(stdout.fileHandleForReading)
-            let stderrReadHandle = FileSearchReadHandle(stderr.fileHandleForReading)
-            searchTask = Task.detached(priority: .userInitiated) { [weak self, pipeline, terminationSignal, stdoutReadHandle, stderrReadHandle] in
-                // Result completeness is defined by stdout. Stderr stays diagnostic-only:
-                // successful searches do not wait on it, failed searches do before formatting the error.
-                let stderrTask = Task.detached(priority: .utility) { [stderrReadHandle, pipeline] in
-                    await Self.streamStderr(from: stderrReadHandle, pipeline: pipeline)
+        let stdoutReadHandle = FileSearchReadHandle(stdout.fileHandleForReading)
+        let stderrReadHandle = FileSearchReadHandle(stderr.fileHandleForReading)
+        // CASPER: process.run() takes several ms doing fork/exec/pipe setup.
+        // Doing it inline on @MainActor was visible as typing lag on every
+        // keystroke; the detached task handles spawn, stdout/stderr drains,
+        // and termination off-main. Only the resulting applyUpdate hops
+        // back to main.
+        let task = Task.detached(priority: .userInitiated) { [weak self, pipeline, terminationSignal, process, stdoutReadHandle, stderrReadHandle] in
+            do {
+                try process.run()
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    guard let self, self.generation == searchGeneration else { return }
+                    self.pipeline = nil
+                    self.process = nil
+                    self.emit(status: .failed(message), isSearching: false)
                 }
-                let applyUpdate: @Sendable (FileSearchPipelineUpdate, Int) async -> Void = { [weak self] update, generation in
-                    await self?.applyPipelineUpdate(update, generation: generation)
-                }
-                let stdoutTask = Task.detached(priority: .userInitiated) { [stdoutReadHandle, pipeline, searchGeneration, applyUpdate] in
-                    await Self.streamStdout(
-                        from: stdoutReadHandle,
-                        pipeline: pipeline,
-                        generation: searchGeneration,
-                        applyUpdate: applyUpdate
-                    )
-                }
-                defer {
-                    stderrTask.cancel()
-                    stdoutTask.cancel()
-                }
-                guard let status = await terminationSignal.wait() else { return }
-                await stdoutTask.value
-                guard !Task.isCancelled else { return }
-                if status != 0 && status != 1 {
-                    await stderrTask.value
-                }
-                let update = await pipeline.finish(status: status)
-                await self?.finish(generation: searchGeneration, update: update)
+                return
             }
-        } catch {
-            process.standardOutput = nil
-            process.standardError = nil
-            self.pipeline = nil
-            emit(status: .failed(error.localizedDescription), isSearching: false)
+            // Cancellation that arrived while spawning couldn't SIGTERM a
+            // not-yet-running process; do it ourselves now and bail.
+            // Also stash the running process on main so a subsequent
+            // cancel() can find it.
+            let stillCurrent = await MainActor.run { () -> Bool in
+                guard let self, self.generation == searchGeneration else { return false }
+                self.process = process
+                return true
+            }
+            if !stillCurrent {
+                if process.isRunning {
+                    _ = Darwin.kill(process.processIdentifier, SIGTERM)
+                }
+                return
+            }
+            // Result completeness is defined by stdout. Stderr stays diagnostic-only:
+            // successful searches do not wait on it, failed searches do before formatting the error.
+            let stderrTask = Task.detached(priority: .utility) { [stderrReadHandle, pipeline] in
+                await Self.streamStderr(from: stderrReadHandle, pipeline: pipeline)
+            }
+            let applyUpdate: @Sendable (FileSearchPipelineUpdate, Int) async -> Void = { [weak self] update, generation in
+                await self?.enqueuePipelineUpdate(update, generation: generation)
+            }
+            let stdoutTask = Task.detached(priority: .userInitiated) { [stdoutReadHandle, pipeline, searchGeneration, applyUpdate] in
+                await Self.streamStdout(
+                    from: stdoutReadHandle,
+                    pipeline: pipeline,
+                    generation: searchGeneration,
+                    applyUpdate: applyUpdate
+                )
+            }
+            defer {
+                stderrTask.cancel()
+                stdoutTask.cancel()
+            }
+            guard let status = await terminationSignal.wait() else { return }
+            await stdoutTask.value
+            guard !Task.isCancelled else { return }
+            if status != 0 && status != 1 {
+                await stderrTask.value
+            }
+            let update = await pipeline.finish(status: status)
+            await self?.finish(generation: searchGeneration, update: update)
         }
+        searchTask = task
     }
 
     func cancel(clear: Bool) {
@@ -567,6 +625,34 @@ final class FileSearchController: FileSearchControlling {
         Task { [weak self] in
             guard let update = await pipeline.requestNextEmission(targetCount: target) else { return }
             self?.applyPipelineUpdate(update, generation: searchGeneration)
+        }
+    }
+
+    /// Coalescing entry point for streaming updates from the pipeline. Stores
+    /// the latest update in `pendingPipelineUpdate` and schedules a single
+    /// drain Task. If a drain is already scheduled, this is a no-op beyond
+    /// overwriting the slot.
+    ///
+    /// CASPER: terminal updates (`shouldStopProcess == true`) skip coalescing
+    /// and are applied immediately — they carry the "stop the rg" signal and
+    /// must take effect synchronously, and they're also the last update of a
+    /// query so there's nothing to coalesce them against.
+    private func enqueuePipelineUpdate(_ update: FileSearchPipelineUpdate, generation searchGeneration: Int) {
+        guard searchGeneration == generation else { return }
+        if update.shouldStopProcess {
+            pendingPipelineUpdate = nil
+            applyPipelineUpdate(update, generation: searchGeneration)
+            return
+        }
+        pendingPipelineUpdate = (update, searchGeneration)
+        guard !pendingPipelineDrainScheduled else { return }
+        pendingPipelineDrainScheduled = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.pendingPipelineDrainScheduled = false
+            guard let pending = self.pendingPipelineUpdate else { return }
+            self.pendingPipelineUpdate = nil
+            self.applyPipelineUpdate(pending.update, generation: pending.generation)
         }
     }
 
@@ -639,6 +725,10 @@ final class FileSearchController: FileSearchControlling {
 
     private func stopAndAdvanceGeneration() {
         generation += 1
+        // Any coalesced update from the prior generation is stale once
+        // generation bumps; the drain Task already guards on generation but
+        // dropping the slot here avoids a redundant drain hop.
+        pendingPipelineUpdate = nil
         stopCurrentProcess()
     }
 

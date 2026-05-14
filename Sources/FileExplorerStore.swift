@@ -609,13 +609,26 @@ final class FileExplorerStore: ObservableObject {
     /// Last text typed into the Find sidebar, kept so switching sidebar tabs
     /// (Find → Files → Sessions → Find) preserves the query. Reset on
     /// workspace change.
-    @Published private(set) var findQuery: String = ""
+    ///
+    /// CASPER: deliberately not `@Published`; only read on view mount as a
+    /// cache reseed (see `findSnapshot`'s note for the full freeze rationale).
+    private(set) var findQuery: String = ""
 
     /// Last results delivered by the Find sidebar's search controller, kept so
     /// the user sees their previous results immediately on returning to the
     /// Find tab. A refresh runs in the background to reconcile in case the
     /// filesystem changed. Reset on workspace change.
-    @Published private(set) var findSnapshot: FileSearchSnapshot = .empty
+    ///
+    /// CASPER: deliberately **not** `@Published`. This field is written on every
+    /// streaming search emit; if it were published the store's `objectWillChange`
+    /// would fire on every emit, and since `ContentView` holds the store as a
+    /// `@StateObject`, every body in the workspace tree (including the terminal
+    /// panel) would be invalidated. That manifested as the whole app freezing
+    /// during heavy `rg` searches because the runloop was constantly busy
+    /// re-evaluating SwiftUI bodies. The snapshot is only ever read on
+    /// `FileExplorerView` mount/refresh as a cache reseed — no view observes it
+    /// reactively — so a plain stored property is correct here.
+    private(set) var findSnapshot: FileSearchSnapshot = .empty
 
     /// Identifier (tab UUID) for the workspace currently bound to this store.
     /// Tracked separately from `rootPath` so that within-workspace cwd changes

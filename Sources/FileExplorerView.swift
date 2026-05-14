@@ -617,10 +617,14 @@ final class FileExplorerContainerView: NSView {
     private var currentRootPath = ""
     private var currentProviderIsLocal = false
     private var currentContentRevision = 0
-    private let searchDebounceSubject = PassthroughSubject<Int, Never>()
-    private var searchDebounceCancellable: AnyCancellable?
-    private var searchDebounceGeneration = 0
     private var pendingSearchRefreshAfterSettled = false
+    // Tiny debounce on keystrokes: a long-running `rg` is SIGTERMed the
+    // moment a keystroke arrives (so it stops consuming CPU and stops
+    // pushing results back to main), but the new search waits this long
+    // before spawning so a burst of fast keystrokes doesn't fork a fresh
+    // process for every char.
+    private var pendingSearchRefreshTask: Task<Void, Never>?
+    private let searchDebounceDelayMilliseconds: UInt64 = 25
     private var isSearchVisible = false {
         didSet {
             if !isSearchVisible {
@@ -631,14 +635,6 @@ final class FileExplorerContainerView: NSView {
     }
     private var presentation: FileExplorerPanelPresentation
     private let coordinator: FileExplorerPanelView.Coordinator
-    // Short debounce so the search feels near-instant on typing. The previous
-    // 200ms was tuned for the streaming-snapshot era when each keystroke
-    // visibly re-rendered the results; now we wait for the settled snapshot
-    // and replace atomically, so every millisecond of debounce is straight
-    // added latency. 50ms still batches very-rapid keystrokes (the in-flight
-    // rg process is canceled by the next request anyway via the controller's
-    // dedupe) without making the user wait.
-    private let searchDebounceDelayMilliseconds = 50
     // When the user re-enters the Find tab we display the previously-cached
     // results immediately and kick off a fresh search in the background. While
     // this flag is set, we suppress the controller's first
@@ -679,7 +675,6 @@ final class FileExplorerContainerView: NSView {
         self.coordinator = coordinator
 
         super.init(frame: .zero)
-        configureSearchDebounce()
 
         // Header
         headerView.translatesAutoresizingMaskIntoConstraints = false
@@ -1025,8 +1020,8 @@ final class FileExplorerContainerView: NSView {
         // results don't write back into the freshly-cleared store. `clear:
         // false` skips the controller's idle emission since the store
         // already reflects the desired snapshot.
-        searchController.cancel(clear: false)
         cancelPendingSearchRefresh()
+        searchController.cancel(clear: false)
         pendingSearchRefreshAfterSettled = false
         isReseedingFindFromCache = false
         if snapshotMismatch {
@@ -1192,7 +1187,12 @@ final class FileExplorerContainerView: NSView {
 
     private func refreshSearchIfNeeded() {
         guard isSearchVisible else { return }
+        // Any in-flight debounce Task is about to be obsoleted by a synchronous
+        // search() — drop it so it doesn't wake up 25ms later and trigger a
+        // duplicate `search()` (and the visible `.searching` flicker that comes
+        // with re-spawning rg) for the same query.
         cancelPendingSearchRefresh()
+        pendingSearchRefreshAfterSettled = false
 #if DEBUG
         dlog(
             "file.search.request queryLen=\(searchField.stringValue.count) " +
@@ -1228,41 +1228,25 @@ final class FileExplorerContainerView: NSView {
 #endif
     }
 
-    private func configureSearchDebounce() {
-        searchDebounceCancellable = searchDebounceSubject
-            .debounce(for: .milliseconds(searchDebounceDelayMilliseconds), scheduler: RunLoop.main)
-            .sink { [weak self] debounceGeneration in
-                Task { @MainActor [weak self] in
-                    guard let self,
-                          self.isSearchVisible,
-                          self.searchDebounceGeneration == debounceGeneration else { return }
-#if DEBUG
-                    dlog(
-                        "file.search.debounce.fire queryLen=\(self.searchField.stringValue.count) " +
-                        "delayMs=\(self.searchDebounceDelayMilliseconds)"
-                    )
-#endif
-                    self.refreshSearchIfNeeded()
-                }
-            }
-    }
-
     private func scheduleSearchRefresh() {
         guard isSearchVisible else { return }
+        pendingSearchRefreshTask?.cancel()
         pendingSearchRefreshAfterSettled = false
-        searchDebounceGeneration += 1
-        let debounceGeneration = searchDebounceGeneration
-#if DEBUG
-        dlog(
-            "file.search.debounce.schedule queryLen=\(searchField.stringValue.count) " +
-            "delayMs=\(searchDebounceDelayMilliseconds)"
-        )
-#endif
-        searchDebounceSubject.send(debounceGeneration)
+        // Kill the in-flight rg immediately so it stops burning CPU and
+        // stops pushing more results onto the main thread while the user
+        // keeps typing. The new search itself spawns after the debounce.
+        searchController.cancel(clear: false)
+        let delayNanos = searchDebounceDelayMilliseconds * 1_000_000
+        pendingSearchRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delayNanos)
+            guard let self, !Task.isCancelled else { return }
+            self.refreshSearchIfNeeded()
+        }
     }
 
     private func cancelPendingSearchRefresh() {
-        searchDebounceGeneration += 1
+        pendingSearchRefreshTask?.cancel()
+        pendingSearchRefreshTask = nil
     }
 
     private func updateSearchLayout(hasContent: Bool? = nil, isLoading: Bool? = nil) {

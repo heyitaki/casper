@@ -86227,6 +86227,23 @@
         }
       }
     },
+    "fileExplorer.search.noResultsFound": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No results found"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "結果が見つかりません"
+          }
+        }
+      }
+    },
     "fileExplorer.search.placeholder": {
       "extractionState": "manual",
       "localizations": {
