@@ -7704,6 +7704,7 @@ final class Workspace: Identifiable, ObservableObject {
             allowTabReordering: true,
             allowCrossPaneTabMove: true,
             autoCloseEmptyPanes: true,
+            allowsClickToCreateNewTab: false,
             contentViewLifecycle: .keepAllAlive,
             newTabPosition: .current,
             appearance: appearance

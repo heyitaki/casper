@@ -2285,9 +2285,9 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
                 titlebarPadding: 32,
                 hostingSafeAreaTop: 0
             ),
-            WindowChromeMetrics.appTitlebarHeight,
+            0,
             accuracy: 0.5,
-            "Windowed minimal mode with the sidebar hidden must reserve the titlebar height so traffic lights don't overlap terminal text"
+            "Windowed minimal mode with the sidebar hidden should keep tabs inline with traffic lights — the bonsplit tab strip's leading inset reserves space for the buttons"
         )
 
         XCTAssertEqual(
@@ -2298,9 +2298,9 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
                 titlebarPadding: 32,
                 hostingSafeAreaTop: 28
             ),
-            0,
+            -28,
             accuracy: 0.5,
-            "Windowed minimal mode with the sidebar hidden must cancel a host-reported safe area before applying the titlebar offset"
+            "Windowed minimal mode with the sidebar hidden must still cancel a host-reported safe area so the tab strip renders edge-to-edge"
         )
     }
 

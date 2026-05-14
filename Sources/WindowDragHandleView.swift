@@ -336,10 +336,44 @@ func withTemporaryWindowMovableEnabled(window: NSWindow?, _ body: () -> Void) ->
 /// SwiftUI/AppKit hosting wrappers can appear as the top hit even for empty
 /// titlebar space. Treat those as pass-through so explicit sibling checks decide.
 func windowDragHandleShouldTreatTopHitAsPassiveHost(_ view: NSView) -> Bool {
-    let className = String(describing: type(of: view))
-    if className.contains("HostContainerView")
-        || className.contains("AppKitWindowHostingView")
-        || className.contains("NSHostingView") {
+    // Use both representations because Swift class naming differs:
+    // `String(describing:)` may strip the module prefix while
+    // `NSStringFromClass` keeps it (e.g. "SwiftUI.KeyViewProxy").
+    let descName = String(describing: type(of: view))
+    let nsName = NSStringFromClass(type(of: view))
+    func anyContains(_ needle: String) -> Bool {
+        descName.contains(needle) || nsName.contains(needle)
+    }
+    if anyContains("HostContainerView")
+        || anyContains("AppKitWindowHostingView")
+        || anyContains("NSHostingView")
+        || anyContains("HostingView") {
+        return true
+    }
+    // CASPER: SwiftUI internal helper views (focus management, gesture
+    // proxies, layout helpers) sit invisibly above their hosted content and
+    // claim hit-tests for empty space. They render nothing visible, so we
+    // must treat them as passive hosts — otherwise empty bonsplit area gets
+    // mis-classified as a tab/control hit and titlebar drag/double-click is
+    // suppressed.
+    if anyContains("KeyViewProxy")
+        || anyContains("HostingScrollView")
+        || anyContains("ViewHost")
+        || anyContains("PlatformViewHost") {
+        return true
+    }
+    // CASPER: bonsplit's own pane/split containers exist purely to suppress
+    // AppKit window-drag from grabbing pane clicks. They render nothing
+    // themselves; descend into their subview tree so we can find tabs vs
+    // empty TabBarBackgroundNSView underneath.
+    if anyContains("PaneDragContainerView")
+        || anyContains("SplitArrangedContainerView")
+        || anyContains("NonDraggableHostingView")
+        // ManualReorderNSView overlays the entire tab strip but overrides
+        // hitTest -> nil and uses a local NSEvent monitor for drag tracking,
+        // so it's a true passive overlay even though our frame walk would
+        // otherwise call it a control.
+        || anyContains("ManualReorderNSView") {
         return true
     }
     if let window = view.window, view === window.contentView {
@@ -469,7 +503,65 @@ func isMinimalModeTitlebarControlHit(window: NSWindow, locationInWindow: NSPoint
     if isMinimalModeSidebarTitlebarControlButtonHit(window: window, locationInWindow: locationInWindow) {
         return true
     }
-    return MinimalModeTitlebarControlHitRegionRegistry.containsWindowPoint(locationInWindow, in: window)
+    if MinimalModeTitlebarControlHitRegionRegistry.containsWindowPoint(locationInWindow, in: window) {
+        return true
+    }
+    // The Bonsplit tab strip can sit inside the titlebar band in minimal mode.
+    // We only want to suppress the window-wide titlebar double-click action
+    // when the click lands on an actual tab or close button — clicks on the
+    // empty parts of the strip should still drag/zoom the window like a real
+    // titlebar.
+    return isOnNonEmptyBonsplitTabStripArea(window: window, locationInWindow: locationInWindow)
+}
+
+private func isOnNonEmptyBonsplitTabStripArea(
+    window: NSWindow,
+    locationInWindow: NSPoint
+) -> Bool {
+    guard BonsplitTabBarHitRegionRegistry.containsWindowPoint(locationInWindow, in: window) else {
+        return false
+    }
+    guard let contentView = window.contentView else { return false }
+    // Use AppKit's standard hitTest. Bonsplit's passive tracking overlays
+    // (ManualReorderNSView, HoverNSView, KeyViewProxy, etc.) override
+    // hitTest -> nil, so AppKit naturally skips them and lands on either:
+    //   • TabBarBackgroundNSView / DragNSView (empty drag area)
+    //   • a real tab / split button hosting view
+    // contentView.hitTest expects a point in contentView.superview coords;
+    // with .fullSizeContentView the contentView covers the whole window, so
+    // window-locale = superview-locale.
+    return bonsplitTabStripHitTestLandsOnControl(target: contentView.hitTest(locationInWindow))
+}
+
+private func bonsplitTabStripHitTestLandsOnControl(target: NSView?) -> Bool {
+    // Walk target and its ancestors: if any is bonsplit's TabBarBackgroundNSView
+    // or DragNSView, the click landed on empty drag area (false). A nil hit also
+    // counts as empty — only a real hosting view that doesn't trace back to those
+    // two classes is treated as a tab/button control hit (true).
+    guard let target else { return false }
+    var current: NSView? = target
+    while let view = current {
+        let nm = NSStringFromClass(type(of: view))
+        if nm.contains("TabBarBackgroundNSView") || nm.contains("DragNSView") {
+            return false
+        }
+        current = view.superview
+    }
+    return true
+}
+
+/// Shared predicate for "click landed on the empty drag area of the bonsplit
+/// tab strip". Callers MUST first have excluded controls via
+/// `isMinimalModeTitlebarControlHit`; under that precondition, "in the bonsplit
+/// registry" is equivalent to "empty area" (any tab/button hit would have been
+/// rejected by the control-hit guard above), so the registry lookup is the
+/// whole predicate.
+@MainActor
+func isOnEmptyBonsplitTabStripArea(
+    window: NSWindow,
+    locationInWindow: NSPoint
+) -> Bool {
+    BonsplitTabBarHitRegionRegistry.containsWindowPoint(locationInWindow, in: window)
 }
 
 enum MinimalModeTitlebarDebugSettings {
@@ -1391,6 +1483,10 @@ struct MinimalModeTitlebarEventSurfaceView: NSViewRepresentable {
                 lastTitlebarClick = nil
                 return event
             }
+            let onEmptyBonsplitArea = isOnEmptyBonsplitTabStripArea(
+                window: window,
+                locationInWindow: locationInWindow
+            )
 
             #if DEBUG
             if ProcessInfo.processInfo.environment["CMUX_UI_TEST_BONSPLIT_TAB_DRAG_SETUP"] == "1" {
@@ -1403,6 +1499,9 @@ struct MinimalModeTitlebarEventSurfaceView: NSViewRepresentable {
             }
             #endif
 
+            // CASPER: in windowed minimal mode the bonsplit tab strip sits inside
+            // the system titlebar band, where TabBarBackgroundNSView no longer
+            // reliably receives the mouseDown — drive drag/minimize from here.
             let isDoubleClick = minimalModeTitlebarClickFormsDoubleClick(
                 clickCount: event.clickCount,
                 timestamp: event.timestamp,
@@ -1418,9 +1517,30 @@ struct MinimalModeTitlebarEventSurfaceView: NSViewRepresentable {
                     timestamp: event.timestamp,
                     locationInWindow: locationInWindow
                 )
+                if onEmptyBonsplitArea {
+                    #if DEBUG
+                    cmuxDebugLog(
+                        "titlebar.minimalEventSurface.bonsplitEmptyDrag point=\(windowDragHandleFormatPoint(locationInWindow))"
+                    )
+                    #endif
+                    let wasMovable = window.isMovable
+                    if !wasMovable { window.isMovable = true }
+                    window.performDrag(with: event)
+                    if window.isMovable != wasMovable { window.isMovable = wasMovable }
+                    return nil
+                }
                 return event
             }
             lastTitlebarClick = nil
+            if onEmptyBonsplitArea {
+                #if DEBUG
+                cmuxDebugLog(
+                    "titlebar.minimalEventSurface.bonsplitEmptyDoubleClick point=\(windowDragHandleFormatPoint(locationInWindow))"
+                )
+                #endif
+                window.miniaturize(nil)
+                return nil
+            }
             let result = handleTitlebarDoubleClick(window: window, behavior: .standardAction)
             return result.consumesEvent ? nil : event
         }

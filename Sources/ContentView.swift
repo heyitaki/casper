@@ -1054,7 +1054,6 @@ struct ContentView: View {
     @EnvironmentObject var sidebarSelectionState: SidebarSelectionState
     @EnvironmentObject var cmuxConfigStore: CmuxConfigStore
     @EnvironmentObject var fileExplorerState: FileExplorerState
-    @EnvironmentObject var sidebarRevealHoverState: SidebarRevealHoverState
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("titlebarControlsStyle") private var titlebarControlsStyleRawValue = TitlebarControlsStyle.classic.rawValue
     @State private var sidebarWidth: CGFloat = 200
@@ -2478,6 +2477,21 @@ struct ContentView: View {
         tabManager.syncWorkspaceTabBarLeadingInset(inset)
     }
 
+    /// CASPER: Keep the tab bar bottom hairline from painting through the
+    /// sidebar-reveal-strip column on whichever edges the strip is currently
+    /// mounted. The AppKit reveal-strip overlay sits above the tab bar, but
+    /// it paints at 0.16 alpha and would not fully mask the 1pt separator —
+    /// dropping the separator at the strip width is the cleanest fix.
+    private func syncSidebarRevealStripSeparatorInsets() {
+        let stripWidth = SidebarRevealStripMetrics.width
+        let leadingInset: CGFloat = sidebarState.isVisible ? 0 : stripWidth
+        let trailingInset: CGFloat = fileExplorerState.isVisible ? 0 : stripWidth
+        tabManager.syncWorkspaceTabBarBottomSeparatorInsets(
+            leading: leadingInset,
+            trailing: trailingInset
+        )
+    }
+
     private func applyTitlebarDebugChromeChange() {
         if let observedWindow {
             AppDelegate.shared?.applyWindowDecorations(to: observedWindow)
@@ -2808,6 +2822,7 @@ struct ContentView: View {
             applyUITestSidebarSelectionIfNeeded(tabs: tabManager.tabs)
             updateTitlebarText()
             syncTrafficLightInset()
+            syncSidebarRevealStripSeparatorInsets()
 
             // Startup recovery (#399): if session restore or a race condition leaves the
             // view in a broken state (empty tabs, no selection, unmounted workspaces),
@@ -3311,10 +3326,12 @@ struct ContentView: View {
             setMinimalModeSidebarTitlebarControlsAvailable(isVisible, in: observedWindow)
             if let observedWindow {
                 AppDelegate.shared?.applyWindowDecorations(to: observedWindow)
+                clearSidebarRevealHoverHighlights(in: observedWindow)
             }
             schedulePortalGeometrySynchronize()
             updateSidebarResizerBandState()
             syncTrafficLightInset()
+            syncSidebarRevealStripSeparatorInsets()
         })
 
         view = AnyView(view.onChange(of: fileExplorerState.isVisible) { isVisible in
@@ -3323,9 +3340,11 @@ struct ContentView: View {
             }
             if let observedWindow {
                 TerminalWindowPortalRegistry.scheduleExternalGeometrySynchronize(for: observedWindow)
+                clearSidebarRevealHoverHighlights(in: observedWindow)
             } else {
                 TerminalWindowPortalRegistry.scheduleExternalGeometrySynchronizeForAllWindows()
             }
+            syncSidebarRevealStripSeparatorInsets()
         })
 
         view = AnyView(view.onChange(of: sidebarMatchTerminalBackground) { _ in
@@ -3450,7 +3469,6 @@ struct ContentView: View {
                 sidebarState: sidebarState,
                 sidebarSelectionState: sidebarSelectionState,
                 fileExplorerState: fileExplorerState,
-                sidebarRevealHoverState: sidebarRevealHoverState,
                 cmuxConfigStore: cmuxConfigStore
             )
             installFileDropOverlayWhenReady(on: window, tabManager: tabManager)

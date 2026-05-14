@@ -213,6 +213,10 @@ final class WindowDecorationsController {
             lastMinimalModeTitlebarClick = nil
             return false
         }
+        let onEmptyBonsplitArea = isOnEmptyBonsplitTabStripArea(
+            window: window,
+            locationInWindow: locationInWindow
+        )
 
         let windowNumber = window.windowNumber
         let isDoubleClick = minimalModeTitlebarClickFormsDoubleClick(
@@ -235,10 +239,22 @@ final class WindowDecorationsController {
         }
 
         lastMinimalModeTitlebarClick = nil
+        // CASPER: when tabs overlay the titlebar (windowed minimal mode), a
+        // double-click on the empty area of the bonsplit tab strip should
+        // minimize regardless of AppleActionOnDoubleClick (per product intent).
+        if onEmptyBonsplitArea {
+            #if DEBUG
+            cmuxDebugLog(
+                "titlebar.minimalWindowDoubleClick.bonsplitEmptyMinimize point=\(windowDragHandleFormatPoint(locationInWindow))"
+            )
+            #endif
+            window.miniaturize(nil)
+            return true
+        }
         let result = handleTitlebarDoubleClick(window: window, behavior: .standardAction)
         #if DEBUG
         cmuxDebugLog(
-            "titlebar.minimalWindowDoubleClick.result=\(String(describing: result)) point=\(NSStringFromPoint(locationInWindow)) band=\(String(format: "%.1f", minimalModeTitlebarDoubleClickBandHeight(for: window)))"
+            "titlebar.minimalWindowDoubleClick.result=\(String(describing: result)) point=\(windowDragHandleFormatPoint(locationInWindow)) band=\(String(format: "%.1f", minimalModeTitlebarDoubleClickBandHeight(for: window)))"
         )
         #endif
         return result.consumesEvent
