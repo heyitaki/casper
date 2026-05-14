@@ -24,6 +24,14 @@ final class FileExplorerState: ObservableObject {
         didSet { UserDefaults.standard.set(showHiddenFiles, forKey: "fileExplorer.showHidden") }
     }
 
+    @Published var searchMatchCase: Bool {
+        didSet { UserDefaults.standard.set(searchMatchCase, forKey: "fileExplorer.search.matchCase") }
+    }
+
+    @Published var searchCodeOnly: Bool {
+        didSet { UserDefaults.standard.set(searchCodeOnly, forKey: "fileExplorer.search.codeOnly") }
+    }
+
     @Published private var storedMode: RightSidebarMode
 
     /// Active mode for the right sidebar (file tree, search, sessions, or enabled beta modes).
@@ -41,6 +49,8 @@ final class FileExplorerState: ObservableObject {
         self.dividerPosition = storedPosition > 0 ? CGFloat(storedPosition) : 0.6
         let storedShowHidden = defaults.object(forKey: "fileExplorer.showHidden")
         self.showHiddenFiles = storedShowHidden == nil ? true : defaults.bool(forKey: "fileExplorer.showHidden")
+        self.searchMatchCase = defaults.bool(forKey: "fileExplorer.search.matchCase")
+        self.searchCodeOnly = defaults.bool(forKey: "fileExplorer.search.codeOnly")
         let storedMode = RightSidebarMode(rawValue: defaults.string(forKey: Self.modeKey) ?? "") ?? .files
         self.storedMode = Self.availableMode(storedMode, defaults: defaults)
         defaults.set(self.storedMode.rawValue, forKey: Self.modeKey)

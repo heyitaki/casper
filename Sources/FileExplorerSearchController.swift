@@ -114,11 +114,18 @@ struct FileSearchSnapshot: Equatable, Sendable {
     )
 }
 
+struct FileSearchOptions: Equatable, Sendable {
+    var matchCase: Bool = false
+    var codeOnly: Bool = false
+
+    static let `default` = FileSearchOptions()
+}
+
 @MainActor
 protocol FileSearchControlling: AnyObject {
     var onSnapshotChanged: ((FileSearchSnapshot) -> Void)? { get set }
 
-    func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int)
+    func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int, options: FileSearchOptions)
     func cancel(clear: Bool)
     // CASPER: scroll-triggered "load next page" hook for the grouped Find view.
     // Idempotent: extra calls when nothing new is buffered are no-ops.
@@ -400,6 +407,7 @@ final class FileSearchController: FileSearchControlling {
         let rootPath: String
         let isLocal: Bool
         let contentRevision: Int
+        let options: FileSearchOptions
     }
 
     private struct RipgrepExecutable {
@@ -415,6 +423,41 @@ final class FileSearchController: FileSearchControlling {
     // unbounded queries.
     private let pageSize = 100
     private let hardMaxResults = 5000
+    // Config/data files (json, yaml, toml, markdown, lock) are intentionally excluded.
+    private static let codeTypeDefinition = "code:*.{" + [
+        "c", "h", "cc", "cpp", "cxx", "hpp", "hxx",
+        "m", "mm",
+        "swift",
+        "go",
+        "rs",
+        "py", "pyi", "pyx",
+        "rb",
+        "php",
+        "java", "kt", "kts", "scala", "groovy", "clj", "cljs", "cljc",
+        "js", "mjs", "cjs", "jsx", "ts", "tsx", "vue", "svelte",
+        "dart",
+        "lua",
+        "pl", "pm",
+        "r",
+        "sh", "bash", "zsh", "fish",
+        "ps1",
+        "sql",
+        "ex", "exs", "erl", "hrl",
+        "hs", "lhs",
+        "ml", "mli", "fs", "fsx", "fsi",
+        "vb", "cs",
+        "nim", "zig", "v", "sv",
+        "sol",
+        "elm",
+        "jl",
+        "asm", "s", "S",
+        "html", "htm", "xhtml", "css", "scss", "sass", "less",
+        "wat", "wgsl", "metal", "glsl", "frag", "vert",
+        "proto", "thrift",
+        "tf",
+        "gradle",
+        "make", "mk",
+    ].joined(separator: ",") + "}"
     private let excludedSearchGlobs = [
         "!.git/**",
         "!**/.git/**",
@@ -451,13 +494,14 @@ final class FileSearchController: FileSearchControlling {
     private var pendingPipelineUpdate: (update: FileSearchPipelineUpdate, generation: Int)?
     private var pendingPipelineDrainScheduled = false
 
-    func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int = 0) {
+    func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int = 0, options: FileSearchOptions = .default) {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let nextRequest = Request(
             query: query,
             rootPath: rootPath,
             isLocal: isLocal,
-            contentRevision: contentRevision
+            contentRevision: contentRevision,
+            options: options
         )
         if nextRequest == request, process?.isRunning == true {
             return
@@ -492,19 +536,24 @@ final class FileSearchController: FileSearchControlling {
         let searchGeneration = generation
         emit(status: .searching, isSearching: true)
 
+        let caseFlag = options.matchCase ? "--case-sensitive" : "--ignore-case"
+        let codeOnlyArgs: [String] = options.codeOnly
+            ? ["--type-add", Self.codeTypeDefinition, "--type", "code"]
+            : []
+
         let process = Process()
         process.executableURL = executable.url
         process.arguments = executable.prefixArguments + [
             "--json",
             "--line-number",
             "--column",
-            "--smart-case",
+            caseFlag,
             "--fixed-strings",
             "--max-columns", "300",
             "--max-columns-preview",
             "--color", "never",
             "--hidden",
-        ] + excludedSearchGlobs.flatMap { ["--glob", $0] } + [
+        ] + codeOnlyArgs + excludedSearchGlobs.flatMap { ["--glob", $0] } + [
             "--",
             query,
             rootPath,

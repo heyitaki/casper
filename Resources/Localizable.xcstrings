@@ -86142,6 +86142,40 @@
         }
       }
     },
+    "fileExplorer.search.codeOnly": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Code files only"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コードファイルのみ"
+          }
+        }
+      }
+    },
+    "fileExplorer.search.codeOnly.tooltip": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Code Files Only"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コードファイルのみ"
+          }
+        }
+      }
+    },
     "fileExplorer.search.empty": {
       "extractionState": "manual",
       "localizations": {
@@ -86189,6 +86223,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "最初の%d件"
+          }
+        }
+      }
+    },
+    "fileExplorer.search.matchCase": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Match case"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "大文字小文字を区別"
+          }
+        }
+      }
+    },
+    "fileExplorer.search.matchCase.tooltip": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Match Case"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "大文字小文字を区別"
           }
         }
       }

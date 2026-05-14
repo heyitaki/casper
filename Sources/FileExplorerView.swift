@@ -61,6 +61,7 @@ struct FileExplorerPanelView: NSViewRepresentable {
         //  3. updateHeader fires refreshSearchIfNeeded when the workspace
         //     root changes, reconciling cached results with the new tree.
         container.syncFindStateFromStoreIfNeeded()
+        container.syncSearchOptionButtons()
         container.updatePresentation(presentation)
         container.updateHeader(store: store)
         context.coordinator.reloadIfNeeded()
@@ -601,6 +602,8 @@ struct FileExplorerPanelView: NSViewRepresentable {
 final class FileExplorerContainerView: NSView {
     private let headerView: FileExplorerHeaderView
     private let searchBarView: NSView
+    private let matchCaseButton: NSButton
+    private let codeOnlyButton: NSButton
     private let searchField: FileExplorerSearchField
     private let searchStatusLabel: NSTextField
     private let scrollView: NSScrollView
@@ -660,6 +663,8 @@ final class FileExplorerContainerView: NSView {
     ) {
         headerView = FileExplorerHeaderView()
         searchBarView = NSView()
+        matchCaseButton = NSButton()
+        codeOnlyButton = NSButton()
         searchField = FileExplorerSearchField()
         searchStatusLabel = NSTextField(labelWithString: "")
         scrollView = NSScrollView()
@@ -684,6 +689,26 @@ final class FileExplorerContainerView: NSView {
         searchBarView.translatesAutoresizingMaskIntoConstraints = false
         searchBarView.isHidden = true
         addSubview(searchBarView)
+
+        configureSearchOptionButton(
+            matchCaseButton,
+            symbolName: "textformat",
+            accessibilityIdentifier: "FileExplorerSearchMatchCaseToggle",
+            tooltip: String(localized: "fileExplorer.search.matchCase.tooltip", defaultValue: "Match Case"),
+            accessibilityLabel: String(localized: "fileExplorer.search.matchCase", defaultValue: "Match case"),
+            action: #selector(toggleSearchMatchCase(_:))
+        )
+
+        configureSearchOptionButton(
+            codeOnlyButton,
+            symbolName: "curlybraces",
+            accessibilityIdentifier: "FileExplorerSearchCodeOnlyToggle",
+            tooltip: String(localized: "fileExplorer.search.codeOnly.tooltip", defaultValue: "Code Files Only"),
+            accessibilityLabel: String(localized: "fileExplorer.search.codeOnly", defaultValue: "Code files only"),
+            action: #selector(toggleSearchCodeOnly(_:))
+        )
+
+        headerView.setTrailingAccessoryViews([matchCaseButton, codeOnlyButton])
 
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.setAccessibilityIdentifier("FileExplorerSearchField")
@@ -932,6 +957,7 @@ final class FileExplorerContainerView: NSView {
             applySearchSnapshot(cachedSnapshot)
             isReseedingFindFromCache = true
         }
+        syncSearchOptionButtons()
     }
 
     required init?(coder: NSCoder) {
@@ -1201,11 +1227,13 @@ final class FileExplorerContainerView: NSView {
             "fieldW=\(debugSearchNumber(searchField.frame.width)) statusW=\(debugSearchNumber(searchStatusLabel.frame.width))"
         )
 #endif
+        let state = coordinator.state
         searchController.search(
             query: searchField.stringValue,
             rootPath: currentRootPath,
             isLocal: currentProviderIsLocal,
-            contentRevision: currentContentRevision
+            contentRevision: currentContentRevision,
+            options: FileSearchOptions(matchCase: state.searchMatchCase, codeOnly: state.searchCodeOnly)
         )
     }
 
@@ -1249,12 +1277,82 @@ final class FileExplorerContainerView: NSView {
         pendingSearchRefreshTask = nil
     }
 
+    private func configureSearchOptionButton(
+        _ button: NSButton,
+        symbolName: String,
+        accessibilityIdentifier: String,
+        tooltip: String,
+        accessibilityLabel: String,
+        action: Selector
+    ) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.setButtonType(.pushOnPushOff)
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.target = self
+        button.action = action
+        button.toolTip = tooltip
+        button.setAccessibilityIdentifier(accessibilityIdentifier)
+        button.setAccessibilityLabel(accessibilityLabel)
+        button.focusRingType = .none
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel)?
+            .withSymbolConfiguration(symbolConfig)
+        // Expand the clickable bounds beyond the ~14pt glyph so the toggle is
+        // an easy hit target inline with the path label.
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 22),
+            button.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        applySearchOptionButtonTint(button)
+    }
+
+    private func applySearchOptionButtonTint(_ button: NSButton) {
+        button.contentTintColor = button.state == .on ? .controlAccentColor : .secondaryLabelColor
+    }
+
+    func syncSearchOptionButtons() {
+        let state = coordinator.state
+        let desiredMatchCase: NSControl.StateValue = state.searchMatchCase ? .on : .off
+        if matchCaseButton.state != desiredMatchCase {
+            matchCaseButton.state = desiredMatchCase
+            applySearchOptionButtonTint(matchCaseButton)
+        }
+        let desiredCodeOnly: NSControl.StateValue = state.searchCodeOnly ? .on : .off
+        if codeOnlyButton.state != desiredCodeOnly {
+            codeOnlyButton.state = desiredCodeOnly
+            applySearchOptionButtonTint(codeOnlyButton)
+        }
+    }
+
+    @objc private func toggleSearchMatchCase(_ sender: NSButton) {
+        let newValue = sender.state == .on
+        applySearchOptionButtonTint(sender)
+        let state = coordinator.state
+        guard state.searchMatchCase != newValue else { return }
+        state.searchMatchCase = newValue
+        refreshSearchIfNeeded()
+    }
+
+    @objc private func toggleSearchCodeOnly(_ sender: NSButton) {
+        let newValue = sender.state == .on
+        applySearchOptionButtonTint(sender)
+        let state = coordinator.state
+        guard state.searchCodeOnly != newValue else { return }
+        state.searchCodeOnly = newValue
+        refreshSearchIfNeeded()
+    }
+
     private func updateSearchLayout(hasContent: Bool? = nil, isLoading: Bool? = nil) {
         let effectiveHasContent = hasContent ?? !currentRootPath.isEmpty
         let effectiveIsLoading = isLoading ?? false
         let showSearch = isSearchVisible && effectiveHasContent && !effectiveIsLoading
         searchBarView.isHidden = !showSearch
         searchBarHeightConstraint.constant = showSearch ? searchBarVisibleHeight : 0
+        matchCaseButton.isHidden = !showSearch
+        codeOnlyButton.isHidden = !showSearch
         // CASPER: when the grouped Find view is active, the legacy flat table stays hidden permanently and the Casper view follows showSearch instead.
         if let casperFindResultsView {
             searchScrollView.isHidden = true
@@ -1910,6 +2008,11 @@ private final class FileExplorerSearchResultCellView: NSTableCellView {
 final class FileExplorerHeaderView: NSView {
     private let iconView = NSImageView()
     private let pathLabel = NSTextField(labelWithString: "")
+    /// Right-aligned slot for optional borderless icon buttons (currently the
+    /// Find-mode "Match Case" and "Code Files Only" toggles). The path label
+    /// truncates against this stack so the buttons stay visible regardless of
+    /// path length.
+    private let trailingStack = NSStackView()
     private var displayPath = ""
     private var quickSearchQuery: String?
 
@@ -1932,9 +2035,18 @@ final class FileExplorerHeaderView: NSView {
         pathLabel.lineBreakMode = .byTruncatingMiddle
         pathLabel.maximumNumberOfLines = 1
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        pathLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        trailingStack.translatesAutoresizingMaskIntoConstraints = false
+        trailingStack.orientation = .horizontal
+        trailingStack.alignment = .centerY
+        trailingStack.spacing = 4
+        trailingStack.setHuggingPriority(.required, for: .horizontal)
+        trailingStack.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         addSubview(iconView)
         addSubview(pathLabel)
+        addSubview(trailingStack)
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: RightSidebarChromeMetrics.secondaryBarHeight),
@@ -1946,9 +2058,28 @@ final class FileExplorerHeaderView: NSView {
 
             pathLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
             pathLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            pathLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            pathLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingStack.leadingAnchor, constant: -6),
+
+            trailingStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            trailingStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            trailingStack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 2),
+            trailingStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -2),
         ])
         applyHeaderState()
+    }
+
+    /// Replace the trailing accessory views (icon-only toggle buttons). Passing
+    /// an empty array clears the slot so the path label extends to the trailing
+    /// edge.
+    func setTrailingAccessoryViews(_ views: [NSView]) {
+        for view in trailingStack.arrangedSubviews {
+            trailingStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for view in views {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            trailingStack.addArrangedSubview(view)
+        }
     }
 
     func update(displayPath: String) {

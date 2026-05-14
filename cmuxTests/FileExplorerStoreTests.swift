@@ -939,18 +939,20 @@ final class FileSearchControllerTests: XCTestCase {
             let rootPath: String
             let isLocal: Bool
             let contentRevision: Int
+            var options: FileSearchOptions = .default
         }
 
         var onSnapshotChanged: ((FileSearchSnapshot) -> Void)?
         var searchRequests: [SearchRequest] = []
         var cancelCount = 0
 
-        func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int) {
+        func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int, options: FileSearchOptions) {
             searchRequests.append(SearchRequest(
                 query: rawQuery,
                 rootPath: rootPath,
                 isLocal: isLocal,
-                contentRevision: contentRevision
+                contentRevision: contentRevision,
+                options: options
             ))
         }
 
