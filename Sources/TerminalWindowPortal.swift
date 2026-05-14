@@ -32,6 +32,7 @@ final class WindowTerminalHostView: NSView {
     private var sidebarDividerMissCount = 0
     private var trackingArea: NSTrackingArea?
     private var activeDividerCursorKind: DividerCursorKind?
+    let sidebarRevealHoverHighlights = SidebarRevealHoverHighlights()
 #if DEBUG
     private var lastDragRouteSignature: String?
 #endif
@@ -47,13 +48,40 @@ final class WindowTerminalHostView: NSView {
         super.viewDidMoveToWindow()
         if window == nil {
             clearActiveDividerCursor(restoreArrow: false)
+        } else {
+            sidebarRevealHoverHighlights.install(in: self)
         }
         window?.invalidateCursorRects(for: self)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        sidebarRevealHoverHighlights.layout(in: self)
         window?.invalidateCursorRects(for: self)
+    }
+
+    // CASPER: didAddSubview only fires for *new* additions; reorders via
+    // addSubview(_:positioned: .above, ...) bypass it. The two addSubview
+    // overrides below cover both new additions and reorders, so we keep the
+    // ensureOnTop call only there (avoiding a duplicate call per addition).
+    override func addSubview(_ view: NSView) {
+        super.addSubview(view)
+        if view !== sidebarRevealHoverHighlights.leading
+            && view !== sidebarRevealHoverHighlights.trailing {
+            sidebarRevealHoverHighlights.ensureOnTop(in: self)
+        }
+    }
+
+    override func addSubview(
+        _ view: NSView,
+        positioned place: NSWindow.OrderingMode,
+        relativeTo otherView: NSView?
+    ) {
+        super.addSubview(view, positioned: place, relativeTo: otherView)
+        if view !== sidebarRevealHoverHighlights.leading
+            && view !== sidebarRevealHoverHighlights.trailing {
+            sidebarRevealHoverHighlights.ensureOnTop(in: self)
+        }
     }
 
     override func setFrameOrigin(_ newOrigin: NSPoint) {
@@ -103,12 +131,19 @@ final class WindowTerminalHostView: NSView {
         updateDividerCursor(at: point)
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        updateSidebarRevealHover(at: point)
+    }
+
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        updateSidebarRevealHover(at: point)
         updateDividerCursor(at: point)
     }
 
     override func mouseExited(with event: NSEvent) {
+        clearSidebarRevealHover()
         clearActiveDividerCursor(restoreArrow: true)
     }
 

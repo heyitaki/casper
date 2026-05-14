@@ -220,10 +220,10 @@ final class SidebarRevealHoverHighlights {
     /// don't paint over them.
     func ensureOnTop(in host: NSView) {
         guard leading.superview === host || trailing.superview === host else { return }
-        if let last = host.subviews.last, last !== trailing {
-            host.addSubview(leading, positioned: .above, relativeTo: nil)
-            host.addSubview(trailing, positioned: .above, relativeTo: nil)
-        }
+        let subs = host.subviews
+        guard subs.last !== trailing || subs.dropLast().last !== leading else { return }
+        host.addSubview(leading, positioned: .above, relativeTo: nil)
+        host.addSubview(trailing, positioned: .above, relativeTo: nil)
     }
 
     func layout(in host: NSView) {
@@ -249,6 +249,9 @@ final class SidebarRevealHoverHighlights {
 
 @MainActor
 final class SidebarRevealHoverStripNSView: NSView {
+    private static let hoverCGColor = NSColor.labelColor.withAlphaComponent(0.16).cgColor
+    private static let clearCGColor = NSColor.clear.cgColor
+
     var isHovering: Bool = false {
         didSet {
             guard oldValue != isHovering else { return }
@@ -261,7 +264,7 @@ final class SidebarRevealHoverStripNSView: NSView {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.backgroundColor = Self.clearCGColor
         // Pass all events through to the host view so its hitTest/cmux_sendEvent
         // routing for the reveal strip stays in charge of clicks/cursors.
         translatesAutoresizingMaskIntoConstraints = true
@@ -270,7 +273,7 @@ final class SidebarRevealHoverStripNSView: NSView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.backgroundColor = Self.clearCGColor
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -279,9 +282,7 @@ final class SidebarRevealHoverStripNSView: NSView {
         guard let layer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer.backgroundColor = isHovering
-            ? NSColor.labelColor.withAlphaComponent(0.16).cgColor
-            : NSColor.clear.cgColor
+        layer.backgroundColor = isHovering ? Self.hoverCGColor : Self.clearCGColor
         CATransaction.commit()
     }
 }

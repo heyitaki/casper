@@ -1,6 +1,7 @@
 // CASPER: Sidebar reveal-strip + edge-resize helpers for minimal-mode hidden-sidebar affordance.
 
 import AppKit
+import Combine
 import SwiftUI
 
 struct SidebarResizerAccessibilityModifier: ViewModifier {
@@ -24,6 +25,13 @@ enum SidebarRevealStripMetrics {
     static let tapThreshold: CGFloat = 3
     static let leadingEdgeEpsilon: CGFloat = 1
     static let minimumLeadingContentWidth: CGFloat = 24
+
+    /// Tab-bar bottom-separator inset to apply on the side facing a reveal strip:
+    /// `width` when the sidebar is hidden (so the hairline doesn't paint through
+    /// the strip column), `0` otherwise.
+    static func separatorInset(sidebarVisible: Bool) -> CGFloat {
+        sidebarVisible ? 0 : width
+    }
 
     /// Shared sidebar-hidden detector for `WindowTerminalHostView` and
     /// `WindowBrowserHostView` hit-tests: if a hosted view is flush to either
@@ -89,30 +97,25 @@ enum SidebarRevealEdgeGeometry {
     }
 }
 
-/// Thin strip docked at the leading edge while the sidebar is hidden.
-/// Clicks (including on the leading-edge resize hit zone) are intercepted in
-/// `cmux_sendEvent` BEFORE AppKit's resize tracking starts — see
-/// `AppDelegate.handleSidebarRevealLeadingEdgeMouseDown(window:event:)`.
-/// SwiftUI hover is reliable for the highlight affordance because hover
-/// events fire normally before any tracking session begins.
+/// Thin strip docked at the leading or trailing edge while the matching
+/// sidebar is hidden. Clicks (including on the edge resize hit zone) are
+/// intercepted in `cmux_sendEvent` BEFORE AppKit's resize tracking starts —
+/// see `AppDelegate.handleSidebarRevealLeadingEdgeMouseDown(window:event:)`.
+///
+/// CASPER: The hover tint is painted exclusively by the AppKit overlay
+/// `SidebarRevealHoverStripNSView` (installed in the portal host above the
+/// Metal compositor). Painting it here as well would double up over the
+/// portion of the strip column that sits below the SwiftUI tab bar (since
+/// AppKit overlay + SwiftUI overlay both apply 0.16 alpha), making the strip
+/// look darker over the tab bar than over the terminal area. Keep this
+/// SwiftUI strip purely as a click/help/a11y participant.
 struct SidebarRevealStripView: View {
     let label: String
 
-    @State private var isHovering = false
-
     var body: some View {
         Rectangle()
-            .fill(isHovering ? Color.primary.opacity(0.16) : Color.primary.opacity(0.001))
+            .fill(Color.primary.opacity(0.001))
             .contentShape(Rectangle())
-            .onHover { hovering in
-                guard hovering != isHovering else { return }
-                isHovering = hovering
-                if hovering {
-                    NSCursor.pointingHand.set()
-                } else {
-                    NSCursor.arrow.set()
-                }
-            }
             .help(label)
             .accessibilityLabel(Text(label))
             .accessibilityAddTraits(.isButton)

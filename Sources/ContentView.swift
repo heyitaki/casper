@@ -2082,8 +2082,7 @@ struct ContentView: View {
     /// sidebar while drags resize the window.
     private var sidebarRevealStripOverlay: some View {
         SidebarRevealStripView(
-            label: String(localized: "sidebarRevealStrip.label", defaultValue: "Show Sidebar"),
-            edge: .leading
+            label: String(localized: "sidebarRevealStrip.label", defaultValue: "Show Sidebar")
         )
         .frame(width: SidebarRevealStripMetrics.width)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -2092,8 +2091,7 @@ struct ContentView: View {
 
     private var rightSidebarRevealStripOverlay: some View {
         SidebarRevealStripView(
-            label: String(localized: "rightSidebarRevealStrip.label", defaultValue: "Show Right Sidebar"),
-            edge: .trailing
+            label: String(localized: "rightSidebarRevealStrip.label", defaultValue: "Show Right Sidebar")
         )
         .frame(width: SidebarRevealStripMetrics.width)
         .frame(maxHeight: .infinity, alignment: .top)
@@ -2483,12 +2481,9 @@ struct ContentView: View {
     /// it paints at 0.16 alpha and would not fully mask the 1pt separator —
     /// dropping the separator at the strip width is the cleanest fix.
     private func syncSidebarRevealStripSeparatorInsets() {
-        let stripWidth = SidebarRevealStripMetrics.width
-        let leadingInset: CGFloat = sidebarState.isVisible ? 0 : stripWidth
-        let trailingInset: CGFloat = fileExplorerState.isVisible ? 0 : stripWidth
         tabManager.syncWorkspaceTabBarBottomSeparatorInsets(
-            leading: leadingInset,
-            trailing: trailingInset
+            leading: SidebarRevealStripMetrics.separatorInset(sidebarVisible: sidebarState.isVisible),
+            trailing: SidebarRevealStripMetrics.separatorInset(sidebarVisible: fileExplorerState.isVisible)
         )
     }
 

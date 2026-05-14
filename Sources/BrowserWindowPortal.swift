@@ -325,6 +325,7 @@ final class WindowBrowserHostView: NSView {
     private var activeDividerCursorKind: DividerCursorKind?
     private var hostedInspectorDividerDrag: HostedInspectorDividerDragState?
     private var lastHostedInspectorLayoutBoundsSize: NSSize?
+    let sidebarRevealHoverHighlights = SidebarRevealHoverHighlights()
 
     deinit {
         if let trackingArea {
@@ -378,12 +379,15 @@ final class WindowBrowserHostView: NSView {
         super.viewDidMoveToWindow()
         if window == nil {
             clearActiveDividerCursor(restoreArrow: false)
+        } else {
+            sidebarRevealHoverHighlights.install(in: self)
         }
         window?.invalidateCursorRects(for: self)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        sidebarRevealHoverHighlights.layout(in: self)
         window?.invalidateCursorRects(for: self)
     }
 
@@ -407,6 +411,30 @@ final class WindowBrowserHostView: NSView {
         guard let slot = subview as? WindowBrowserSlotView else { return }
         slot.onHostedInspectorLayout = { [weak self] slotView in
             self?.reapplyHostedInspectorDividerIfNeeded(in: slotView, reason: "slot.layout")
+        }
+    }
+
+    // CASPER: didAddSubview only fires for *new* additions; reorders via
+    // addSubview(_:positioned: .above, ...) bypass it. The two addSubview
+    // overrides below cover both paths, so the reveal-overlay ensureOnTop
+    // call lives only there (avoiding a duplicate call per addition).
+    override func addSubview(_ view: NSView) {
+        super.addSubview(view)
+        if view !== sidebarRevealHoverHighlights.leading
+            && view !== sidebarRevealHoverHighlights.trailing {
+            sidebarRevealHoverHighlights.ensureOnTop(in: self)
+        }
+    }
+
+    override func addSubview(
+        _ view: NSView,
+        positioned place: NSWindow.OrderingMode,
+        relativeTo otherView: NSView?
+    ) {
+        super.addSubview(view, positioned: place, relativeTo: otherView)
+        if view !== sidebarRevealHoverHighlights.leading
+            && view !== sidebarRevealHoverHighlights.trailing {
+            sidebarRevealHoverHighlights.ensureOnTop(in: self)
         }
     }
 
@@ -458,12 +486,19 @@ final class WindowBrowserHostView: NSView {
         updateDividerCursor(at: point)
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        updateSidebarRevealHover(at: point)
+    }
+
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        updateSidebarRevealHover(at: point)
         updateDividerCursor(at: point)
     }
 
     override func mouseExited(with event: NSEvent) {
+        clearSidebarRevealHover()
         clearActiveDividerCursor(restoreArrow: true)
     }
 

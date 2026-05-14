@@ -6979,6 +6979,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             fileExplorerState.isVisible = true
         }
 #endif
+        // CASPER: Seed the bottom-separator edge insets so the first-frame
+        // layout for a freshly-created window doesn't paint the tab bar
+        // hairline through the sidebar reveal strip column. ContentView.onAppear
+        // resyncs from the live SwiftUI state shortly after.
+        tabManager.syncWorkspaceTabBarBottomSeparatorInsets(
+            leading: SidebarRevealStripMetrics.separatorInset(sidebarVisible: sidebarState.isVisible),
+            trailing: SidebarRevealStripMetrics.separatorInset(sidebarVisible: fileExplorerState.isVisible)
+        )
 
         let root = ContentView(updateViewModel: updateViewModel, windowId: windowId)
             .environmentObject(tabManager)

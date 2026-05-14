@@ -1033,6 +1033,8 @@ class TabManager: ObservableObject {
     private var pendingWorkspaceUnfocusTarget: (tabId: UUID, panelId: UUID)?
     private var sidebarSelectedWorkspaceIds: Set<UUID> = []
     private var currentWindowTabBarLeadingInset: CGFloat?
+    private var currentWindowTabBarBottomSeparatorLeadingInset: CGFloat?
+    private var currentWindowTabBarBottomSeparatorTrailingInset: CGFloat?
     private var closeConfirmationInFlight = false
     var confirmCloseHandler: ((String, String, Bool) -> Bool)?
     private var agentPIDSweepTimer: DispatchSourceTimer?
@@ -2024,8 +2026,24 @@ class TabManager: ObservableObject {
         // copied immediately because creation itself does not trigger the resync path.
         let inheritedLeadingInset = currentWindowTabBarLeadingInset
             ?? sourceWorkspace?.bonsplitController.configuration.appearance.tabBarLeadingInset
-        guard let inheritedLeadingInset else { return }
-        applyTabBarLeadingInset(inheritedLeadingInset, to: newWorkspace)
+        if let inheritedLeadingInset {
+            applyTabBarLeadingInset(inheritedLeadingInset, to: newWorkspace)
+        }
+
+        // CASPER: Mirror the bottom-separator edge insets so a brand-new
+        // workspace's tab bar doesn't render a hairline through the sidebar
+        // reveal strip column on its first frame.
+        let sourceAppearance = sourceWorkspace?.bonsplitController.configuration.appearance
+        if let inheritedBottomLeading = currentWindowTabBarBottomSeparatorLeadingInset
+            ?? sourceAppearance?.tabBarBottomSeparatorLeadingInset,
+           let inheritedBottomTrailing = currentWindowTabBarBottomSeparatorTrailingInset
+            ?? sourceAppearance?.tabBarBottomSeparatorTrailingInset {
+            applyTabBarBottomSeparatorInsets(
+                leading: inheritedBottomLeading,
+                trailing: inheritedBottomTrailing,
+                to: newWorkspace
+            )
+        }
     }
 
     func syncWorkspaceTabBarLeadingInset(_ inset: CGFloat) {
@@ -2036,9 +2054,33 @@ class TabManager: ObservableObject {
         }
     }
 
+    func syncWorkspaceTabBarBottomSeparatorInsets(leading: CGFloat, trailing: CGFloat) {
+        let nLeading = max(0, leading)
+        let nTrailing = max(0, trailing)
+        currentWindowTabBarBottomSeparatorLeadingInset = nLeading
+        currentWindowTabBarBottomSeparatorTrailingInset = nTrailing
+        for tab in tabs {
+            applyTabBarBottomSeparatorInsets(leading: nLeading, trailing: nTrailing, to: tab)
+        }
+    }
+
     private func applyTabBarLeadingInset(_ inset: CGFloat, to workspace: Workspace) {
         if workspace.bonsplitController.configuration.appearance.tabBarLeadingInset != inset {
             workspace.bonsplitController.configuration.appearance.tabBarLeadingInset = inset
+        }
+    }
+
+    private func applyTabBarBottomSeparatorInsets(
+        leading: CGFloat,
+        trailing: CGFloat,
+        to workspace: Workspace
+    ) {
+        let appearance = workspace.bonsplitController.configuration.appearance
+        if appearance.tabBarBottomSeparatorLeadingInset != leading {
+            workspace.bonsplitController.configuration.appearance.tabBarBottomSeparatorLeadingInset = leading
+        }
+        if appearance.tabBarBottomSeparatorTrailingInset != trailing {
+            workspace.bonsplitController.configuration.appearance.tabBarBottomSeparatorTrailingInset = trailing
         }
     }
 
@@ -3850,12 +3892,18 @@ class TabManager: ObservableObject {
 
     func moveTabToTopForNotification(_ tabId: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
-        let pinnedCount = tabs.filter { $0.isPinned }.count
-        guard index != pinnedCount else { return }
         let tab = tabs[index]
         guard !tab.isPinned else { return }
+        // CASPER: bump to top of the workspace's repo group, not the global top.
+        // firstUnpinnedIndex returns the first non-pinned tab in the same group;
+        // if that's `tab` itself, the bump is a no-op. Delete if upstream adds
+        // workspace grouping (see Sources/Casper/Sidebar/CasperWorkspaceGroups.swift).
+        guard let targetIndex = CasperWorkspaceGroupResolver.firstUnpinnedIndex(
+            in: tabs,
+            matching: tab
+        ), targetIndex != index else { return }
         tabs.remove(at: index)
-        tabs.insert(tab, at: pinnedCount)
+        tabs.insert(tab, at: targetIndex)
     }
 
     @discardableResult
