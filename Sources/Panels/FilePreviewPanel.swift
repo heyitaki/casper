@@ -8,14 +8,6 @@ import Quartz
 import SwiftUI
 import UniformTypeIdentifiers
 
-// CASPER: Scroll target passed to FilePreviewPanel when opening a file from the
-// grouped Find sidebar. Both fields are 1-indexed to match ripgrep / CursorPosition.
-// Delete if upstream adds a richer file-open API.
-struct CasperFilePreviewScrollTarget: Equatable {
-    let line: Int
-    let column: Int
-}
-
 enum FilePreviewInteraction {
     static let zoomStep: CGFloat = 1.25
 
@@ -559,12 +551,6 @@ final class FilePreviewPanel: Panel, ObservableObject {
     private var activeSaveGeneration: Int?
     private weak var textView: NSTextView?
     private let focusCoordinator: FilePreviewFocusCoordinator
-
-    // CASPER: Line/column to scroll to on next display, set by
-    // openOrFocusFilePreviewSurface when invoked from the grouped Find UI.
-    // Currently unconsumed (was wired to the removed CodeEditSourceEditor branch);
-    // re-wire to FilePreviewTextEditor if/when scroll-to-line is needed.
-    @Published var casperPendingScrollTarget: CasperFilePreviewScrollTarget?
 
     var fileURL: URL {
         URL(fileURLWithPath: filePath)

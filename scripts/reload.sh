@@ -425,7 +425,6 @@ XCODEBUILD_ARGS=(
   -scheme cmux
   -configuration Debug
   -destination 'platform=macOS'
-  -skipPackagePluginValidation
 )
 if [[ -n "$DERIVED_DATA" ]]; then
   XCODEBUILD_ARGS+=(-derivedDataPath "$DERIVED_DATA")
