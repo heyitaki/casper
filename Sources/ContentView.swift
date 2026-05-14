@@ -2113,7 +2113,6 @@ struct ContentView: View {
         VerticalTabsSidebar(
             updateViewModel: updateViewModel,
             fileExplorerState: fileExplorerState,
-            onSendFeedback: presentFeedbackComposer,
             onToggleSidebar: { sidebarState.toggle() },
             onNewTab: {
                 AppDelegate.shared?.performNewWorkspaceAction(
@@ -9201,7 +9200,6 @@ private struct SidebarTabItemPresentationSnapshot: Equatable {
 struct VerticalTabsSidebar: View {
     @ObservedObject var updateViewModel: UpdateViewModel
     @ObservedObject var fileExplorerState: FileExplorerState
-    let onSendFeedback: () -> Void
     let onToggleSidebar: () -> Void
     let onNewTab: () -> Void
     @EnvironmentObject var tabManager: TabManager
@@ -9347,7 +9345,7 @@ struct VerticalTabsSidebar: View {
 
         ZStack(alignment: .bottomLeading) {
             workspaceScrollArea(renderContext: renderContext)
-            SidebarFooter(updateViewModel: updateViewModel, fileExplorerState: fileExplorerState, onSendFeedback: onSendFeedback)
+            SidebarFooter()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .overlay {
@@ -10654,35 +10652,16 @@ final class WindowScopedShortcutHintModifierMonitor {
     }
 }
 
+// CASPER: Sidebar footer reduced to a single settings button; delete if upstream adopts the same affordance.
 private struct SidebarFooter: View {
-    @ObservedObject var updateViewModel: UpdateViewModel
-    @ObservedObject var fileExplorerState: FileExplorerState
-    let onSendFeedback: () -> Void
-
-    var body: some View {
-        SidebarFooterButtons(updateViewModel: updateViewModel, fileExplorerState: fileExplorerState, onSendFeedback: onSendFeedback)
-            .padding(.leading, 6)
-            .padding(.trailing, 10)
-            .padding(.bottom, 6)
-    }
-}
-
-private struct SidebarFooterButtons: View {
-    @ObservedObject var updateViewModel: UpdateViewModel
-    @ObservedObject var fileExplorerState: FileExplorerState
-    let onSendFeedback: () -> Void
-
     var body: some View {
         HStack(spacing: 6) {
-            SidebarHelpMenuButton(onSendFeedback: onSendFeedback)
-#if DEBUG
-            Text(String(localized: "debug.devBuildBanner.title", defaultValue: "Development"))
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-#endif
-            UpdatePill(model: updateViewModel)
+            SidebarSettingsMenuButton()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 6)
+        .padding(.trailing, 10)
+        .padding(.bottom, 6)
     }
 }
 
@@ -10924,17 +10903,9 @@ final class FeedbackComposerMessageEditorView: NSView {
     }
 }
 
-private enum SidebarHelpMenuAction {
+private enum SidebarSettingsMenuAction {
     case importBrowserData
     case keyboardShortcuts
-    case docs
-    case changelog
-    case github
-    case githubIssues
-    case discord
-    case checkForUpdates
-    case sendFeedback
-    case welcome
 }
 
 private struct SidebarFeedbackComposerSheet: View {
@@ -11435,31 +11406,21 @@ enum FeedbackComposerBridge {
     }
 }
 
-private struct SidebarHelpMenuButton: View {
-    private let docsURL = URL(string: "https://cmux.com/docs")
-    private let changelogURL = URL(string: "https://cmux.com/docs/changelog")
-    private let githubURL = URL(string: "https://github.com/manaflow-ai/cmux")
-    private let githubIssuesURL = URL(string: "https://github.com/manaflow-ai/cmux/issues")
-    private let discordURL = URL(string: "https://discord.gg/xsgFEVrWCZ")
-    private let helpTitle = String(localized: "sidebar.help.button", defaultValue: "Help")
+// CASPER: Footer button is a settings entry point with a trimmed popover; delete if upstream replaces the help button with an equivalent settings affordance.
+private struct SidebarSettingsMenuButton: View {
+    private let settingsTitle = String(localized: "settings.title", defaultValue: "Settings")
+    private let keyboardShortcutsTitle = String(localized: "settings.section.keyboardShortcuts", defaultValue: "Keyboard Shortcuts")
+    private let importBrowserDataTitle = String(localized: "menu.view.importFromBrowser", defaultValue: "Import Browser Data…")
     private let buttonSize: CGFloat = 22
     private let iconSize: CGFloat = 11
-    @ObservedObject private var keyboardShortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
-
-    let onSendFeedback: () -> Void
 
     @State private var isPopoverPresented = false
-
-    private var sendFeedbackShortcutHint: String {
-        let _ = keyboardShortcutSettingsObserver.revision
-        return KeyboardShortcutSettings.shortcut(for: .sendFeedback).displayString
-    }
 
     var body: some View {
         Button {
             isPopoverPresented.toggle()
         } label: {
-            Image(systemName: "questionmark.circle")
+            Image(systemName: "gearshape")
                 .symbolRenderingMode(.monochrome)
                 .font(.system(size: iconSize, weight: .medium))
                 .foregroundStyle(Color(nsColor: .secondaryLabelColor))
@@ -11470,102 +11431,42 @@ private struct SidebarHelpMenuButton: View {
         .background(ArrowlessPopoverAnchor(
             isPresented: $isPopoverPresented,
             preferredEdge: .maxY,
-            detachedGap: 4
+            detachedGap: 4,
+            // Align the popover's leading edge with the gear icon's visual leading
+            // edge. The 11pt icon is centered inside a 22pt hit target, so the icon's
+            // leading edge sits ~5.5pt right of the button frame's leading edge — the
+            // offset below shifts the popover to match.
+            positioning: .leadingEdge(offset: 6)
         ) {
-            helpPopover
+            settingsPopover
         })
         .accessibilityElement(children: .ignore)
-        .safeHelp(helpTitle)
-        .accessibilityLabel(helpTitle)
-        .accessibilityIdentifier("SidebarHelpMenuButton")
+        .safeHelp(settingsTitle)
+        .accessibilityLabel(settingsTitle)
+        .accessibilityIdentifier("SidebarSettingsMenuButton")
     }
 
-    private var helpPopover: some View {
+    private var settingsPopover: some View {
         VStack(alignment: .leading, spacing: 2) {
-            helpOptionButton(
-                title: String(localized: "sidebar.help.welcome", defaultValue: "Welcome to cmux!"),
-                action: .welcome,
-                accessibilityIdentifier: "SidebarHelpMenuOptionWelcome",
-                isExternalLink: false
-            )
-            helpOptionButton(
-                title: String(localized: "sidebar.help.sendFeedback", defaultValue: "Send Feedback"),
-                action: .sendFeedback,
-                accessibilityIdentifier: "SidebarHelpMenuOptionSendFeedback",
-                isExternalLink: false,
-                shortcutHint: sendFeedbackShortcutHint,
-                trailingSystemImage: "bubble.left.and.text.bubble.right"
-            )
-            helpOptionButton(
-                title: String(localized: "settings.section.keyboardShortcuts", defaultValue: "Keyboard Shortcuts"),
+            settingsOptionButton(
+                title: keyboardShortcutsTitle,
                 action: .keyboardShortcuts,
-                accessibilityIdentifier: "SidebarHelpMenuOptionKeyboardShortcuts",
-                isExternalLink: false
+                accessibilityIdentifier: "SidebarSettingsMenuOptionKeyboardShortcuts"
             )
-            helpOptionButton(
-                title: String(localized: "menu.view.importFromBrowser", defaultValue: "Import Browser Data…"),
+            settingsOptionButton(
+                title: importBrowserDataTitle,
                 action: .importBrowserData,
-                accessibilityIdentifier: "SidebarHelpMenuOptionImportBrowserData",
-                isExternalLink: false
-            )
-            if docsURL != nil {
-                helpOptionButton(
-                    title: String(localized: "about.docs", defaultValue: "Docs"),
-                    action: .docs,
-                    accessibilityIdentifier: "SidebarHelpMenuOptionDocs",
-                    isExternalLink: true
-                )
-            }
-            if changelogURL != nil {
-                helpOptionButton(
-                    title: String(localized: "sidebar.help.changelog", defaultValue: "Changelog"),
-                    action: .changelog,
-                    accessibilityIdentifier: "SidebarHelpMenuOptionChangelog",
-                    isExternalLink: true
-                )
-            }
-            if githubURL != nil {
-                helpOptionButton(
-                    title: String(localized: "about.github", defaultValue: "GitHub"),
-                    action: .github,
-                    accessibilityIdentifier: "SidebarHelpMenuOptionGitHub",
-                    isExternalLink: true
-                )
-            }
-            if githubIssuesURL != nil {
-                helpOptionButton(
-                    title: String(localized: "sidebar.help.githubIssues", defaultValue: "GitHub Issues"),
-                    action: .githubIssues,
-                    accessibilityIdentifier: "SidebarHelpMenuOptionGitHubIssues",
-                    isExternalLink: true
-                )
-            }
-            if discordURL != nil {
-                helpOptionButton(
-                    title: String(localized: "sidebar.help.discord", defaultValue: "Discord"),
-                    action: .discord,
-                    accessibilityIdentifier: "SidebarHelpMenuOptionDiscord",
-                    isExternalLink: true
-                )
-            }
-            helpOptionButton(
-                title: String(localized: "command.checkForUpdates.title", defaultValue: "Check for Updates"),
-                action: .checkForUpdates,
-                accessibilityIdentifier: "SidebarHelpMenuOptionCheckForUpdates",
-                isExternalLink: false
+                accessibilityIdentifier: "SidebarSettingsMenuOptionImportBrowserData"
             )
         }
         .padding(8)
         .frame(minWidth: 200)
     }
 
-    private func helpOptionButton(
+    private func settingsOptionButton(
         title: String,
-        action: SidebarHelpMenuAction,
-        accessibilityIdentifier: String,
-        isExternalLink: Bool,
-        shortcutHint: String? = nil,
-        trailingSystemImage: String? = nil
+        action: SidebarSettingsMenuAction,
+        accessibilityIdentifier: String
     ) -> some View {
         Button {
             isPopoverPresented = false
@@ -11575,15 +11476,6 @@ private struct SidebarHelpMenuButton: View {
                 Text(title)
                     .font(.system(size: 12))
                 Spacer(minLength: 0)
-                if let shortcutHint {
-                    helpOptionShortcutHint(text: shortcutHint)
-                }
-                if let trailingSystemImage {
-                    helpOptionTrailingIcon(systemName: trailingSystemImage)
-                }
-                if isExternalLink {
-                    helpOptionTrailingIcon(systemName: "arrow.up.right", size: 8)
-                }
             }
             .padding(.horizontal, 8)
             .frame(height: 24)
@@ -11593,37 +11485,16 @@ private struct SidebarHelpMenuButton: View {
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 
-    private func helpOptionShortcutHint(text: String) -> some View {
-        Text(text)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .font(.system(size: 10, weight: .regular, design: .rounded))
-            .monospacedDigit()
-            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-    }
-
-    private func helpOptionTrailingIcon(systemName: String, size: CGFloat = 13) -> some View {
-        Image(systemName: systemName)
-            .resizable()
-            .scaledToFit()
-            .frame(width: size, height: size)
-            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-    }
-
-    private func perform(_ action: SidebarHelpMenuAction) {
+    private func perform(_ action: SidebarSettingsMenuAction) {
         switch action {
         case .importBrowserData:
-            isPopoverPresented = false
-            DispatchQueue.main.async {
-                BrowserDataImportCoordinator.shared.presentImportDialog()
-            }
+            BrowserDataImportCoordinator.shared.presentImportDialog()
         case .keyboardShortcuts:
-            isPopoverPresented = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 Task { @MainActor in
                     if let appDelegate = AppDelegate.shared {
                         appDelegate.openPreferencesWindow(
-                            debugSource: "sidebarHelpMenu.keyboardShortcuts",
+                            debugSource: "sidebarSettingsMenu.keyboardShortcuts",
                             navigationTarget: .keyboardShortcuts
                         )
                     } else {
@@ -11631,44 +11502,34 @@ private struct SidebarHelpMenuButton: View {
                     }
                 }
             }
-        case .docs:
-            guard let docsURL else { return }
-            NSWorkspace.shared.open(docsURL)
-        case .changelog:
-            guard let changelogURL else { return }
-            NSWorkspace.shared.open(changelogURL)
-        case .github:
-            guard let githubURL else { return }
-            NSWorkspace.shared.open(githubURL)
-        case .githubIssues:
-            guard let githubIssuesURL else { return }
-            NSWorkspace.shared.open(githubIssuesURL)
-        case .discord:
-            guard let discordURL else { return }
-            NSWorkspace.shared.open(discordURL)
-        case .checkForUpdates:
-            Task { @MainActor in
-                AppDelegate.shared?.checkForUpdates(nil)
-            }
-        case .sendFeedback:
-            isPopoverPresented = false
-            onSendFeedback()
-        case .welcome:
-            isPopoverPresented = false
-            Task { @MainActor in
-                if let appDelegate = AppDelegate.shared {
-                    appDelegate.openWelcomeWorkspace()
-                }
-            }
         }
     }
 
 }
 
+/// NSView that is invisible to hit testing. Used as a positioning anchor for
+/// NSPopover when the anchor needs to be wider than the visible control without
+/// stealing clicks from sibling UI underneath.
+private final class HitTestTransparentView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 private struct ArrowlessPopoverAnchor<PopoverContent: View>: NSViewRepresentable {
+    // CASPER: `.leadingEdge` positioning exists only for the Casper sidebar settings button; delete if that button goes away or upstream adopts an equivalent.
+    /// Horizontal placement of the popover relative to its anchor when on a `.maxY` /
+    /// `.minY` edge. NSPopover always centers itself on the positioning rect midX, so we
+    /// shape the rect to land the popover in the requested spot. `.leadingEdge(offset:)`
+    /// nudges the popover past the button's frame so it lines up with the visual leading
+    /// edge of the icon (e.g. when the icon is centered inside a larger hit target).
+    enum Positioning {
+        case center
+        case leadingEdge(offset: CGFloat)
+    }
+
     @Binding var isPresented: Bool
     let preferredEdge: NSRectEdge
     let detachedGap: CGFloat
+    var positioning: Positioning = .center
     @ViewBuilder let content: () -> PopoverContent
 
     func makeNSView(context: Context) -> NSView {
@@ -11679,12 +11540,13 @@ private struct ArrowlessPopoverAnchor<PopoverContent: View>: NSViewRepresentable
 
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.anchorView = nsView
-        context.coordinator.updateRootView(AnyView(content()))
 
         if isPresented {
+            context.coordinator.updateRootView(AnyView(content()))
             context.coordinator.present(
                 preferredEdge: preferredEdge,
-                detachedGap: detachedGap
+                detachedGap: detachedGap,
+                positioning: positioning
             )
         } else {
             context.coordinator.dismiss()
@@ -11701,6 +11563,15 @@ private struct ArrowlessPopoverAnchor<PopoverContent: View>: NSViewRepresentable
         weak var anchorView: NSView?
         private let hostingController = NSHostingController(rootView: AnyView(EmptyView()))
         private var popover: NSPopover?
+        /// Invisible widened anchor used for `.leadingEdge` positioning. NSPopover centers
+        /// the popover on its positioning view's midX, so a child view sized to the
+        /// popover's width and anchored at the real button's leading edge causes the
+        /// popover's leading edge to land on the button's leading edge. Uses a
+        /// `HitTestTransparentView` subclass so the wider-than-anchor view doesn't
+        /// silently swallow clicks that would otherwise hit sibling UI underneath.
+        /// Allocated only on first `.leadingEdge` use so the common `.center` path
+        /// never creates an NSView it won't read.
+        private var leadingEdgeAnchor: HitTestTransparentView?
 
         init(isPresented: Binding<Bool>) {
             _isPresented = isPresented
@@ -11708,11 +11579,13 @@ private struct ArrowlessPopoverAnchor<PopoverContent: View>: NSViewRepresentable
 
         func updateRootView(_ rootView: AnyView) {
             hostingController.rootView = AnyView(rootView.fixedSize())
-            hostingController.view.invalidateIntrinsicContentSize()
-            hostingController.view.layoutSubtreeIfNeeded()
         }
 
-        func present(preferredEdge: NSRectEdge, detachedGap: CGFloat) {
+        func present(
+            preferredEdge: NSRectEdge,
+            detachedGap: CGFloat,
+            positioning: Positioning
+        ) {
             guard let anchorView else {
                 isPresented = false
                 dismiss()
@@ -11727,20 +11600,28 @@ private struct ArrowlessPopoverAnchor<PopoverContent: View>: NSViewRepresentable
             hostingController.view.invalidateIntrinsicContentSize()
             hostingController.view.layoutSubtreeIfNeeded()
             let fittingSize = hostingController.view.fittingSize
+            let popoverWidth: CGFloat
             if fittingSize.width > 0, fittingSize.height > 0 {
+                popoverWidth = ceil(fittingSize.width)
                 popover.contentSize = NSSize(
-                    width: ceil(fittingSize.width),
+                    width: popoverWidth,
                     height: ceil(fittingSize.height)
                 )
+            } else {
+                popoverWidth = anchorView.bounds.width
             }
 
+            let (positioningView, positioningRect) = resolvePositioning(
+                anchorView: anchorView,
+                preferredEdge: preferredEdge,
+                detachedGap: detachedGap,
+                positioning: positioning,
+                popoverWidth: popoverWidth
+            )
+
             popover.show(
-                relativeTo: positioningRect(
-                    for: anchorView.bounds,
-                    preferredEdge: preferredEdge,
-                    detachedGap: detachedGap
-                ),
-                of: anchorView,
+                relativeTo: positioningRect,
+                of: positioningView,
                 preferredEdge: preferredEdge
             )
         }
@@ -11748,6 +11629,8 @@ private struct ArrowlessPopoverAnchor<PopoverContent: View>: NSViewRepresentable
         func dismiss() {
             popover?.performClose(nil)
             popover = nil
+            leadingEdgeAnchor?.removeFromSuperview()
+            leadingEdgeAnchor = nil
         }
 
         func popoverDidClose(_ notification: Notification) {
@@ -11768,46 +11651,84 @@ private struct ArrowlessPopoverAnchor<PopoverContent: View>: NSViewRepresentable
             return popover
         }
 
-        private func positioningRect(
-            for bounds: CGRect,
+        private func resolvePositioning(
+            anchorView: NSView,
             preferredEdge: NSRectEdge,
-            detachedGap: CGFloat
-        ) -> CGRect {
+            detachedGap: CGFloat,
+            positioning: Positioning,
+            popoverWidth: CGFloat
+        ) -> (NSView, CGRect) {
             let hiddenArrowInset: CGFloat = 13
             let compensation = max(hiddenArrowInset - detachedGap, 0)
 
+            let leadingEdgeOffset: CGFloat? = {
+                guard case .leadingEdge(let offset) = positioning else { return nil }
+                switch preferredEdge {
+                case .maxY, .minY: return offset
+                default: return nil
+                }
+            }()
+
+            let positioningView: NSView
+            if let leadingEdgeOffset {
+                let anchor = leadingEdgeAnchor ?? {
+                    let v = HitTestTransparentView()
+                    v.translatesAutoresizingMaskIntoConstraints = true
+                    leadingEdgeAnchor = v
+                    return v
+                }()
+                if anchor.superview !== anchorView {
+                    anchor.removeFromSuperview()
+                    anchorView.addSubview(anchor)
+                }
+                anchor.frame = NSRect(
+                    x: leadingEdgeOffset,
+                    y: 0,
+                    width: max(popoverWidth, anchorView.bounds.width),
+                    height: anchorView.bounds.height
+                )
+                positioningView = anchor
+            } else {
+                leadingEdgeAnchor?.removeFromSuperview()
+                leadingEdgeAnchor = nil
+                positioningView = anchorView
+            }
+
+            let bounds = positioningView.bounds
+            let rect: CGRect
             switch preferredEdge {
             case .maxY:
-                return NSRect(
+                rect = NSRect(
                     x: bounds.minX,
                     y: bounds.maxY - compensation,
                     width: bounds.width,
                     height: compensation
                 )
             case .minY:
-                return NSRect(
+                rect = NSRect(
                     x: bounds.minX,
                     y: bounds.minY,
                     width: bounds.width,
                     height: compensation
                 )
             case .maxX:
-                return NSRect(
+                rect = NSRect(
                     x: bounds.maxX - compensation,
                     y: bounds.minY,
                     width: compensation,
                     height: bounds.height
                 )
             case .minX:
-                return NSRect(
+                rect = NSRect(
                     x: bounds.minX,
                     y: bounds.minY,
                     width: compensation,
                     height: bounds.height
                 )
             @unknown default:
-                return bounds
+                rect = bounds
             }
+            return (positioningView, rect)
         }
     }
 }
@@ -11822,12 +11743,10 @@ private struct SidebarFooterIconButtonStyleBody: View {
     let configuration: SidebarFooterIconButtonStyle.Configuration
 
     @Environment(\.isEnabled) private var isEnabled
-    @State private var isHovered = false
 
     private var backgroundOpacity: Double {
         guard isEnabled else { return 0.0 }
         if configuration.isPressed { return 0.16 }
-        if isHovered { return 0.08 }
         return 0.0
     }
 
@@ -11837,10 +11756,6 @@ private struct SidebarFooterIconButtonStyleBody: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.primary.opacity(backgroundOpacity))
             )
-            .onHover { hovering in
-                isHovered = hovering
-            }
-            .animation(.easeOut(duration: 0.12), value: isHovered)
             .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
     }
 }

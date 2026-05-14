@@ -154,7 +154,6 @@ final class InactivePaneFirstClickFocusTests: XCTestCase {
         let sidebar = VerticalTabsSidebar(
             updateViewModel: UpdateViewModel(),
             fileExplorerState: FileExplorerState(),
-            onSendFeedback: {},
             onToggleSidebar: {},
             onNewTab: {},
             selection: Binding(
