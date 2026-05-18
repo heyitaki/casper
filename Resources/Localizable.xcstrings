@@ -88315,6 +88315,23 @@
         }
       }
     },
+    "sidebar.workspaceGroup.untitled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "その他"
+          }
+        }
+      }
+    },
     "sidebar.remote.badge": {
       "extractionState": "manual",
       "localizations": {

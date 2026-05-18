@@ -9213,6 +9213,10 @@ struct VerticalTabsSidebar: View {
     @StateObject private var dragFailsafeMonitor = SidebarDragFailsafeMonitor()
     @StateObject private var tabItemSettingsStore = SidebarTabItemSettingsStore()
     @ObservedObject private var keyboardShortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
+    // CASPER: collapse state for workspace groups; delete if upstream adds workspace grouping.
+    @ObservedObject private var workspaceGroupCollapseStore = CasperWorkspaceGroupCollapseStore.shared
+    // CASPER: workspace title search; delete if upstream adds workspace search.
+    @State private var workspaceSearchQuery: String = ""
     @State private var draggedTabId: UUID?
     @State private var dropIndicator: SidebarDropIndicator?
     @State private var frozenTabItemPresentation: SidebarTabItemPresentationSnapshot?
@@ -9229,8 +9233,21 @@ struct VerticalTabsSidebar: View {
         MinimalModeChromeMetrics.titlebarHeight
     }
 
+    // CASPER: pinned workspace search bar sits just below the titlebar icons; reserve
+    // this much vertical space inside the scroll area so the first row clears it.
+    // Delete with the workspace search bar if upstream lands its own.
+    private let workspaceSearchBarFieldHeight: CGFloat = 24
+    private let workspaceSearchBarTopGap: CGFloat = 8
+    // Tuned so the first workspace row sits ~2pt below the search field's
+    // frame bottom (hidden by SidebarTopScrim). Adjusting field height
+    // here flows through to scrollTopInset via the computed reserved height.
+    private var workspaceSearchBarReservedHeight: CGFloat {
+        workspaceSearchBarTopGap + workspaceSearchBarFieldHeight + 4
+    }
+
     private var sidebarWorkspaceListExtraTopOffset: CGFloat {
         SidebarWorkspaceListMetrics.extraTopOffset(isWindowFullScreen: windowFullScreenIntent)
+            + workspaceSearchBarReservedHeight
     }
 
     private var sidebarTopScrimHeight: CGFloat {
@@ -9347,6 +9364,9 @@ struct VerticalTabsSidebar: View {
             workspaceScrollArea(renderContext: renderContext)
             SidebarFooter()
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .overlay(alignment: .top) {
+            workspaceSearchBar
         }
         .overlay {
             FirstMouseGatedHostingOverlay()
@@ -9556,6 +9576,22 @@ struct VerticalTabsSidebar: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minHeight: minHeight, alignment: .top)
+    }
+
+    // CASPER: pinned workspace title search bar; placed under the sidebar
+    // icon cluster. Delete if upstream adds a workspace search field.
+    private var workspaceSearchBar: some View {
+        CasperSidebarSearchField(
+            text: $workspaceSearchQuery,
+            placeholder: String(
+                localized: "sidebar.workspaceSearch.placeholder",
+                defaultValue: "Search workspaces"
+            )
+        )
+        .frame(height: workspaceSearchBarFieldHeight)
+        .padding(.horizontal, 8)
+        .padding(.top, sidebarTitlebarInteractionHeight + workspaceSearchBarTopGap)
+        .accessibilityIdentifier("SidebarWorkspaceSearchField")
     }
 
     private func workspaceRows(renderContext: WorkspaceListRenderContext) -> some View {
