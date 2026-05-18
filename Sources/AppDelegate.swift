@@ -1008,6 +1008,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let isRunningUnderXCTest = isRunningUnderXCTest(env)
         let telemetryEnabled = TelemetrySettings.enabledForCurrentLaunch
         AppIconLaunchState.markDidFinishLaunching()
+#if DEBUG
+        MainThreadHangWatchdog.shared.start()
+#endif
         if isRunningUnderXCTest {
             NSApp.setActivationPolicy(.regular)
         } else {
