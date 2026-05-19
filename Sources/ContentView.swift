@@ -9620,9 +9620,9 @@ struct VerticalTabsSidebar: View {
         //
         // Precompute activity once per workspace before the sort. The
         // comparator becomes a pure dict lookup, so we don't recompute
-        // activity O(N log N) times per render (the prior shape did, and
-        // the inline filesystem I/O in the recompute path produced 6s
-        // startup hangs — see watchdog stack `cmux-hang-sample-1478-*`).
+        // activity O(N log N) times per render. Without this hoist, the
+        // recompute path runs filesystem I/O inside the comparator and
+        // produces multi-second startup hangs.
         let activityByID: [UUID: CasperWorkspaceActivity] = Dictionary(
             uniqueKeysWithValues: filteredTabs.map { tab in
                 (tab.id, CasperAgentActivity.activity(for: tab, notificationStore: notificationStore))
@@ -9654,7 +9654,9 @@ struct VerticalTabsSidebar: View {
         // so each workspace's "last activity" comes from its own JSONLs,
         // not every JSONL sharing the same cwd. `.task(id:)` re-fires when
         // the set of visible workspaces changes.
-        let localWorkspaceIDs: Set<UUID> = Set(filteredTabs.map(\.id))
+        // activityByID already keys on every filteredTab id; reuse it instead
+        // of a second .map pass over filteredTabs.
+        let localWorkspaceIDs: Set<UUID> = Set(activityByID.keys)
         // Hoist the cross-workspace claimed-paths set out of the per-tab loop;
         // without it `claudeJSONLPaths` rebuilds the same Set<String> N times
         // per render.
@@ -9670,6 +9672,15 @@ struct VerticalTabsSidebar: View {
                 )
                 if !paths.isEmpty { acc[tab.id] = paths }
             }
+        // Cheap id for `.task(id:)` below. Hashing the full
+        // `[UUID:[String]]` per body eval hashes hundreds of strings at
+        // N=48 workspaces. The two fields below capture the only inputs
+        // that should restart the poll loop: hook-file version (new
+        // session registered/cleared) and the visible-workspace set.
+        let claudeWorkspaceSessionsTaskID = CasperClaudeSessionsTaskID(
+            mapVersion: CasperClaudeSessionMap.shared.mapVersion,
+            workspaceIDs: localWorkspaceIDs
+        )
         return VStack(spacing: 0) {
             ForEach(Array(groups.enumerated()), id: \.element.id) { offset, group in
                 let hasHeader = !group.displayName.isEmpty
@@ -9700,12 +9711,11 @@ struct VerticalTabsSidebar: View {
         }
         .padding(.vertical, SidebarWorkspaceListMetrics.rowVerticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task(id: claudeWorkspaceSessions) {
+        .task(id: claudeWorkspaceSessionsTaskID) {
             // Initial scan + periodic re-scan every 20s. The task is cancelled
-            // and restarted when `claudeWorkspaceSessions` changes (workspace
-            // appears/disappears, or a resume registers a new sessionId).
-            // The poll loop catches resumes that *reuse* the sessionId —
-            // path set unchanged, JSONL grows, id wouldn't otherwise refire.
+            // and restarted when the hook map version or visible workspace
+            // set changes. The poll loop catches resumes that *reuse* the
+            // sessionId (JSONL grows, id stable, would not otherwise refire).
             while !Task.isCancelled {
                 #if DEBUG
                 cmuxDebugLog(

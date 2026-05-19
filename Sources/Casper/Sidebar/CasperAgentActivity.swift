@@ -136,7 +136,7 @@ enum CasperAgentActivity {
             panelDirsHash: workspace.panelDirectories.values.sorted().hashValue,
             agentPIDsCount: workspace.agentPIDs.count,
             snapshotsEmpty: workspace.restoredAgentSnapshotsByPanelId.isEmpty,
-            claimedCount: precomputedClaimed.count
+            claimedHash: precomputedClaimed.hashValue
         )
         if let cached = CasperClaudeJSONLPathsCache.lookup(workspaceId: workspace.id, key: key, now: now) {
             return cached
@@ -323,8 +323,12 @@ final class CasperClaudeSessionMap {
         let now = Date()
         if cached != nil, now.timeIntervalSince(lastCheckedAt) < stalenessCheckTTL { return }
         lastCheckedAt = now
-        let path = (NSHomeDirectory() as NSString)
-            .appendingPathComponent(".cmuxterm/claude-hook-sessions.json")
+        // Route through `RestorableAgentKind.claude.hookStoreFileURL()` so the
+        // `CMUX_AGENT_HOOK_STATE_DIR` override is honored — otherwise Casper
+        // reads `~/.cmuxterm/...` while the hook writer (Resources/bin/claude)
+        // writes to the override dir, and per-workspace attribution silently
+        // falls through to the cwd fallback for every session.
+        let path = RestorableAgentKind.claude.hookStoreFileURL().path
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let mtime = attrs[.modificationDate] as? Date
         else {
@@ -354,6 +358,15 @@ final class CasperClaudeSessionMap {
         }
         return out
     }
+}
+
+/// Cheap, stable id for `VerticalTabsSidebar`'s Claude-activity poll task.
+/// Hashing the full `[UUID: [String]]` of per-workspace JSONL paths on
+/// every body eval costs hundreds of string hashes; this two-field id
+/// captures the only inputs that should restart the poll loop.
+struct CasperClaudeSessionsTaskID: Hashable {
+    let mapVersion: TimeInterval
+    let workspaceIDs: Set<UUID>
 }
 
 /// Per-file mtime cache with a short TTL. Used by the cwd fallback to
@@ -393,7 +406,13 @@ enum CasperClaudeJSONLPathsCache {
         let panelDirsHash: Int
         let agentPIDsCount: Int
         let snapshotsEmpty: Bool
-        let claimedCount: Int
+        /// Content-hash of the `precomputedClaimed` set. Counting alone
+        /// would alias two sets of equal cardinality but different members
+        /// (one workspace claims a path while another drops one) into a
+        /// single key, returning stale path lists. `Set.hashValue` uses
+        /// the process-randomized hash seed, so this Key is in-process
+        /// only — never persist it.
+        let claimedHash: Int
     }
     private struct Entry {
         let key: Key
@@ -405,6 +424,10 @@ enum CasperClaudeJSONLPathsCache {
     /// (which isn't part of the key) surfaces within ~3s. The cache exists
     /// to coalesce body re-eval bursts, not to suppress real updates.
     private static let ttl: TimeInterval = 3.0
+    /// Cap so closed-workspace orphans don't accumulate indefinitely. When
+    /// tripped, drop entries past their TTL; they would re-compute on the
+    /// next access anyway.
+    private static let maxEntries = 256
 
     static func lookup(workspaceId: UUID, key: Key, now: Date) -> [String]? {
         guard let entry = entries[workspaceId],
@@ -415,6 +438,9 @@ enum CasperClaudeJSONLPathsCache {
     }
 
     static func store(workspaceId: UUID, key: Key, value: [String], now: Date) {
+        if entries.count >= maxEntries, entries[workspaceId] == nil {
+            entries = entries.filter { now.timeIntervalSince($0.value.computedAt) < ttl }
+        }
         entries[workspaceId] = Entry(key: key, value: value, computedAt: now)
     }
 }
@@ -439,6 +465,10 @@ final class CasperClaudeProjectDirMap {
     /// unique cwd. 2s lets a new JSONL appearing in a project dir surface
     /// within the same poll cycle.
     private let stalenessCheckTTL: TimeInterval = 2.0
+    /// Cap so closed-workspace cwds don't accumulate indefinitely. On
+    /// overflow drop entries past their TTL — they'd re-stat on next access
+    /// anyway. Same pattern as `CasperFileMtimeCache` / `CasperClaudeJSONLPathsCache`.
+    private let maxEntries = 128
 
     func jsonlPaths(forCwd cwd: String) -> [String] {
         let now = Date()
@@ -458,6 +488,9 @@ final class CasperClaudeProjectDirMap {
         if let entry = cache[cwd], entry.mtime == mtime {
             cache[cwd] = CachedDir(checkedAt: now, mtime: entry.mtime, paths: entry.paths)
             return entry.paths
+        }
+        if cache.count >= maxEntries, cache[cwd] == nil {
+            cache = cache.filter { now.timeIntervalSince($0.value.checkedAt) < stalenessCheckTTL }
         }
         guard let entries = try? fm.contentsOfDirectory(atPath: projectDir) else {
             return []
@@ -620,10 +653,14 @@ final class CasperClaudeActivityStore: ObservableObject {
             )
             #endif
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                for id in toRefresh.keys {
-                    self.inFlightWorkspaces.remove(id)
+                // Drop the in-flight gate BEFORE the self-guard so a torn-down
+                // store doesn't permanently wedge these IDs. The store is a
+                // singleton today, but the gate is what makes a future
+                // non-singleton split (per-window store) safe to add.
+                if let strong = self {
+                    for id in toRefresh.keys { strong.inFlightWorkspaces.remove(id) }
                 }
+                guard let self else { return }
                 // Stage mutations into a local copy and assign back ONCE.
                 // Mutating `self.latestActivityByWorkspace[id]` per entry fires
                 // `objectWillChange` per write — at 50 workspaces all returning
@@ -631,15 +668,22 @@ final class CasperClaudeActivityStore: ObservableObject {
                 // calls before the loop ends. SwiftUI coalesces into one body
                 // re-eval, but the publish-storm is still wasted CPU on the
                 // hot main-thread loop. One assignment = one publish.
+                //
+                // Cross-scan key preservation: this snapshot-then-assign-once
+                // pattern relies on `refreshQueue` being serial and the
+                // MainActor task hops landing in dispatch order. Both are true
+                // — do not switch `refreshQueue` to `.concurrent` without
+                // adding a per-key merge here.
                 var snapshot = self.latestActivityByWorkspace
                 var changed = false
                 for (id, date) in results {
-                    if let date {
-                        if snapshot[id] != date {
-                            snapshot[id] = date
-                            changed = true
-                        }
-                    } else if snapshot.removeValue(forKey: id) != nil {
+                    // nil result means "no parseable activity found this
+                    // scan" — could be a transient miss (tail is all compact
+                    // summaries, file briefly locked). Leave any previously
+                    // known date in place so the sidebar doesn't blank out.
+                    guard let date else { continue }
+                    if snapshot[id] != date {
+                        snapshot[id] = date
                         changed = true
                     }
                 }

@@ -66,9 +66,11 @@ enum CasperWorkspaceTitleFilter {
 /// - done       : secondary-colored relative-time text
 /// - none       : nothing (zero-size)
 ///
-/// Polled every second by `TimelineView` so the relative-time text stays fresh
+/// Polled every 30s by `TimelineView` so the relative-time text stays fresh
 /// without subscribing to `Workspace.objectWillChange` from inside a row body
-/// (which would violate the workspace-list snapshot-boundary rule).
+/// (which would violate the workspace-list snapshot-boundary rule). 30s is
+/// enough granularity for the "5m"/"2h" text — finer ticks would just wake
+/// SwiftUI to recompute identical strings.
 struct CasperWorkspaceActivityIndicator: View {
     let activityProvider: () -> CasperWorkspaceActivity
     let workingFont: Font

@@ -121,6 +121,7 @@ private enum CasperReloadLauncher {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        process.environment = augmentedEnvironment()
 
         do {
             try process.run()
@@ -129,6 +130,25 @@ private enum CasperReloadLauncher {
             cmuxDebugLog("titlebar.casperReload.failed error=\(error)")
             return false
         }
+    }
+
+    /// GUI-launched .apps inherit a minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`),
+    /// so Homebrew tools that `reload.sh` and `ensure-ghosttykit.sh` need
+    /// (`zig`, `xcrun` is fine but `shasum`/`git`/`python3` work) are not on
+    /// PATH from `bash -lc`. Prepending the standard Homebrew bin dirs lets
+    /// the spawned shell find them without depending on user dotfiles
+    /// (matters because the user's login shell is often fish or zsh, so
+    /// `bash -lc` doesn't source the same profile).
+    private static func augmentedEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let brewPaths = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+        let existing = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        let existingSet = Set(existing.split(separator: ":").map(String.init))
+        let prepend = brewPaths.filter { !existingSet.contains($0) }
+        if !prepend.isEmpty {
+            env["PATH"] = (prepend + [existing]).joined(separator: ":")
+        }
+        return env
     }
 
     private static func shellEscape(_ s: String) -> String {
