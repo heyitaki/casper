@@ -2161,13 +2161,19 @@ struct ContentView: View {
     ) -> CGFloat {
         guard isMinimalMode else { return WindowChromeMetrics.appTitlebarHeight }
         guard !isFullScreen else { return 0 }
-        // Windowed minimal mode: tabs overlay the titlebar in both
-        // sidebar-visible and sidebar-hidden states. With the sidebar visible,
-        // traffic lights sit over the sidebar; with it hidden, the tab strip's
-        // 80pt trafficLightTabBarLeadingInset reserves space for them at the
-        // leading edge. Cancel any host-reported safe-area inset so we render
-        // edge-to-edge in either case.
-        return -max(0, min(titlebarPadding, hostingSafeAreaTop))
+        let safeAreaCancel = max(0, min(titlebarPadding, hostingSafeAreaTop))
+        if !isSidebarVisible {
+            // CASPER: Sidebar collapsed in windowed minimal mode — the sidebar
+            // is no longer present to host the traffic lights, so re-add a
+            // titlebar-height strip above the bonsplit tab bar. Net effect:
+            // panel content lands at y = appTitlebarHeight in window
+            // coordinates regardless of host-reported safe-area inset.
+            return WindowChromeMetrics.appTitlebarHeight - safeAreaCancel
+        }
+        // Sidebar visible: tabs overlay the titlebar and traffic lights sit
+        // over the sidebar. Cancel any host-reported safe-area inset so we
+        // render edge-to-edge.
+        return -safeAreaCancel
     }
 
     private func terminalContent(appearance: WindowAppearanceSnapshot) -> some View {
@@ -2196,6 +2202,7 @@ struct ContentView: View {
                         isWorkspaceVisible: presentation.isPanelVisible,
                         isWorkspaceInputActive: isInputActive,
                         isFullScreen: isFullScreen,
+                        isSidebarVisible: sidebarState.isVisible,
                         workspacePortalPriority: portalPriority,
                         onThemeRefreshRequest: { reason, eventId, source, payloadHex in
                             scheduleTitlebarThemeRefreshFromWorkspace(
@@ -2224,8 +2231,12 @@ struct ContentView: View {
         }
         .padding(.top, effectiveTitlebarPadding)
         .overlay(alignment: .top) {
-            if !isMinimalMode {
-                // Titlebar overlay is only over terminal content, not the sidebar.
+            // Titlebar overlay is only over terminal content, not the sidebar.
+            // In minimal mode we normally let the tab strip overlay the
+            // titlebar, but when the sidebar is collapsed in windowed mode
+            // there is no sidebar zone to host the traffic lights, so we
+            // re-introduce the titlebar strip to give them a vertical band.
+            if !isMinimalMode || (!isFullScreen && !sidebarState.isVisible) {
                 customTitlebar(appearance: appearance)
             }
         }
@@ -2437,13 +2448,6 @@ struct ContentView: View {
                     fullscreenControls
                 }
 
-                // Draggable folder icon + focused command name
-                if let directory = focusedDirectory {
-                    DetachedFolderDragIcon(directory: directory)
-                        .frame(width: 16, height: 16)
-                        .padding(.leading, -6)
-                }
-
                 Text(titlebarText)
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(fakeTitlebarTextColor(appearance: appearance))
@@ -2468,10 +2472,11 @@ struct ContentView: View {
     }
 
     private func syncTrafficLightInset() {
-        let inset: CGFloat = (isMinimalMode && !sidebarState.isVisible && !isFullScreen)
-            ? MinimalModeTitlebarDebugSettings.trafficLightTabBarLeadingInset()
-            : 0
-        tabManager.syncWorkspaceTabBarLeadingInset(inset)
+        // Traffic lights now occupy a dedicated top-bar strip rendered above
+        // the bonsplit tab bar whenever the sidebar is collapsed in windowed
+        // minimal mode (see effectiveTitlebarPadding), so the tab strip no
+        // longer needs to reserve leading space for them.
+        tabManager.syncWorkspaceTabBarLeadingInset(0)
     }
 
     /// CASPER: Keep the tab bar bottom hairline from painting through the
@@ -2784,7 +2789,16 @@ struct ContentView: View {
                 .frame(minWidth: CGFloat(SessionPersistencePolicy.minimumWindowWidth), minHeight: CGFloat(SessionPersistencePolicy.minimumWindowHeight))
                 .background(Color.clear)
                 .background(
-                    MinimalModeTitlebarEventSurfaceView(isEnabled: isMinimalMode && !isFullScreen)
+                    // CASPER: This surface exists for the case where the bonsplit
+                    // tab strip sits inside the system titlebar band — i.e. minimal
+                    // mode + windowed + sidebar visible. When the sidebar is
+                    // collapsed in windowed minimal mode, customTitlebar is mounted
+                    // above the tab strip and provides its own drag/double-click
+                    // handlers via WindowDragHandleView + TitlebarDoubleClickMonitorView,
+                    // so the surface would be a redundant second monitor here.
+                    MinimalModeTitlebarEventSurfaceView(
+                        isEnabled: isMinimalMode && !isFullScreen && sidebarState.isVisible
+                    )
                 )
         )
 

@@ -160,6 +160,7 @@ struct WorkspaceContentView: View {
     let isWorkspaceVisible: Bool
     let isWorkspaceInputActive: Bool
     let isFullScreen: Bool
+    let isSidebarVisible: Bool
     let workspacePortalPriority: Int
     let onThemeRefreshRequest: ((
         _ reason: String,
@@ -323,7 +324,15 @@ struct WorkspaceContentView: View {
         }
 
         bonsplitView
-            .ignoresSafeArea(.container, edges: (isMinimalMode && !isFullScreen) ? .top : [])
+            // CASPER: When the sidebar is collapsed in windowed minimal mode,
+            // ContentView.effectiveTitlebarPadding reserves a 28pt strip
+            // above the tab bar for the traffic lights — bonsplit must
+            // respect the host safe area there to avoid sliding back up
+            // under the new top bar.
+            .ignoresSafeArea(
+                .container,
+                edges: (isMinimalMode && !isFullScreen && isSidebarVisible) ? .top : []
+            )
     }
 
     private func syncBonsplitNotificationBadges() {

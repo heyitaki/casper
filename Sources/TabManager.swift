@@ -2048,6 +2048,7 @@ class TabManager: ObservableObject {
 
     func syncWorkspaceTabBarLeadingInset(_ inset: CGFloat) {
         let normalizedInset = max(0, inset)
+        guard normalizedInset != currentWindowTabBarLeadingInset else { return }
         currentWindowTabBarLeadingInset = normalizedInset
         for tab in tabs {
             applyTabBarLeadingInset(normalizedInset, to: tab)
