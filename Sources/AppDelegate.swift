@@ -2704,6 +2704,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         )
 #endif
         context.tabManager.restoreSessionSnapshot(snapshot.tabManager)
+        // CASPER: Warm recently-active agent workspaces so claude/codex sessions
+        // resume on app open without needing a click. Delete if upstream adds an
+        // equivalent restore-time prime.
+        if CasperBuildEnvironment.isBranded {
+            CasperStartupAgentWarmup.applyStartupWarmup(
+                tabManager: context.tabManager,
+                snapshot: snapshot.tabManager
+            )
+        }
         context.sidebarState.isVisible = snapshot.sidebar.isVisible
         context.sidebarState.persistedWidth = CGFloat(
             SessionPersistencePolicy.sanitizedSidebarWidth(snapshot.sidebar.width)
@@ -6943,6 +6952,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         )
         if let tabManagerSnapshot = sessionWindowSnapshot?.tabManager {
             tabManager.restoreSessionSnapshot(tabManagerSnapshot)
+            // CASPER: Mirror the warmup hook in applySessionWindowSnapshot so
+            // newly-spawned windows from a session restore also resume their
+            // recently-active agents without a manual click.
+            if CasperBuildEnvironment.isBranded {
+                CasperStartupAgentWarmup.applyStartupWarmup(
+                    tabManager: tabManager,
+                    snapshot: tabManagerSnapshot
+                )
+            }
         }
 
         let sidebarWidth = sessionWindowSnapshot?.sidebar.width
