@@ -192,6 +192,24 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete if upstream cmux adds a first-class compact sidebar mode that drops auxiliary rows and shows last-activity inline.
 
+### Restore-time agent workspace warmup (parallel)
+
+- Files (added):
+  - `Sources/Casper/CasperStartupAgentWarmup.swift`
+  - `cmuxTests/CasperStartupAgentWarmupTests.swift`
+- Files (upstream files modified):
+  - `Sources/AppDelegate.swift` (two one-line hooks in `applySessionWindowSnapshot` and `createMainWindow`, gated on `CasperBuildEnvironment.isBranded`, calling `CasperStartupAgentWarmup.applyStartupWarmup`)
+  - `Sources/BackgroundWorkspacePrimeCoordinator.swift` (sequential `for` over pending IDs replaced with a rolling `withTaskGroup` capped at `min(pending, Policy.maxConcurrentPrimes)`, where the cap is `activeProcessorCount` with thermal-state downshift)
+  - `GhosttyTabs.xcodeproj/project.pbxproj` (registers the new files)
+- Summary:
+  - On Casper launch, eagerly background-prime agent workspaces so their `claude --resume` / `codex resume` / etc. sessions resume on app open instead of waiting for a manual click. Selection ranks by `max(statusEntries.timestamp, logEntries.timestamp)` with tab-order fallback, caps at 5 per restore, skips the already-selected workspace, and requires `panels[].terminal.agent` to be set in the snapshot (i.e., an agent was attached at last save).
+  - Gated on `AgentSessionAutoResumeSettings.isEnabled()` — if the user disabled auto-resume, `restoredAgentResumeInput` is nil and a warmed shell would be empty.
+  - Reuses the upstream `BackgroundWorkspacePrime` pipeline end to end (`requestBackgroundWorkspaceLoad` → `pendingBackgroundWorkspaceLoadIds` → coordinator hidden mount → surface start → `initialInput` flush). The only Casper-specific bit is the selection policy.
+  - To prevent 5 sequential 2 s timeouts compounding to ~10 s, the coordinator now drives `primeBackgroundWorkspaceIfNeeded` in parallel via a bounded `withTaskGroup`. Cap is `min(pending, activeProcessorCount)` with thermal downshift (serious → cores/2, critical → 1). Per-workspace state stays serialized on `@MainActor`; parallelism is only across the suspension points in `waitForBackgroundWorkspacePrimeCompletion`. This parallelization is general and could be upstreamed independently of the Casper warmup selector.
+- Deletion condition:
+  - Delete `CasperStartupAgentWarmup` + the two AppDelegate hooks if upstream cmux adds a restore-time background prime over the existing `restoredAgentAutoResumePendingPanelIds` set.
+  - Delete the `BackgroundWorkspacePrimeCoordinator` patch if upstream rewrites the coordinator to drive primes concurrently itself.
+
 ### Sidebar footer trimmed to a settings entry point
 
 - Files (upstream files modified):
@@ -225,7 +243,9 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
 - `Sources/ContentView.swift`
   - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
 - `Sources/AppDelegate.swift`
-  - Touched by patch 2 (sidebar reveal mouse-down handlers, `cmux_sendEvent` intercept, `runSidebarRevealEdgeMouseDownLoop`) and patch 3 (new-workspace context menu shortcut display).
+  - Touched by patch 2 (sidebar reveal mouse-down handlers, `cmux_sendEvent` intercept, `runSidebarRevealEdgeMouseDownLoop`), patch 3 (new-workspace context menu shortcut display), and the restore-time agent warmup patch (two one-line `CasperStartupAgentWarmup.applyStartupWarmup` calls in `applySessionWindowSnapshot` and `createMainWindow`).
+- `Sources/BackgroundWorkspacePrimeCoordinator.swift`
+  - Touched by the restore-time agent warmup patch (`Policy.maxConcurrentPrimes` cap + `withTaskGroup` parallel driver in `primePendingBackgroundWorkspaces`). If upstream rewrites the coordinator's pending-loop, re-validate the bounded-parallelism rewrite.
 - `Sources/WindowDecorationsController.swift`
   - Touched by the minimal-mode window-movable policy (one-line call to `CasperMinimalModeWindowMovable.apply` inside `apply(to:)`). Re-add if upstream rewrites the decorations apply path.
 - `Sources/GhosttyTerminalView.swift`
