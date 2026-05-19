@@ -18,6 +18,21 @@ final class BackgroundWorkspacePrimeCoordinator {
 
     private nonisolated enum Policy {
         static let timeoutSeconds: TimeInterval = 2.0
+
+        /// Cap on concurrent primes. Sized to the host's active core count so
+        /// we use available headroom on big machines (a typical Casper restore
+        /// queues up to 5 warmups) but don't oversubscribe on small ones — each
+        /// prime spawns a ghostty surface plus an agent process. Downshifts
+        /// under thermal pressure so a hot machine doesn't dig itself deeper.
+        static var maxConcurrentPrimes: Int {
+            let cores = ProcessInfo.processInfo.activeProcessorCount
+            switch ProcessInfo.processInfo.thermalState {
+            case .nominal, .fair: return max(1, cores)
+            case .serious: return max(1, cores / 2)
+            case .critical: return 1
+            @unknown default: return max(1, cores)
+            }
+        }
     }
 
     private nonisolated final class Waiter: @unchecked Sendable {
@@ -107,21 +122,28 @@ final class BackgroundWorkspacePrimeCoordinator {
         while !Task.isCancelled {
             let workspaceIds = tabManager.pendingBackgroundWorkspaceLoadIds.sorted { $0.uuidString < $1.uuidString }
             guard !workspaceIds.isEmpty else { return }
-            for workspaceId in workspaceIds {
-                guard !Task.isCancelled else { return }
-                let reason = await primeBackgroundWorkspaceIfNeeded(workspaceId: workspaceId, tabManager: tabManager)
-                guard !Task.isCancelled else { return }
 
-                switch reason {
-                case .timeout:
-                    // Keep the hidden mount retained; pending background initial commands
-                    // must stay eligible to start until the surface is actually ready.
-                    continue
-                case .cancelled:
-                    continue
-                case .alreadyCleared, .surfaceReady, .workspaceRemoved:
-                    continue
+            // CASPER: Bounded parallel prime so a Casper restore with N agent
+            // workspaces doesn't pay the full 2s-per-workspace timeout serially.
+            // Delete if upstream BackgroundWorkspacePrimeCoordinator gains a
+            // concurrent driver of its own.
+            let cap = max(1, min(workspaceIds.count, Policy.maxConcurrentPrimes))
+            await withTaskGroup(of: Void.self) { group in
+                var iterator = workspaceIds.makeIterator()
+
+                func enqueueNext() {
+                    guard !Task.isCancelled, let nextId = iterator.next() else { return }
+                    group.addTask { @MainActor [weak self, weak tabManager] in
+                        guard !Task.isCancelled, let self, let tabManager else { return }
+                        _ = await self.primeBackgroundWorkspaceIfNeeded(
+                            workspaceId: nextId,
+                            tabManager: tabManager
+                        )
+                    }
                 }
+
+                for _ in 0..<cap { enqueueNext() }
+                while await group.next() != nil { enqueueNext() }
             }
         }
     }
