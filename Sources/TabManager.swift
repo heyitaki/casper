@@ -4341,6 +4341,17 @@ class TabManager: ObservableObject {
         return true
     }
 
+    /// Sidebar hover-revealed close (X) button. Skips the generic "Close
+    /// workspace?" prompt; pinned protection is preserved.
+    @discardableResult
+    func closeWorkspaceFromSidebarCloseButton(_ workspace: Workspace) -> Bool {
+        if workspace.isPinned {
+            guard confirmPinnedWorkspaceClose(source: .workspace) else { return false }
+        }
+        closeWorkspaceIfRunningProcess(workspace, requiresConfirmation: false)
+        return true
+    }
+
     @discardableResult
     func closeWorkspaceWithConfirmation(tabId: UUID) -> Bool {
         guard let workspace = tabs.first(where: { $0.id == tabId }) else { return false }
