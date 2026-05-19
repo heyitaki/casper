@@ -167,6 +167,31 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete if upstream restores `customTitlebar`/`WindowDragHandleView` in minimal mode or otherwise blocks AppKit's auto-titlebar-drag for the bonsplit tab strip.
 
+### Compact one-line sidebar workspace row
+
+- Files (added):
+  - `Sources/Casper/Sidebar/CasperCompactWorkspaceRow.swift`
+  - `Sources/Casper/Sidebar/CasperAgentActivity.swift`
+- Files (upstream files modified):
+  - `Sources/ContentView.swift` (`TabItemView.body` — adds `isCasperCompact` gate that strips an agent activity glyph from the title, unbolds it, inserts the activity indicator on the right of the title row, hides all below-title sub-rows, and indents leading padding to align with the workspace-group folder icon; `VerticalTabsSidebar.workspaceRows` sorts workspaces by activity recency before passing to `CasperWorkspaceGroupResolver.groups`)
+  - `GhosttyTabs.xcodeproj/project.pbxproj` (registers the new files)
+- Summary:
+  - In branded Casper builds, each sidebar workspace renders as a single line — a hover-revealed close button at the leading edge (chevron column), title (conversation topic, with workspace title's existing path fallback) next to it, and a right-pinned agent-state indicator on the trailing edge.
+  - Display title is run through `CasperWorkspaceTitle.displayTitle()` which strips a leading agent activity glyph (Claude Code's `✱`, plain `*`, sparkle/star variants, `•`) plus following whitespace. Strip is render-only; `workspace.title` itself is unchanged so window titles and accessibility keep the raw string.
+  - Title is rendered with `.regular` weight in compact mode (rich rows still use `.semibold`).
+  - Below-title rows (custom description, latest-notification subtitle, remote section, metadata blocks, log entry, progress bar, branch/directory row, pull requests, listening ports) are hidden in compact mode.
+  - The leading unread-count badge circle is suppressed in compact mode; the close button takes that slot instead and renders only on row hover. Width 10, frame-reserved so the title position is hover-stable. Layout: outer 6 + inner-leading 4 + close-slot 10 + HStack-spacing 5 = title at x=25, matching the workspace-group folder icon in `CasperWorkspaceGroupHeader` (chevron 10..20, folder at x=25). Vertical padding is reduced from 8 to 4 since rows are single-line.
+  - Right edge is wrapped in `.fixedSize(horizontal: true, vertical: false)` and follows a `Spacer(minLength: 8)`, so a title that grows past the trailing edge truncates with `…` before it can shove the time/spinner off-screen. The trailing accessory is `CasperWorkspaceActivityIndicator`, which renders a 4-state activity model derived from cmux's hook-driven `Workspace.statusEntries` (see `CasperAgentActivity`):
+    - `working` → blue animated ellipsis (`Image(systemName: "ellipsis").symbolEffect(.variableColor.iterative, options: .repeating)`). Triggered when any agent status entry has a non-terminal value (e.g. Claude Code "Running", verbose tool description, Codex "Running").
+    - `needsInput` → blue relative-time. Triggered by an agent entry value matching "Needs input"/"Waiting", a codex-failure entry (red exclamation icon), or `notificationStore.unreadCount(forTabId:) > 0` while an agent entry is present.
+    - `done` → secondary-colored relative-time. Agent entry exists with value "Idle".
+    - `none` → hidden. No agent status entry — i.e. cmux's SessionEnd hook (Ctrl+C path) ran `clear_agent_pid … --clear-status`, or no agent has ever run in this workspace.
+  - Activity timestamp comes from `SidebarStatusEntry.timestamp` (set by cmux's CLI when the hook fires), promoted to `latestNotification.createdAt` if a newer notification exists in the `needsInput` branch. No file mtimes or JSONL crawls — the hook system already records authoritative state changes.
+  - The indicator uses `TimelineView(.periodic(from:.now, by: 1))` and re-reads the activity each tick so the relative-time text stays fresh without subscribing to `Workspace.objectWillChange` from inside a row body (which would violate the workspace-list snapshot-boundary rule).
+  - Workspace ordering: `workspaceRows` runs a stable sort over the filtered tab list before grouping (`CasperAgentActivity.compareActivityDesc`): pinned workspaces first, then most-recent activity first within each partition, with `.none` workspaces sinking to the bottom. Ties preserve original `tabManager` order so identical states don't jitter between renders.
+- Deletion condition:
+  - Delete if upstream cmux adds a first-class compact sidebar mode that drops auxiliary rows and shows last-activity inline.
+
 ### Sidebar footer trimmed to a settings entry point
 
 - Files (upstream files modified):

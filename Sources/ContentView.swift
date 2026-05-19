@@ -9215,6 +9215,12 @@ struct VerticalTabsSidebar: View {
     @ObservedObject private var keyboardShortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
     // CASPER: collapse state for workspace groups; delete if upstream adds workspace grouping.
     @ObservedObject private var workspaceGroupCollapseStore = CasperWorkspaceGroupCollapseStore.shared
+    // CASPER: off-main Claude JSONL activity snapshot; observed at the
+    // sidebar level so workspace re-sort fires when new dates arrive.
+    // Row subtrees must NOT observe this — they read activity via the
+    // precomputed dict passed through workspaceRows. Delete with the
+    // activity-state patch.
+    @ObservedObject private var claudeActivityStore = CasperClaudeActivityStore.shared
     // CASPER: workspace title search; delete if upstream adds workspace search.
     @State private var workspaceSearchQuery: String = ""
     @State private var draggedTabId: UUID?
@@ -9597,13 +9603,121 @@ struct VerticalTabsSidebar: View {
     private func workspaceRows(renderContext: WorkspaceListRenderContext) -> some View {
         // Workspaces are bounded, so prefer a non-lazy stack here.
         // LazyVStack + drag-state invalidations can recurse through layout.
-        VStack(spacing: tabRowSpacing) {
-            ForEach(renderContext.tabs, id: \.id) { tab in
-                workspaceRow(tab, renderContext: renderContext)
+        // CASPER: group rows by repo path. Headers always render (including
+        // the single-group and search-narrowed-to-one cases) so the
+        // collapsible group title is a stable affordance. Delete if upstream
+        // adds first-class workspace grouping.
+        // CASPER: filter by the workspace search query against the title shown in
+        // the row (activity glyph stripped). Empty query = all workspaces.
+        let filteredTabs = CasperWorkspaceTitleFilter.filter(
+            renderContext.tabs,
+            query: workspaceSearchQuery
+        )
+        // CASPER: sort by agent activity recency (pinned-first, then most-recent
+        // first; `.none` workspaces sink to the bottom). Stable sort preserves
+        // original order on ties so workspaces with identical state don't
+        // jitter on every status update. Delete with the activity-state patch.
+        //
+        // Precompute activity once per workspace before the sort. The
+        // comparator becomes a pure dict lookup, so we don't recompute
+        // activity O(N log N) times per render (the prior shape did, and
+        // the inline filesystem I/O in the recompute path produced 6s
+        // startup hangs — see watchdog stack `cmux-hang-sample-1478-*`).
+        let activityByID: [UUID: CasperWorkspaceActivity] = Dictionary(
+            uniqueKeysWithValues: filteredTabs.map { tab in
+                (tab.id, CasperAgentActivity.activity(for: tab, notificationStore: notificationStore))
+            }
+        )
+        let sortedTabs = filteredTabs.enumerated().sorted { lhs, rhs in
+            if CasperAgentActivity.compareActivityDesc(
+                lhs: lhs.element,
+                rhs: rhs.element,
+                activityByID: activityByID
+            ) {
+                return true
+            }
+            if CasperAgentActivity.compareActivityDesc(
+                lhs: rhs.element,
+                rhs: lhs.element,
+                activityByID: activityByID
+            ) {
+                return false
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+        let groups = CasperWorkspaceGroupResolver.groups(from: sortedTabs)
+        let withinGroupSpacing: CGFloat = 1
+        let betweenGroupSpacing: CGFloat = 14
+        let collapsedKeys = workspaceGroupCollapseStore.collapsedKeys
+        // CASPER: drive off-main Claude JSONL activity refresh. Per-workspace
+        // session paths sourced from `~/.cmuxterm/claude-hook-sessions.json`
+        // so each workspace's "last activity" comes from its own JSONLs,
+        // not every JSONL sharing the same cwd. `.task(id:)` re-fires when
+        // the set of visible workspaces changes.
+        let localWorkspaceIDs: Set<UUID> = Set(filteredTabs.map(\.id))
+        // Hoist the cross-workspace claimed-paths set out of the per-tab loop;
+        // without it `claudeJSONLPaths` rebuilds the same Set<String> N times
+        // per render.
+        let claimedJSONLPaths = CasperClaudeSessionMap.shared
+            .claimedJSONLPaths(forLocalWorkspaceIDs: localWorkspaceIDs)
+        let claudeNow = Date()
+        let claudeWorkspaceSessions: [UUID: [String]] = filteredTabs
+            .reduce(into: [UUID: [String]]()) { acc, tab in
+                let paths = CasperAgentActivity.claudeJSONLPaths(
+                    for: tab,
+                    precomputedClaimed: claimedJSONLPaths,
+                    now: claudeNow
+                )
+                if !paths.isEmpty { acc[tab.id] = paths }
+            }
+        return VStack(spacing: 0) {
+            ForEach(Array(groups.enumerated()), id: \.element.id) { offset, group in
+                let hasHeader = !group.displayName.isEmpty
+                let isCollapsed = hasHeader && collapsedKeys.contains(group.key)
+                VStack(spacing: withinGroupSpacing) {
+                    if hasHeader {
+                        CasperWorkspaceGroupHeader(
+                            displayName: group.displayName,
+                            isCollapsed: isCollapsed,
+                            onToggle: { [weak workspaceGroupCollapseStore] in
+                                workspaceGroupCollapseStore?.toggle(group.key)
+                            }
+                        )
+                    }
+                    if !isCollapsed {
+                        ForEach(group.workspaces, id: \.id) { tab in
+                            workspaceRow(
+                                tab,
+                                renderContext: renderContext,
+                                activity: activityByID[tab.id]
+                                    ?? CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
+                            )
+                        }
+                    }
+                }
+                .padding(.top, offset == 0 ? 0 : betweenGroupSpacing)
             }
         }
         .padding(.vertical, SidebarWorkspaceListMetrics.rowVerticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: claudeWorkspaceSessions) {
+            // Initial scan + periodic re-scan every 20s. The task is cancelled
+            // and restarted when `claudeWorkspaceSessions` changes (workspace
+            // appears/disappears, or a resume registers a new sessionId).
+            // The poll loop catches resumes that *reuse* the sessionId —
+            // path set unchanged, JSONL grows, id wouldn't otherwise refire.
+            while !Task.isCancelled {
+                #if DEBUG
+                cmuxDebugLog(
+                    "casper.claudeActivity.refresh.trigger count=\(claudeWorkspaceSessions.count)"
+                )
+                #endif
+                CasperClaudeActivityStore.shared.refresh(
+                    workspaceSessions: claudeWorkspaceSessions
+                )
+                try? await Task.sleep(for: .seconds(20))
+            }
+        }
         .overlayPreferenceValue(SidebarWorkspaceRowFramePreferenceKey.self) { anchors in
             GeometryReader { proxy in
                 SidebarBonsplitTabWorkspaceDropOverlay(
@@ -9664,7 +9778,8 @@ struct VerticalTabsSidebar: View {
 
     private func workspaceRow(
         _ tab: Workspace,
-        renderContext: WorkspaceListRenderContext
+        renderContext: WorkspaceListRenderContext,
+        activity: CasperWorkspaceActivity
     ) -> some View {
         let index = renderContext.tabIndexById[tab.id] ?? 0
         let usesSelectedContextMenuTargets = selectedTabIds.contains(tab.id)
@@ -9747,7 +9862,8 @@ struct VerticalTabsSidebar: View {
             contextMenuPinState: contextMenuPinState,
             settings: renderContext.tabItemSettings,
             livePresentation: livePresentation,
-            frozenPresentation: $frozenTabItemPresentation
+            frozenPresentation: $frozenTabItemPresentation,
+            casperActivity: activity
         )
         .equatable()
         .id(tab.id)
@@ -12046,7 +12162,8 @@ private struct TabItemView: View, Equatable {
         lhs.allRemoteContextMenuTargetsDisconnected == rhs.allRemoteContextMenuTargetsDisconnected &&
         lhs.allContextMenuWorkspacesHideTerminalScrollBar == rhs.allContextMenuWorkspacesHideTerminalScrollBar &&
         lhs.contextMenuPinState == rhs.contextMenuPinState &&
-        lhs.settings == rhs.settings
+        lhs.settings == rhs.settings &&
+        lhs.casperActivity == rhs.casperActivity
     }
 
     // Use plain references instead of @EnvironmentObject to avoid subscribing
@@ -12081,6 +12198,12 @@ private struct TabItemView: View, Equatable {
     let settings: SidebarTabItemSettingsSnapshot
     let livePresentation: SidebarTabItemPresentationSnapshot
     @Binding var frozenPresentation: SidebarTabItemPresentationSnapshot?
+    // CASPER: precomputed per-row activity snapshot from the sidebar parent
+    // (which observes CasperClaudeActivityStore). Passing it down as a plain
+    // value keeps the row a non-observer so the snapshot-boundary rule holds
+    // while still letting the row re-render when activity changes (it's in
+    // the Equatable ==). Delete with the compact-row patch.
+    let casperActivity: CasperWorkspaceActivity
     @State private var workspaceSnapshotStorage: SidebarWorkspaceSnapshotBuilder.Snapshot?
     @StateObject private var contextMenuState = SidebarTabItemContextMenuState()
     @State private var rowInteractionState = SidebarWorkspaceRowInteractionState()
@@ -12318,14 +12441,10 @@ private struct TabItemView: View, Equatable {
 
     var body: some View {
         let workspaceSnapshot = self.workspaceSnapshot
-        let closeWorkspaceTooltip = String(localized: "sidebar.closeWorkspace.tooltip", defaultValue: "Close Workspace")
         let protectedWorkspaceTooltip = String(
             localized: "sidebar.pinnedWorkspaceProtected.tooltip",
             defaultValue: "Pinned workspace. Closing requires confirmation."
         )
-        let closeButtonTooltip = workspaceSnapshot.isPinned
-            ? protectedWorkspaceTooltip
-            : KeyboardShortcutSettings.Action.closeWorkspace.tooltip(closeWorkspaceTooltip)
         let accessibilityHintText = String(localized: "sidebar.workspace.accessibilityHint", defaultValue: "Activate to focus this workspace. Drag to reorder, or use Move Up and Move Down actions.")
         let moveUpActionText = String(localized: "sidebar.workspace.moveUpAction", defaultValue: "Move Up")
         let moveDownActionText = String(localized: "sidebar.workspace.moveDownAction", defaultValue: "Move Down")
@@ -12339,10 +12458,24 @@ private struct TabItemView: View, Equatable {
             : nil
         let effectiveSubtitle = latestNotificationSubtitle ?? submittedMessageSubtitle
         let detailVisibility = visibleAuxiliaryDetails
+        // CASPER: compact one-line workspace rows with relative-time activity on
+        // the right; hides description/subtitle/metadata/branch-dir/PRs/ports.
+        // Delete if upstream adds a first-class compact sidebar mode.
+        let isCasperCompact = CasperBuildEnvironment.isBranded
+        // CASPER: 4-state activity passed in from the sidebar parent (which
+        // precomputes it once per render and observes the off-main JSONL
+        // store). Closure form preserved so CasperWorkspaceActivityIndicator
+        // doesn't need restructuring. Delete with the compact-row patch.
+        let casperActivity = self.casperActivity
+        let casperActivityProvider: () -> CasperWorkspaceActivity = { casperActivity }
 
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                if unreadCount > 0 {
+            HStack(spacing: isCasperCompact ? 5 : 8) {
+                // CASPER: leading close button aligned with workspace-group chevron
+                // column at x≈10. Delete with the compact-row patch.
+                if isCasperCompact {
+                    sidebarCloseButton(width: 10)
+                } else if unreadCount > 0 {
                     ZStack {
                         Circle()
                             .fill(activeUnreadBadgeFillColor)
@@ -12360,45 +12493,71 @@ private struct TabItemView: View, Equatable {
                         .safeHelp(protectedWorkspaceTooltip)
                 }
 
-                Text(workspaceSnapshot.title)
-                    .font(.system(size: 12.5, weight: titleFontWeight))
+                // CASPER: strip leading agent activity glyph (Claude Code's ✱, plain *, etc.)
+                // and unbold in compact mode. Delete with the compact-row patch.
+                Text(isCasperCompact
+                     ? CasperWorkspaceTitle.displayTitle(workspaceSnapshot.title)
+                     : workspaceSnapshot.title)
+                    .font(.system(size: 12.5, weight: isCasperCompact ? .regular : titleFontWeight))
                     .foregroundColor(activePrimaryTextColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: isCasperCompact ? 8 : 0)
 
-                ZStack(alignment: .trailing) {
-                    Button(action: {
-                        #if DEBUG
-                        cmuxDebugLog("sidebar.close workspace=\(tab.id.uuidString.prefix(5)) method=button")
-                        #endif
-                        tabManager.closeWorkspaceWithConfirmation(tab)
-                    }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(activeSecondaryColor(0.7))
+                // CASPER: right edge. Blue ellipsis while the agent is working
+                // (title-glyph present); blue relative-time when it needs user
+                // input (unread > 0 with no glyph); otherwise secondary-colored
+                // relative-time. `.fixedSize` pins the column so title truncation
+                // can't push it off the trailing edge. The shortcut-hint pill
+                // (⌘1, ⌘2, …) is overlaid on this element so it shares the same
+                // trailing anchor as the non-compact path — without that anchor
+                // a bare-sibling pill would widen the HStack and push the title
+                // left while Cmd is held.
+                // Delete with the compact-row patch.
+                if isCasperCompact {
+                    CasperWorkspaceActivityIndicator(
+                        activityProvider: casperActivityProvider,
+                        workingFont: .system(size: 11, weight: .regular),
+                        timeFont: .system(size: 10, weight: .regular),
+                        doneColor: activeSecondaryColor(0.65),
+                        selectedColor: usesInvertedActiveForeground ? activePrimaryTextColor : nil
+                    )
+                    .fixedSize(horizontal: true, vertical: false)
+                    .opacity(showsWorkspaceShortcutHint ? 0 : 1)
+                    .overlay(alignment: .trailing) {
+                        if showsWorkspaceShortcutHint, let workspaceShortcutLabel {
+                            ShortcutHintPill(text: workspaceShortcutLabel, fontSize: 10, emphasis: shortcutHintEmphasis)
+                                .offset(
+                                    x: ShortcutHintDebugSettings.clamped(sidebarShortcutHintXOffset),
+                                    y: ShortcutHintDebugSettings.clamped(sidebarShortcutHintYOffset)
+                                )
+                                .shortcutHintTransition()
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .safeHelp(closeButtonTooltip)
-                    .frame(width: SidebarTrailingAccessoryWidthPolicy.closeButtonWidth, height: 16, alignment: .center)
-                    .opacity(showCloseButton && !showsWorkspaceShortcutHint ? 1 : 0)
-                    .allowsHitTesting(showCloseButton && !showsWorkspaceShortcutHint)
+                    .shortcutHintVisibilityAnimation(value: showsWorkspaceShortcutHint)
+                } else {
+                    ZStack(alignment: .trailing) {
+                        sidebarCloseButton(width: SidebarTrailingAccessoryWidthPolicy.closeButtonWidth)
 
-                    if showsWorkspaceShortcutHint, let workspaceShortcutLabel {
-                        ShortcutHintPill(text: workspaceShortcutLabel, fontSize: 10, emphasis: shortcutHintEmphasis)
-                            .offset(
-                                x: ShortcutHintDebugSettings.clamped(sidebarShortcutHintXOffset),
-                                y: ShortcutHintDebugSettings.clamped(sidebarShortcutHintYOffset)
-                            )
-                            .shortcutHintTransition()
+                        if showsWorkspaceShortcutHint, let workspaceShortcutLabel {
+                            ShortcutHintPill(text: workspaceShortcutLabel, fontSize: 10, emphasis: shortcutHintEmphasis)
+                                .offset(
+                                    x: ShortcutHintDebugSettings.clamped(sidebarShortcutHintXOffset),
+                                    y: ShortcutHintDebugSettings.clamped(sidebarShortcutHintYOffset)
+                                )
+                                .shortcutHintTransition()
+                        }
                     }
+                    .shortcutHintVisibilityAnimation(value: showsWorkspaceShortcutHint)
+                    .frame(width: trailingAccessoryWidth, height: 16, alignment: .trailing)
                 }
-                .shortcutHintVisibilityAnimation(value: showsWorkspaceShortcutHint)
-                .frame(width: trailingAccessoryWidth, height: 16, alignment: .trailing)
             }
 
+            // CASPER: hide all below-title sub-rows in compact mode.
+            // Delete with the compact-row patch in CasperCompactWorkspaceRow.swift.
+            if !isCasperCompact {
             if let description = workspaceSnapshot.customDescription {
                 SidebarWorkspaceDescriptionText(
                     markdown: description,
@@ -12578,12 +12737,17 @@ private struct TabItemView: View, Equatable {
                 .foregroundColor(activeSecondaryColor(0.75))
                 .lineLimit(1)
             }
+            } // CASPER: end !isCasperCompact gate around below-title sub-rows.
         }
         .animation(.easeInOut(duration: 0.2), value: workspaceSnapshot.latestLog)
         .animation(.easeInOut(duration: 0.2), value: workspaceSnapshot.progress != nil)
         .animation(.easeInOut(duration: 0.2), value: workspaceSnapshot.metadataBlocks.count)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        // CASPER: align the leading close-slot with the workspace-group chevron
+        // (chevron col x=10..20), and let the title fall into the folder-icon
+        // column at x=25 (outer 6 + inner 4 + close-slot 10w + spacing 5 = 25).
+        .padding(.leading, isCasperCompact ? 4 : 10)
+        .padding(.trailing, 10)
+        .padding(.vertical, isCasperCompact ? 4 : 8)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(backgroundColor)
@@ -13759,6 +13923,34 @@ private struct TabItemView: View, Equatable {
         tabManager.selectTab(tab)
         setSelectionToTabs()
         _ = AppDelegate.shared?.requestEditWorkspaceDescriptionViaCommandPalette()
+    }
+
+    @ViewBuilder
+    private func sidebarCloseButton(width: CGFloat) -> some View {
+        let closeWorkspaceTooltip = String(localized: "sidebar.closeWorkspace.tooltip", defaultValue: "Close Workspace")
+        let protectedWorkspaceTooltip = String(
+            localized: "sidebar.pinnedWorkspaceProtected.tooltip",
+            defaultValue: "Pinned workspace. Closing requires confirmation."
+        )
+        let tooltip = workspaceSnapshot.isPinned
+            ? protectedWorkspaceTooltip
+            : KeyboardShortcutSettings.Action.closeWorkspace.tooltip(closeWorkspaceTooltip)
+        let visible = showCloseButton && !showsWorkspaceShortcutHint
+        Button(action: {
+            #if DEBUG
+            cmuxDebugLog("sidebar.close workspace=\(tab.id.uuidString.prefix(5)) method=button")
+            #endif
+            tabManager.closeWorkspaceFromSidebarCloseButton(tab)
+        }) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(activeSecondaryColor(0.7))
+        }
+        .buttonStyle(.plain)
+        .safeHelp(tooltip)
+        .frame(width: width, height: 16, alignment: .center)
+        .opacity(visible ? 1 : 0)
+        .allowsHitTesting(visible)
     }
 }
 

@@ -121,7 +121,39 @@ enum CasperAgentActivity {
     /// Paths are sorted so identical sets hash identically for that dedup.
     static func claudeJSONLPaths(
         for workspace: Workspace,
-        localWorkspaceIDs: Set<UUID>
+        precomputedClaimed: Set<String>,
+        now: Date = Date()
+    ) -> [String] {
+        // Memoize per-workspace because this is called from SwiftUI body
+        // (VerticalTabsSidebar.workspaceRows) on every re-eval — N=48 tabs
+        // × per-call directory iteration + sort was burning ~7s of every
+        // 17s body re-eval cycle. Key includes everything the body actually
+        // depends on; TTL covers the `liveCutoff` mtime transition that
+        // isn't part of the key.
+        let key = CasperClaudeJSONLPathsCache.Key(
+            hookVersion: CasperClaudeSessionMap.shared.mapVersion,
+            currentDir: workspace.currentDirectory,
+            panelDirsHash: workspace.panelDirectories.values.sorted().hashValue,
+            agentPIDsCount: workspace.agentPIDs.count,
+            snapshotsEmpty: workspace.restoredAgentSnapshotsByPanelId.isEmpty,
+            claimedCount: precomputedClaimed.count
+        )
+        if let cached = CasperClaudeJSONLPathsCache.lookup(workspaceId: workspace.id, key: key, now: now) {
+            return cached
+        }
+        let result = computeClaudeJSONLPaths(
+            for: workspace,
+            precomputedClaimed: precomputedClaimed,
+            now: now
+        )
+        CasperClaudeJSONLPathsCache.store(workspaceId: workspace.id, key: key, value: result, now: now)
+        return result
+    }
+
+    private static func computeClaudeJSONLPaths(
+        for workspace: Workspace,
+        precomputedClaimed: Set<String>,
+        now: Date
     ) -> [String] {
         let hookPaths = CasperClaudeSessionMap.shared.jsonlPaths(forWorkspaceID: workspace.id)
         if !hookPaths.isEmpty { return hookPaths.sorted() }
@@ -140,27 +172,15 @@ enum CasperAgentActivity {
             if !trimmed.isEmpty { cwds.insert(trimmed) }
         }
         // Exclude (a) JSONLs claimed by another *local* workspace's hook
-        // record — those belong to that sibling, not this one — and (b)
-        // JSONLs currently being written (mtime within last 120s, i.e. "live"
-        // sessions like the user's current Claude conversation). Without (b)
-        // every shared-cwd workspace inherits the live session's "<1m"
-        // timestamp. 120s balances "ongoing turn pause" against the inverse
-        // regression where a workspace's own just-finished JSONL gets
-        // suppressed for the full cutoff when its hook record was already
-        // consumed.
-        //
-        // Scoping to *local* IDs matters because the hook file is shared
-        // across bundle IDs (Casper Preview / pinned Casper / dev cmux); a
-        // record for some other app's workspace must not hide a JSONL that
-        // this app has no other way to surface.
-        let claimed = CasperClaudeSessionMap.shared
-            .claimedJSONLPaths(forLocalWorkspaceIDs: localWorkspaceIDs)
-        let now = Date()
+        // record (caller passes `precomputedClaimed` so we don't rebuild that
+        // set per workspace) and (b) JSONLs currently being written (mtime
+        // within last 120s, i.e. "live" sessions like the user's current
+        // Claude conversation).
         let liveCutoff: TimeInterval = 120
         var allPaths: [String] = []
         for cwd in cwds {
             for path in CasperClaudeProjectDirMap.shared.jsonlPaths(forCwd: cwd) {
-                if claimed.contains(path) { continue }
+                if precomputedClaimed.contains(path) { continue }
                 if let mtime = CasperFileMtimeCache.mtime(for: path, now: now),
                    now.timeIntervalSince(mtime) < liveCutoff {
                     continue
@@ -269,6 +289,15 @@ final class CasperClaudeSessionMap {
         return cached?.map[id] ?? []
     }
 
+    /// Stable identity of the current cached map; changes only when the hook
+    /// file is reparsed (session register/clear). Cheap to call — refresh is
+    /// already gated by `stalenessCheckTTL`. Used as a memoization version
+    /// key by downstream callers in view body.
+    var mapVersion: TimeInterval {
+        refreshIfStale()
+        return cached?.mtime.timeIntervalSinceReferenceDate ?? 0
+    }
+
     /// Paths claimed by the given set of *local* workspaces' hook records.
     /// The cwd fallback uses this to skip JSONLs that already belong to a
     /// known local workspace — without it, that workspace's session timestamp
@@ -348,6 +377,45 @@ enum CasperFileMtimeCache {
         let mtime = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
         cache[path] = (now, mtime)
         return mtime
+    }
+}
+
+/// Per-workspace memoization of `CasperAgentActivity.claudeJSONLPaths`.
+/// The function runs inside `VerticalTabsSidebar.workspaceRows`' reduce on
+/// every body re-eval (driven by the 20s `latestActivityByWorkspace`
+/// publish). Without this cache, each tab's directory iteration + sort
+/// added up to ~7s of every 17s body cycle for 48 open workspaces.
+@MainActor
+enum CasperClaudeJSONLPathsCache {
+    struct Key: Hashable {
+        let hookVersion: TimeInterval
+        let currentDir: String
+        let panelDirsHash: Int
+        let agentPIDsCount: Int
+        let snapshotsEmpty: Bool
+        let claimedCount: Int
+    }
+    private struct Entry {
+        let key: Key
+        let value: [String]
+        let computedAt: Date
+    }
+    private static var entries: [UUID: Entry] = [:]
+    /// Short window so a JSONL crossing the 120s `liveCutoff` boundary
+    /// (which isn't part of the key) surfaces within ~3s. The cache exists
+    /// to coalesce body re-eval bursts, not to suppress real updates.
+    private static let ttl: TimeInterval = 3.0
+
+    static func lookup(workspaceId: UUID, key: Key, now: Date) -> [String]? {
+        guard let entry = entries[workspaceId],
+              entry.key == key,
+              now.timeIntervalSince(entry.computedAt) < ttl
+        else { return nil }
+        return entry.value
+    }
+
+    static func store(workspaceId: UUID, key: Key, value: [String], now: Date) {
+        entries[workspaceId] = Entry(key: key, value: value, computedAt: now)
     }
 }
 
@@ -496,9 +564,16 @@ final class CasperClaudeActivityStore: ObservableObject {
     }
 
     private static func persist(_ dict: [UUID: Date]) {
+        // Keep the on-disk cache bounded — over months of use this dict
+        // accumulates an entry per workspace ever seen across forks; only the
+        // most-recently-active matter for cold-start paint.
+        let maxPersistedEntries = 200
+        let trimmed: [(UUID, Date)] = dict.count <= maxPersistedEntries
+            ? Array(dict)
+            : dict.sorted { $0.value > $1.value }.prefix(maxPersistedEntries).map { ($0.key, $0.value) }
         var raw: [String: String] = [:]
-        raw.reserveCapacity(dict.count)
-        for (id, date) in dict {
+        raw.reserveCapacity(trimmed.count)
+        for (id, date) in trimmed {
             raw[id.uuidString] = casperISO8601Formatter.string(from: date)
         }
         guard let data = try? JSONSerialization.data(withJSONObject: raw) else { return }
@@ -549,16 +624,27 @@ final class CasperClaudeActivityStore: ObservableObject {
                 for id in toRefresh.keys {
                     self.inFlightWorkspaces.remove(id)
                 }
+                // Stage mutations into a local copy and assign back ONCE.
+                // Mutating `self.latestActivityByWorkspace[id]` per entry fires
+                // `objectWillChange` per write — at 50 workspaces all returning
+                // new dates from a single poll, that's 50 synchronous publish
+                // calls before the loop ends. SwiftUI coalesces into one body
+                // re-eval, but the publish-storm is still wasted CPU on the
+                // hot main-thread loop. One assignment = one publish.
+                var snapshot = self.latestActivityByWorkspace
                 var changed = false
                 for (id, date) in results {
                     if let date {
-                        if self.latestActivityByWorkspace[id] != date {
-                            self.latestActivityByWorkspace[id] = date
+                        if snapshot[id] != date {
+                            snapshot[id] = date
                             changed = true
                         }
-                    } else if self.latestActivityByWorkspace.removeValue(forKey: id) != nil {
+                    } else if snapshot.removeValue(forKey: id) != nil {
                         changed = true
                     }
+                }
+                if changed {
+                    self.latestActivityByWorkspace = snapshot
                 }
                 #if DEBUG
                 cmuxDebugLog(
@@ -637,9 +723,53 @@ enum CasperClaudeActivityIO {
     private static func latestRealActivity(forJSONLPath path: String) -> Date? {
         let fm = FileManager.default
         guard let attrs = try? fm.attributesOfItem(atPath: path),
-              let size = (attrs[.size] as? NSNumber)?.int64Value
+              let size = (attrs[.size] as? NSNumber)?.int64Value,
+              let mtime = (attrs[.modificationDate] as? Date)
         else { return nil }
-        return parseLatestRealActivity(path: path, size: size)
+        // JSONLs are append-only; (size, mtime) is a tight cache key. Skips
+        // the 256KB tail read + grapheme scan on every 20s poll for files
+        // that haven't changed since we last parsed them.
+        if let cached = LatestActivityCache.lookup(path: path, size: size, mtime: mtime) {
+            return cached
+        }
+        let parsed = parseLatestRealActivity(path: path, size: size)
+        LatestActivityCache.store(path: path, size: size, mtime: mtime, value: parsed)
+        return parsed
+    }
+
+    /// Thread-safe cache keyed on (path, size, mtime). Reads/writes happen
+    /// from `computeActivities`' `DispatchQueue.concurrentPerform`, so the
+    /// lock is required.
+    private enum LatestActivityCache {
+        private struct Entry {
+            let size: Int64
+            let mtime: Date
+            let value: Date?
+        }
+        private static var entries: [String: Entry] = [:]
+        private static let lock = NSLock()
+        private static let maxEntries = 1024
+
+        static func lookup(path: String, size: Int64, mtime: Date) -> Date?? {
+            lock.lock(); defer { lock.unlock() }
+            guard let e = entries[path], e.size == size, e.mtime == mtime else {
+                return nil
+            }
+            return .some(e.value)
+        }
+
+        static func store(path: String, size: Int64, mtime: Date, value: Date?) {
+            lock.lock(); defer { lock.unlock() }
+            if entries.count >= maxEntries, entries[path] == nil {
+                // Drop oldest-mtime entries to keep the cache bounded. A
+                // simple half-size sweep is cheap and rare.
+                let kept = entries
+                    .sorted { $0.value.mtime > $1.value.mtime }
+                    .prefix(maxEntries / 2)
+                entries = Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
+            }
+            entries[path] = Entry(size: size, mtime: mtime, value: value)
+        }
     }
 
     private static func parseLatestRealActivity(path: String, size: Int64) -> Date? {
@@ -655,10 +785,8 @@ enum CasperClaudeActivityIO {
         } catch { return nil }
         guard let data = try? handle.readToEnd(), !data.isEmpty else { return nil }
 
-        // Byte-level newline scan. The previous implementation used
-        // `String.split(separator: "\n")` over a 256KB Swift String, which
-        // pays Character (grapheme) iteration cost for every byte and was
-        // the dominant frame in the startup hang (1071/1317 samples).
+        // Byte-level newline scan — `String.split` over a 256KB Swift String
+        // pays grapheme-iteration cost per byte, which is too expensive here.
         var lineRanges: [Range<Int>] = []
         let count = data.count
         data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
