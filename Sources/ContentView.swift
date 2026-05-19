@@ -9605,7 +9605,7 @@ struct VerticalTabsSidebar: View {
             text: $workspaceSearchQuery,
             placeholder: String(
                 localized: "sidebar.workspaceSearch.placeholder",
-                defaultValue: "Search workspaces"
+                defaultValue: "Search sessions"
             )
         )
         .frame(height: workspaceSearchBarFieldHeight)
@@ -9621,12 +9621,20 @@ struct VerticalTabsSidebar: View {
         // the single-group and search-narrowed-to-one cases) so the
         // collapsible group title is a stable affordance. Delete if upstream
         // adds first-class workspace grouping.
-        // CASPER: filter by the workspace search query against the title shown in
-        // the row (activity glyph stripped). Empty query = all workspaces.
-        let filteredTabs = CasperWorkspaceTitleFilter.filter(
-            renderContext.tabs,
-            query: workspaceSearchQuery
-        )
+        // CASPER: filter by the workspace search query against the title
+        // shown in the row (activity glyph stripped). In compact mode each
+        // row is a panel, so the query must match per-panel titles —
+        // pre-filtering on workspace.title would hide panels whose own
+        // title matches while the workspace's focused-panel title doesn't.
+        // The panel-level filter happens after entries are built below.
+        // Empty query = all workspaces.
+        let isCasperCompactSidebar = CasperBuildEnvironment.isBranded
+        let filteredTabs: [Workspace] = isCasperCompactSidebar
+            ? renderContext.tabs
+            : CasperWorkspaceTitleFilter.filter(
+                renderContext.tabs,
+                query: workspaceSearchQuery
+            )
         // CASPER: sort by agent activity recency (pinned-first, then most-recent
         // first; `.none` workspaces sink to the bottom). Stable sort preserves
         // original order on ties so workspaces with identical state don't
@@ -9659,7 +9667,43 @@ struct VerticalTabsSidebar: View {
             }
             return lhs.offset < rhs.offset
         }.map(\.element)
-        let groups = CasperWorkspaceGroupResolver.groups(from: sortedTabs)
+        // CASPER: compact sidebar is panel-keyed; non-compact stays workspace-keyed.
+        // Delete the non-compact branch if upstream adopts per-panel rows.
+        // `workspacesById` is only read by the non-compact branch — skip the
+        // dictionary allocation entirely in compact mode (the shipping path).
+        let workspacesById: [UUID: Workspace] = isCasperCompactSidebar
+            ? [:]
+            : Dictionary(uniqueKeysWithValues: sortedTabs.map { ($0.id, $0) })
+        let rawPanelEntries: [CasperSidebarPanelEntry] = isCasperCompactSidebar
+            ? CasperSidebarPanelEntryBuilder.entries(
+                from: sortedTabs,
+                selectedWorkspaceId: tabManager.selectedTabId,
+                activityByWorkspaceId: activityByID
+            )
+            : CasperSidebarPanelEntryBuilder.workspaceRowEntries(
+                from: sortedTabs,
+                selectedWorkspaceId: tabManager.selectedTabId,
+                activityByWorkspaceId: activityByID
+            )
+        let panelEntries: [CasperSidebarPanelEntry] = isCasperCompactSidebar
+            ? CasperSidebarPanelEntryBuilder.filter(
+                rawPanelEntries,
+                query: workspaceSearchQuery
+            )
+            : rawPanelEntries
+        // First panel row encountered per workspace owns the workspace-level
+        // SwiftUI preference anchors (drag-drop targets + scroll-to-selected).
+        // Without this every workspace would either lose its anchor (only
+        // last row wins via the merge) or every panel row would emit the
+        // same anchor (last write wins arbitrarily).
+        var firstEntryIdsPerWorkspace: Set<UUID> = []
+        do {
+            var seen: Set<UUID> = []
+            for entry in panelEntries where seen.insert(entry.key.workspaceId).inserted {
+                firstEntryIdsPerWorkspace.insert(entry.id)
+            }
+        }
+        let groups = CasperWorkspaceGroupResolver.groups(from: panelEntries)
         let withinGroupSpacing: CGFloat = 1
         let betweenGroupSpacing: CGFloat = 14
         let collapsedKeys = workspaceGroupCollapseStore.collapsedKeys
@@ -9697,25 +9741,75 @@ struct VerticalTabsSidebar: View {
         )
         return VStack(spacing: 0) {
             ForEach(Array(groups.enumerated()), id: \.element.id) { offset, group in
-                let hasHeader = !group.displayName.isEmpty
-                let isCollapsed = hasHeader && collapsedKeys.contains(group.key)
-                VStack(spacing: withinGroupSpacing) {
-                    if hasHeader {
-                        CasperWorkspaceGroupHeader(
-                            displayName: group.displayName,
-                            isCollapsed: isCollapsed,
-                            onToggle: { [weak workspaceGroupCollapseStore] in
-                                workspaceGroupCollapseStore?.toggle(group.key)
-                            }
-                        )
+                let isCollapsed = !group.displayName.isEmpty
+                    && collapsedKeys.contains(group.key)
+                CasperWorkspaceGroupSection(
+                    displayName: group.displayName,
+                    isCollapsed: isCollapsed,
+                    withinGroupSpacing: withinGroupSpacing,
+                    onToggle: { [weak workspaceGroupCollapseStore] in
+                        workspaceGroupCollapseStore?.toggle(group.key)
+                    },
+                    onAddWorkspace: { [weak tabManager] in
+                        guard let tabManager else { return }
+                        // CASPER: empty key = "Other" bucket (no resolved repo
+                        // root or cwd yet); fall through to the default working
+                        // directory by passing nil rather than an empty string.
+                        let workingDirectory = group.key.isEmpty ? nil : group.key
+                        _ = tabManager.addWorkspace(workingDirectory: workingDirectory)
                     }
-                    if !isCollapsed {
-                        ForEach(group.workspaces, id: \.id) { tab in
+                ) {
+                    ForEach(group.entries, id: \.id) { entry in
+                        if isCasperCompactSidebar {
+                            let ownsWorkspaceAnchor = firstEntryIdsPerWorkspace.contains(entry.id)
+                            let workspaceId = entry.key.workspaceId
+                            CasperSidebarPanelRow(
+                                entry: entry,
+                                onSelect: { [weak tabManager] in
+                                    guard let tabManager,
+                                          let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
+                                    else { return }
+                                    tabManager.selectTab(workspace)
+                                    workspace.focusPanel(entry.key.panelId)
+                                },
+                                onClose: { [weak tabManager] in
+                                    guard let tabManager,
+                                          let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
+                                    else { return }
+                                    // Last panel closure falls through to
+                                    // confirmation-aware workspace close so we
+                                    // don't strand an empty workspace.
+                                    if workspace.panels.count <= 1 {
+                                        _ = tabManager.closeWorkspaceFromSidebarCloseButton(workspace)
+                                    } else {
+                                        _ = workspace.closePanel(entry.key.panelId)
+                                    }
+                                }
+                            )
+                            // Anchor-owning row claims the workspace UUID as
+                            // its SwiftUI explicit identity so
+                            // `ScrollViewProxy.scrollTo(selectedWorkspaceId)`
+                            // (`flushPendingSelectedWorkspaceScroll`) resolves
+                            // to a real row. Non-anchor panel rows keep their
+                            // panel UUID identity. Workspace and panel UUIDs
+                            // come from independent pools — collisions in
+                            // practice would require a UUID birthday miracle.
+                            .id(ownsWorkspaceAnchor ? workspaceId : entry.id)
+                            .preference(
+                                key: SidebarWorkspaceRowIdsPreferenceKey.self,
+                                value: ownsWorkspaceAnchor ? Set([workspaceId]) : []
+                            )
+                            .anchorPreference(
+                                key: SidebarWorkspaceRowFramePreferenceKey.self,
+                                value: .bounds
+                            ) { anchor in
+                                ownsWorkspaceAnchor ? [workspaceId: anchor] : [:]
+                            }
+                        } else if let tab = workspacesById[entry.key.workspaceId] {
                             workspaceRow(
                                 tab,
                                 renderContext: renderContext,
-                                activity: activityByID[tab.id]
-                                    ?? CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
+                                activity: entry.activity
                             )
                         }
                     }

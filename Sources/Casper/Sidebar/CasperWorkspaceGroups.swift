@@ -1,13 +1,71 @@
-// CASPER: workspace sidebar grouping by repo path.
-// Delete if upstream adds first-class workspace grouping in the sidebar.
+// CASPER: per-panel sidebar entries grouped by repo path.
+//
+// History: this file originally produced one sidebar row per workspace.
+// Switching panels inside a multi-panel workspace would rewrite the workspace
+// title in the sidebar, and concurrent agent sessions in the same workspace
+// couldn't be monitored side-by-side. The list is now panel-keyed: every
+// terminal/browser/markdown/file-preview panel produces its own row, sorted
+// by activity and grouped by the repo root of the panel's own working
+// directory.
+//
+// Delete if upstream adds first-class per-panel rows in the sidebar.
 
 import Foundation
 import SwiftUI
 
+// MARK: - Panel sidebar entry
+
+/// Identifies a row in the panel-keyed sidebar. `panelId` alone is unique
+/// across the running app, but we carry the workspace id so callers don't
+/// have to walk every workspace to resolve actions against the row.
+struct CasperSidebarPanelKey: Hashable, Sendable {
+    let workspaceId: UUID
+    let panelId: UUID
+}
+
+/// Immutable value snapshot of a single panel for the sidebar. The sidebar
+/// builds these from `[Workspace]` once per body re-eval; rows MUST NOT hold
+/// a reference to the underlying `Workspace` (snapshot-boundary rule —
+/// `Sources/SessionIndexView.swift` for the reference pattern, GH #2586 for
+/// the spin-loop incident the rule prevents).
+struct CasperSidebarPanelEntry: Identifiable, Equatable, Sendable {
+    let key: CasperSidebarPanelKey
+    /// Title to render, with the leading agent-activity glyph stripped.
+    let displayTitle: String
+    /// Raw title before glyph stripping — used for accessibility and the
+    /// activity-glyph fallback that other tools rely on.
+    let rawTitle: String
+    /// Repo-root path computed from this panel's working directory.
+    /// Empty when the panel hasn't reported a cwd yet.
+    let groupKey: String
+    /// True when this entry's workspace is the one currently selected in the
+    /// sidebar (drives the chrome's primary highlight).
+    let isWorkspaceSelected: Bool
+    /// True when this entry's panel is the focused panel inside its
+    /// workspace's split tree. Combined with `isWorkspaceSelected` this is
+    /// the "selected row" predicate.
+    let isPanelFocused: Bool
+    /// Mirrors `workspace.isPinned`. Pin remains a workspace-level concept
+    /// for v1 — pinning a workspace floats all its panels above the
+    /// activity-sorted region.
+    let isPinned: Bool
+    /// Workspace-level activity. Every panel row in a workspace currently
+    /// surfaces the same value; per-panel attribution is the planned
+    /// follow-up.
+    let activity: CasperWorkspaceActivity
+    /// Sort tiebreaker so panels inside the same workspace keep a stable
+    /// in-list position when their activity ties (the common case for v1).
+    let withinWorkspaceOrder: Int
+
+    var id: UUID { key.panelId }
+}
+
+// MARK: - Group model
+
 struct CasperWorkspaceGroup: Identifiable {
     let key: String
     let displayName: String
-    let workspaces: [Workspace]
+    let entries: [CasperSidebarPanelEntry]
     var id: String { key }
 }
 
@@ -20,24 +78,36 @@ enum CasperWorkspaceGroupResolver {
 
     // Standardized once at process start so the per-keystroke `groupKey` loop
     // doesn't redo `URL.standardizedFileURL` (a symlink-resolving syscall)
-    // for every workspace.
+    // for every panel.
     private static let homeKey: String = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
 
-    /// Resolve the workspace's group from the repo roots of all its panels.
-    /// - Panels whose resolved key is the user's home directory are treated as
-    ///   "neutral" — new splits often default to `~`, and a workspace already
-    ///   anchored to a real repo shouldn't reclassify just because the user
-    ///   opened more terminals.
-    /// - Among the non-neutral panels, the highest-count repo root wins; ties
-    ///   break alphabetically by repo root for stability (so a 1:1 split across
-    ///   repos doesn't bounce on focus changes).
-    /// - If every panel is in `~`, home is the group.
-    /// - Falls back to `currentDirectory` only when no panel has reported a cwd
-    ///   yet (early lifecycle, before any OSC 7).
-    ///
-    /// Reading panel directories (not focused-panel-only) is what stops the
-    /// workspace from jumping between groups when the user shifts focus between
-    /// two panels in different repos.
+    /// Resolve a single panel's group key from its own working directory,
+    /// falling back to the workspace's `currentDirectory` only when the panel
+    /// itself hasn't reported a cwd yet (e.g. before its first OSC 7). A
+    /// panel in `~` resolves to home — same as before, but per-panel rather
+    /// than aggregated across the workspace.
+    static func groupKey(forPanel panelId: UUID, in workspace: Workspace) -> String {
+        let panelDir = workspace.panelDirectories[panelId]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fallback = workspace.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dir = panelDir.isEmpty ? fallback : panelDir
+        guard !dir.isEmpty else { return "" }
+        let raw: String
+        if let root = repoRoot(forDirectory: dir) {
+            raw = root
+        } else {
+            raw = URL(fileURLWithPath: dir).standardizedFileURL.path
+        }
+        if raw.count > 1, raw.hasSuffix("/") {
+            return String(raw.dropLast())
+        }
+        return raw
+    }
+
+    /// Aggregate group key for a workspace. Kept for callers (notification
+    /// re-sort insertion point, etc.) that still bucket a whole workspace.
+    /// Reads panel directories so a workspace doesn't bounce groups when
+    /// focus shifts between two panels in different repos.
     static func groupKey(for workspace: Workspace) -> String {
         var directories: [String] = workspace.panelDirectories.values.compactMap { dir in
             let trimmed = dir.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,10 +128,6 @@ enum CasperWorkspaceGroupResolver {
             } else {
                 raw = URL(fileURLWithPath: dir).standardizedFileURL.path
             }
-            // Strip a single trailing slash so `/foo/bar` and `/foo/bar/`
-            // never bucket as distinct keys. `URL.path` already does this
-            // for non-root paths, but normalize defensively in case the
-            // source ever changes.
             if raw.count > 1, raw.hasSuffix("/") {
                 return String(raw.dropLast())
             }
@@ -95,9 +161,6 @@ enum CasperWorkspaceGroupResolver {
     /// Private so the precondition "no duplicate input keys" is local to this
     /// file (enforced by `groups(from:)`'s bucket-dedup).
     private static func disambiguatedDisplayNames(forKeys keys: [String]) -> [String: String] {
-        // Duplicate-safe: if a future caller ever passes the same string twice,
-        // keep the first occurrence rather than trapping. `keys` already comes
-        // from a deduped bucket today, but the helper shouldn't be a footgun.
         let parts: [String: [String]] = Dictionary(keys.map { key in
             let comps = (key as NSString).pathComponents.filter { $0 != "/" && !$0.isEmpty }
             return (key, comps)
@@ -105,10 +168,6 @@ enum CasperWorkspaceGroupResolver {
         var result: [String: String] = [:]
         for key in keys {
             guard let myParts = parts[key], !myParts.isEmpty else {
-                // Empty key = workspace hasn't reported a directory yet
-                // (no OSC 7 / no `currentDirectory`). With headers always
-                // rendered, fall back to a localized placeholder so the
-                // group sits beside repo-anchored groups consistently.
                 result[key] = key.isEmpty
                     ? String(
                         localized: "sidebar.workspaceGroup.untitled",
@@ -134,18 +193,18 @@ enum CasperWorkspaceGroupResolver {
         return result
     }
 
-    /// Group workspaces by repo, preserving first-appearance order so the
-    /// underlying `tabs` array remains the source of truth for ordering.
-    static func groups(from workspaces: [Workspace]) -> [CasperWorkspaceGroup] {
+    /// Group panel entries by repo, preserving first-appearance order so the
+    /// caller's sort remains the source of truth for ordering.
+    static func groups(from entries: [CasperSidebarPanelEntry]) -> [CasperWorkspaceGroup] {
         var order: [String] = []
-        var buckets: [String: [Workspace]] = [:]
-        for workspace in workspaces {
-            let key = groupKey(for: workspace)
+        var buckets: [String: [CasperSidebarPanelEntry]] = [:]
+        for entry in entries {
+            let key = entry.groupKey
             if buckets[key] == nil {
                 order.append(key)
-                buckets[key] = [workspace]
+                buckets[key] = [entry]
             } else {
-                buckets[key]?.append(workspace)
+                buckets[key]?.append(entry)
             }
         }
         let names = disambiguatedDisplayNames(forKeys: order)
@@ -153,7 +212,7 @@ enum CasperWorkspaceGroupResolver {
             CasperWorkspaceGroup(
                 key: key,
                 displayName: names[key, default: ""],
-                workspaces: buckets[key] ?? []
+                entries: buckets[key] ?? []
             )
         }
     }
@@ -197,49 +256,364 @@ enum CasperWorkspaceGroupResolver {
     }
 }
 
+// MARK: - Entry builder
+
+@MainActor
+enum CasperSidebarPanelEntryBuilder {
+    /// Builds the sidebar's panel-entry list from the current `[Workspace]`.
+    /// Each workspace emits one entry per panel; panels within a workspace are
+    /// ordered by UUID (cheap and stable). Activity is workspace-level for v1
+    /// — every entry from the same workspace carries the same value.
+    static func entries(
+        from workspaces: [Workspace],
+        selectedWorkspaceId: UUID?,
+        activityByWorkspaceId: [UUID: CasperWorkspaceActivity]
+    ) -> [CasperSidebarPanelEntry] {
+        var out: [CasperSidebarPanelEntry] = []
+        out.reserveCapacity(workspaces.reduce(0) { $0 + $1.panels.count })
+        for workspace in workspaces {
+            let isWorkspaceSelected = workspace.id == selectedWorkspaceId
+            let focusedPanelId = workspace.focusedPanelId
+            let activity = activityByWorkspaceId[workspace.id]
+                ?? CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
+            // Visual order from bonsplit (left-to-right pane walk, tabs in
+            // tab-strip order within each pane). Falls back to UUID sort for
+            // panels not yet tracked by bonsplit — see
+            // `Workspace.sidebarOrderedPanelIds()`.
+            let orderedPanelIds = workspace.sidebarOrderedPanelIds()
+            let panelCount = orderedPanelIds.count
+            for (index, panelId) in orderedPanelIds.enumerated() {
+                let rawTitle: String = {
+                    if let custom = workspace.panelCustomTitles[panelId]?
+                        .trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+                        return custom
+                    }
+                    if let title = workspace.panelTitles[panelId]?
+                        .trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+                        return title
+                    }
+                    // Fallback to the workspace title. Single-panel workspaces
+                    // keep today's appearance; multi-panel workspaces suffix
+                    // the bonsplit index so panels with no per-panel OSC title
+                    // render as distinguishable rows ("Foo · 1", "Foo · 2", …)
+                    // instead of N identical strings — also stops a search
+                    // query that matches `workspace.title` from returning N
+                    // copies of the same row.
+                    if panelCount > 1 {
+                        return "\(workspace.title) · \(index + 1)"
+                    }
+                    return workspace.title
+                }()
+                let display = CasperWorkspaceTitle.displayTitle(rawTitle)
+                let groupKey = CasperWorkspaceGroupResolver.groupKey(
+                    forPanel: panelId,
+                    in: workspace
+                )
+                out.append(
+                    CasperSidebarPanelEntry(
+                        key: CasperSidebarPanelKey(
+                            workspaceId: workspace.id,
+                            panelId: panelId
+                        ),
+                        displayTitle: display,
+                        rawTitle: rawTitle,
+                        groupKey: groupKey,
+                        isWorkspaceSelected: isWorkspaceSelected,
+                        isPanelFocused: focusedPanelId == panelId,
+                        isPinned: workspace.isPinned,
+                        activity: activity,
+                        withinWorkspaceOrder: index
+                    )
+                )
+            }
+        }
+        return out
+    }
+
+    /// Workspace-mode entries — one row per workspace, anchored to the
+    /// workspace's currently focused panel id (or first panel as fallback).
+    /// Used by the non-compact sidebar path so the same group/sort machinery
+    /// drives both modes; the only difference is the per-panel expansion.
+    static func workspaceRowEntries(
+        from workspaces: [Workspace],
+        selectedWorkspaceId: UUID?,
+        activityByWorkspaceId: [UUID: CasperWorkspaceActivity]
+    ) -> [CasperSidebarPanelEntry] {
+        workspaces.enumerated().map { offset, workspace in
+            let panelId = workspace.focusedPanelId
+                ?? workspace.panels.keys.sorted { $0.uuidString < $1.uuidString }.first
+                ?? workspace.id
+            let raw = workspace.title
+            let display = CasperWorkspaceTitle.displayTitle(raw)
+            let groupKey = CasperWorkspaceGroupResolver.groupKey(for: workspace)
+            let activity = activityByWorkspaceId[workspace.id]
+                ?? CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
+            return CasperSidebarPanelEntry(
+                key: CasperSidebarPanelKey(workspaceId: workspace.id, panelId: panelId),
+                displayTitle: display,
+                rawTitle: raw,
+                groupKey: groupKey,
+                isWorkspaceSelected: workspace.id == selectedWorkspaceId,
+                isPanelFocused: true,
+                isPinned: workspace.isPinned,
+                activity: activity,
+                withinWorkspaceOrder: offset
+            )
+        }
+    }
+
+    /// Substring match against the panel's display title. Empty query = all
+    /// entries.
+    static func filter(_ entries: [CasperSidebarPanelEntry], query: String) -> [CasperSidebarPanelEntry] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return entries }
+        let needle = trimmed.lowercased()
+        return entries.filter { $0.displayTitle.lowercased().contains(needle) }
+    }
+
+}
+
+// MARK: - Header / section views
+
 struct CasperWorkspaceGroupHeader: View {
     let displayName: String
     let isCollapsed: Bool
+    /// Drives the trailing `+` button's opacity. The parent
+    /// `CasperWorkspaceGroupSection` flips this to `true` whenever the cursor
+    /// is over the header or any workspace row inside the group, so the
+    /// affordance also reveals while the user is on their way to or from a row.
+    let showsAddWorkspaceButton: Bool
     let onToggle: () -> Void
+    let onAddWorkspace: () -> Void
+    /// Fired by the trailing `+` icon's own hover tracker. The parent ORs this
+    /// with the section-wide hover so moving the cursor directly over the icon
+    /// (which can race the parent VStack's `.onHover(false)` when SwiftUI
+    /// reroutes hover to a nested interactive child) doesn't make the icon
+    /// flicker away under the pointer.
+    let onAddButtonHoverChange: (Bool) -> Void
 
     var body: some View {
-        Button(action: onToggle) {
-            HStack(spacing: 5) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.secondary.opacity(0.65))
-                    .rotationEffect(.degrees(isCollapsed ? -90 : 0))
-                    .animation(.spring(response: 0.28, dampingFraction: 0.88), value: isCollapsed)
-                    .frame(width: 10, alignment: .center)
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.55))
-                Text(displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.85))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 0)
+        HStack(spacing: 4) {
+            Button(action: onToggle) {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.65))
+                        .rotationEffect(.degrees(isCollapsed ? -90 : 0))
+                        .animation(.spring(response: 0.28, dampingFraction: 0.88), value: isCollapsed)
+                        .frame(width: 10, alignment: .center)
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary.opacity(0.55))
+                    Text(displayName)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary.opacity(0.85))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 4)
-            .padding(.bottom, 3)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityLabel(displayName)
+            .accessibilityValue(
+                isCollapsed
+                    ? String(localized: "workspace.group.collapsed", defaultValue: "Collapsed")
+                    : String(localized: "workspace.group.expanded", defaultValue: "Expanded")
+            )
+            .accessibilityHint(String(
+                localized: "workspace.group.toggleHint",
+                defaultValue: "Double-tap to toggle workspace group."
+            ))
+
+            // Image + `.onTapGesture` (not `Button`) — matches the close-icon
+            // pattern in `SessionIndexView` and avoids the SwiftUI bug where a
+            // nested `Button`'s internal mouse tracking causes the parent
+            // VStack's `.onHover(false)` to fire while the cursor is over the
+            // child, which made the icon disappear right under the pointer.
+            Image(systemName: "plus")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.secondary.opacity(0.85))
+                // Trailing-align so the visible glyph's right edge (not the
+                // 16pt frame's) lines up with the workspace row's time column.
+                .frame(width: 16, height: 16, alignment: .trailing)
+                .contentShape(Rectangle())
+                .opacity(showsAddWorkspaceButton ? 1 : 0)
+                .animation(.easeInOut(duration: 0.12), value: showsAddWorkspaceButton)
+                .onHover { onAddButtonHoverChange($0) }
+                .onTapGesture { onAddWorkspace() }
+                .accessibilityElement(children: .ignore)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel(String(
+                    format: String(
+                        localized: "workspace.group.newWorkspace.label",
+                        defaultValue: "New workspace in %@"
+                    ),
+                    displayName
+                ))
+                .accessibilityHint(String(
+                    localized: "workspace.group.newWorkspace.hint",
+                    defaultValue: "Creates a new workspace anchored to this group's directory."
+                ))
+        }
+        .padding(.leading, 10)
+        // Trailing 16 = workspace row outer 6 + inner trailing 10, so the
+        // header `+` right edge lines up with the row's activity-time column.
+        .padding(.trailing, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Wraps a workspace group's header and rows so a single hover detector covers
+/// both. The `+` on the header reveals whenever the cursor is anywhere inside
+/// the group's visual bounds — header OR any row.
+struct CasperWorkspaceGroupSection<Content: View>: View {
+    let displayName: String
+    let isCollapsed: Bool
+    let withinGroupSpacing: CGFloat
+    let onToggle: () -> Void
+    let onAddWorkspace: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    @State private var isHoveringSection: Bool = false
+    @State private var isHoveringAddButton: Bool = false
+
+    private var isHovering: Bool { isHoveringSection || isHoveringAddButton }
+
+    var body: some View {
+        VStack(spacing: withinGroupSpacing) {
+            if !displayName.isEmpty {
+                CasperWorkspaceGroupHeader(
+                    displayName: displayName,
+                    isCollapsed: isCollapsed,
+                    showsAddWorkspaceButton: isHovering,
+                    onToggle: onToggle,
+                    onAddWorkspace: onAddWorkspace,
+                    onAddButtonHoverChange: { newValue in
+                        guard isHoveringAddButton != newValue else { return }
+                        isHoveringAddButton = newValue
+                    }
+                )
+            }
+            if !isCollapsed {
+                content()
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            let next = (isCollapsed && !hovering) ? false : hovering
+            guard isHoveringSection != next else { return }
+            isHoveringSection = next
+        }
+    }
+}
+
+// MARK: - Panel row view
+
+/// Compact one-line row for a single panel inside a workspace. Rendered by
+/// the Casper compact sidebar in place of the workspace-level `TabItemView`
+/// so multi-panel workspaces surface every panel as its own selectable row.
+///
+/// Snapshot-boundary contract: receives only the `entry` value snapshot plus
+/// closure callbacks. Never reaches into a `Workspace` / `TabManager` / store
+/// from inside its body — see `Sources/SessionIndexView.swift` for the
+/// reference pattern and GH #2586 for the spin-loop incident.
+///
+/// Click selects the workspace and focuses this panel; close calls back into
+/// the parent to invoke `Workspace.closePanel(panelId)`.
+struct CasperSidebarPanelRow: View {
+    let entry: CasperSidebarPanelEntry
+    let onSelect: () -> Void
+    let onClose: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHoveringRow: Bool = false
+
+    private var isSelected: Bool {
+        entry.isWorkspaceSelected && entry.isPanelFocused
+    }
+
+    private var selectedBackground: Color {
+        Color(nsColor: sidebarSelectedWorkspaceBackgroundNSColor(for: colorScheme))
+    }
+
+    var body: some View {
+        let activity = entry.activity
+        let selected = isSelected
+        // Outer Button (vs. `.onTapGesture`) so the inner close Button cleanly
+        // consumes its own click — SwiftUI on macOS nests plain Buttons with
+        // inner-wins hit routing.
+        Button(action: onSelect) {
+            HStack(spacing: 5) {
+                // 10pt width aligns the X with the workspace-group chevron column.
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(
+                            selected
+                                ? Color.white.opacity(0.85)
+                                : Color.secondary.opacity(0.7)
+                        )
+                }
+                .buttonStyle(.plain)
+                .frame(width: 10, height: 16, alignment: .center)
+                .opacity(isHoveringRow ? 1 : 0)
+                .allowsHitTesting(isHoveringRow)
+                .accessibilityLabel(String(
+                    localized: "sidebar.panel.close.label",
+                    defaultValue: "Close panel"
+                ))
+
+                if entry.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(
+                            selected
+                                ? Color.white.opacity(0.85)
+                                : Color.secondary.opacity(0.8)
+                        )
+                }
+
+                Text(entry.displayTitle)
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundColor(selected ? Color.white : Color.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+
+                Spacer(minLength: 8)
+
+                CasperWorkspaceActivityIndicator(
+                    activityProvider: { activity },
+                    workingFont: .system(size: 11, weight: .regular),
+                    timeFont: .system(size: 10, weight: .regular),
+                    doneColor: Color.secondary.opacity(0.65),
+                    selectedColor: selected ? Color.white : nil
+                )
+                .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 10)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(selected ? selectedBackground : Color.clear)
+            )
+            .padding(.horizontal, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            guard isHoveringRow != hovering else { return }
+            isHoveringRow = hovering
+        }
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
-        .accessibilityLabel(displayName)
-        .accessibilityValue(
-            isCollapsed
-                ? String(localized: "workspace.group.collapsed", defaultValue: "Collapsed")
-                : String(localized: "workspace.group.expanded", defaultValue: "Expanded")
-        )
-        .accessibilityHint(String(
-            localized: "workspace.group.toggleHint",
-            defaultValue: "Double-tap to toggle workspace group."
-        ))
+        .accessibilityLabel(entry.displayTitle)
+        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
     }
 }
 
