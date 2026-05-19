@@ -863,8 +863,10 @@ struct HiddenTitlebarSidebarControlsView: View {
     let onToggleNotifications: (NSView?) -> Void
     let onNewTab: () -> Void
     // CASPER: delete and revert to defaults if upstream drops the sidebar
-    // toggle from the in-sidebar overlay.
-    private let slots: [MinimalModeSidebarControlActionSlot] = [.showNotifications, .newTab]
+    // toggle from the in-sidebar overlay. `.newTab` removed — new workspaces
+    // are created via the per-group `+` button on each workspace group header
+    // (see CasperWorkspaceGroupHeader).
+    private let slots: [MinimalModeSidebarControlActionSlot] = [.showNotifications]
     @StateObject private var viewModel = TitlebarControlsViewModel()
     @ObservedObject private var popoverVisibilityState = NotificationsPopoverVisibilityState.shared
     @State private var isHoveringHost = false

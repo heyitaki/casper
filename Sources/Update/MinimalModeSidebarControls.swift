@@ -30,7 +30,11 @@ struct MinimalModeSidebarControlActionProxyView: NSViewRepresentable {
 
 enum TitlebarControlsHitRegions {
     static let outerLeadingPadding: CGFloat = 4
-    static let defaultSlots: [MinimalModeSidebarControlActionSlot] = [.toggleSidebar, .showNotifications, .newTab]
+    // CASPER: dropped `.newTab` from the in-sidebar control cluster; new
+    // workspaces are created via the per-group `+` button on the workspace
+    // group header (see CasperWorkspaceGroupHeader). Delete if upstream adds
+    // a different new-workspace surface.
+    static let defaultSlots: [MinimalModeSidebarControlActionSlot] = [.toggleSidebar, .showNotifications]
 
     static func buttonXRanges(
         config: TitlebarControlsStyleConfig,
