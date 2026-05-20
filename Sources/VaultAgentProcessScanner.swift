@@ -1,4 +1,46 @@
 import Foundation
+import os
+
+// CASPER: process argv/env is immutable after exec, so we cache parsed results
+// by pid across heavy autosave scans. Entries are stamped with (name,
+// parentPID) so pid reuse between scans surfaces as a mismatch and forces a
+// re-parse. `path` is not usable as a discriminator because
+// cmuxScopedProcesses() runs with includeProcessDetails=false.
+// Delete if upstream replaces this scanner with a libproc-based path.
+private struct VaultAgentArgvCacheEntry {
+    let name: String
+    let parentPID: Int
+    let arguments: CmuxTopProcessArguments
+}
+
+private nonisolated let vaultAgentArgvCache = OSAllocatedUnfairLock(
+    initialState: [Int: VaultAgentArgvCacheEntry]()
+)
+
+private enum VaultAgentArgvCache {
+    static func parsedArguments(
+        for pid: Int,
+        name: String,
+        parentPID: Int,
+        parse: (Int) -> CmuxTopProcessArguments?
+    ) -> CmuxTopProcessArguments? {
+        if let hit = vaultAgentArgvCache.withLock({ $0[pid] }),
+           hit.name == name, hit.parentPID == parentPID {
+            return hit.arguments
+        }
+        guard let fresh = parse(pid) else { return nil }
+        vaultAgentArgvCache.withLock { cache in
+            cache[pid] = VaultAgentArgvCacheEntry(name: name, parentPID: parentPID, arguments: fresh)
+        }
+        return fresh
+    }
+
+    static func prune(toLivePIDs livePIDs: Set<Int>) {
+        vaultAgentArgvCache.withLock { cache in
+            cache = cache.filter { livePIDs.contains($0.key) }
+        }
+    }
+}
 
 extension RestorableAgentSessionIndex {
     static func processDetectedSnapshots(
@@ -25,10 +67,18 @@ extension RestorableAgentSessionIndex {
             return resolved
         }
 
-        for process in processSnapshot.cmuxScopedProcesses() {
+        let scopedProcesses = processSnapshot.cmuxScopedProcesses()
+        VaultAgentArgvCache.prune(toLivePIDs: Set(scopedProcesses.map { $0.pid }))
+
+        for process in scopedProcesses {
             guard let workspaceId = process.cmuxWorkspaceID,
                   let panelId = process.cmuxSurfaceID,
-                  let processArguments = CmuxTopProcessSnapshot.processArgumentsAndEnvironment(for: process.pid) else {
+                  let processArguments = VaultAgentArgvCache.parsedArguments(
+                      for: process.pid,
+                      name: process.name,
+                      parentPID: process.parentPID,
+                      parse: CmuxTopProcessSnapshot.processArgumentsAndEnvironment(for:)
+                  ) else {
                 continue
             }
             let observed = VaultObservedAgentProcess(
