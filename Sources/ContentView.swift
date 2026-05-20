@@ -9799,6 +9799,10 @@ struct VerticalTabsSidebar: View {
                                     else { return }
                                     tabManager.selectTab(workspace)
                                     workspace.focusPanel(entry.key.panelId)
+                                    // Disambiguate: panels in the same workspace share a ⌘N digit.
+                                    if workspace.panels.count > 1 {
+                                        workspace.triggerFocusFlash(panelId: entry.key.panelId)
+                                    }
                                 },
                                 onClose: { [weak tabManager] in
                                     guard let tabManager,

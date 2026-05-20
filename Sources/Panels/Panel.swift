@@ -70,14 +70,14 @@ public enum WorkspaceAttentionFlashReason: String, Equatable, Sendable {
 
 enum WorkspaceAttentionFlashAccent: Equatable, Sendable {
     case notificationBlue
-    case navigationTeal
+    case navigationGray
 
     var strokeColor: NSColor {
         switch self {
         case .notificationBlue:
             return .systemBlue
-        case .navigationTeal:
-            return .systemTeal
+        case .navigationGray:
+            return .secondaryLabelColor
         }
     }
 }
@@ -117,9 +117,9 @@ enum WorkspaceAttentionCoordinator {
         switch reason {
         case .navigation:
             return WorkspaceAttentionFlashPresentation(
-                accent: .navigationTeal,
-                glowOpacity: 0.14,
-                glowRadius: 3
+                accent: .navigationGray,
+                glowOpacity: 0.08,
+                glowRadius: 2
             )
         case .notificationArrival, .notificationDismiss, .manualUnreadDismiss, .debug:
             return WorkspaceAttentionFlashPresentation(

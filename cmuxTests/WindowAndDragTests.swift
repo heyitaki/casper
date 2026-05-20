@@ -2770,10 +2770,10 @@ final class TmuxWorkspacePaneOverlayTests: XCTestCase {
         )
     }
 
-    func testNavigationFlashUsesNonNeutralAccent() {
+    func testNavigationFlashUsesGrayAccent() {
         XCTAssertEqual(
             WorkspaceAttentionCoordinator.flashStyle(for: .navigation).accent,
-            .navigationTeal
+            .navigationGray
         )
     }
 
