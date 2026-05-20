@@ -46,6 +46,34 @@ nonisolated enum RightSidebarMode: String, CaseIterable, Sendable {
         case .dock: return .switchRightSidebarToDock
         }
     }
+
+    /// Shortcut surfaced as the discoverability hint next to the tab. For
+    /// `.find` this is the global ⌘⇧F (`findInDirectory`) gesture rather than
+    /// the focus-gated numbered shortcut `switchRightSidebarToFind`, since
+    /// users reach for ⌘⇧F from anywhere in the window — including when the
+    /// terminal is focused — and `findInDirectory` routes globally via the
+    /// app's shortcut handler.
+    var hintShortcutAction: KeyboardShortcutSettings.Action {
+        switch self {
+        case .files: return .switchRightSidebarToFiles
+        case .find: return .findInDirectory
+        case .sessions: return .switchRightSidebarToSessions
+        case .feed: return .switchRightSidebarToFeed
+        case .dock: return .switchRightSidebarToDock
+        }
+    }
+
+    /// `true` when this tab's `hintShortcutAction` is globally routable (not
+    /// gated on right-sidebar focus). Drives which modifier monitor decides
+    /// hint visibility — paired with `hintShortcutAction` so a future case
+    /// that diverges from `shortcutAction` is forced to declare its routing
+    /// model via the exhaustive switch.
+    var usesUngatedShortcutHintMonitor: Bool {
+        switch self {
+        case .files, .sessions, .feed, .dock: return false
+        case .find: return true
+        }
+    }
 }
 
 extension RightSidebarMode {
@@ -219,7 +247,13 @@ struct RightSidebarPanelView: View {
 
     private var modeBar: some View {
         let _ = keyboardShortcutSettingsObserver.revision
+        // Numbered Ctrl-N shortcuts only route when the right sidebar (or a
+        // Dock-surface terminal) is focused, so their hints stay gated.
         let showsModeShortcutHints = alwaysShowShortcutHints || modeShortcutHintMonitor.isModifierPressed
+        // Tabs whose `usesUngatedShortcutHintMonitor` is true (Find via
+        // ⌘⇧F today) drive their hint visibility from the ungated focus
+        // monitor — the user reaches for those gestures from the terminal too.
+        let showsUngatedHints = alwaysShowShortcutHints || focusShortcutHintMonitor.isModifierPressed
         return ZStack {
             WindowDragHandleView()
 
@@ -229,8 +263,8 @@ struct RightSidebarPanelView: View {
                         mode: mode,
                         isSelected: fileExplorerState.mode == mode,
                         badgeCount: mode == .feed ? feedPendingCount : 0,
-                        shortcutHint: KeyboardShortcutSettings.shortcut(for: mode.shortcutAction),
-                        showsShortcutHint: showsModeShortcutHints
+                        shortcutHint: KeyboardShortcutSettings.shortcut(for: mode.hintShortcutAction),
+                        showsShortcutHint: mode.usesUngatedShortcutHintMonitor ? showsUngatedHints : showsModeShortcutHints
                     ) {
                         if AppDelegate.shared?.focusRightSidebarInActiveMainWindow(
                             mode: mode,

@@ -527,6 +527,26 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
 /// the parent to invoke `Workspace.closePanel(panelId)`.
 struct CasperSidebarPanelRow: View {
     let entry: CasperSidebarPanelEntry
+    /// `⌘N` digit to display when the user is holding the modifier. Set only
+    /// on the first panel row per workspace (the anchor-owning row) since the
+    /// numbered shortcut selects the workspace, not a specific panel. `nil`
+    /// suppresses the badge — non-anchor rows and rows whose workspace falls
+    /// outside the 1–9 mapping.
+    let workspaceShortcutDigit: Int?
+    /// Prefix glyph(s) for the modifier — e.g. `⌘`. Provided by the
+    /// `selectWorkspaceByNumber` keyboard-shortcut binding so a custom
+    /// modifier (Ctrl, Option) renders the right symbol.
+    let workspaceShortcutModifierSymbol: String
+    /// Live `isModifierPressed` from the sidebar's shared modifier monitor.
+    /// Combined with the alwaysShow override below to decide whether to
+    /// render the pill.
+    let showsModifierShortcutHints: Bool
+    let alwaysShowShortcutHints: Bool
+    /// Live debug-menu nudge for the shortcut pill (Debug > Shortcut Hints).
+    /// Mirrors the `TabItemView` plumbing so both sidebar paths respond to
+    /// the same slider; defaults to 0 in production.
+    let shortcutHintXOffset: Double
+    let shortcutHintYOffset: Double
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -541,9 +561,20 @@ struct CasperSidebarPanelRow: View {
         Color(nsColor: sidebarSelectedWorkspaceBackgroundNSColor(for: colorScheme))
     }
 
+    private var workspaceShortcutLabel: String? {
+        guard let workspaceShortcutDigit else { return nil }
+        return "\(workspaceShortcutModifierSymbol)\(workspaceShortcutDigit)"
+    }
+
+    private var showsWorkspaceShortcutHint: Bool {
+        (showsModifierShortcutHints || alwaysShowShortcutHints) && workspaceShortcutLabel != nil
+    }
+
     var body: some View {
         let activity = entry.activity
         let selected = isSelected
+        let shortcutLabel = workspaceShortcutLabel
+        let showsHint = showsWorkspaceShortcutHint
         // Outer Button (vs. `.onTapGesture`) so the inner close Button cleanly
         // consumes its own click — SwiftUI on macOS nests plain Buttons with
         // inner-wins hit routing.
@@ -595,6 +626,25 @@ struct CasperSidebarPanelRow: View {
                     selectedColor: selected ? Color.white : nil
                 )
                 .fixedSize(horizontal: true, vertical: false)
+                // Pill shares the activity column's trailing anchor so it
+                // doesn't widen the row and shove the title left when Cmd
+                // is held — matches the non-compact `TabItemView` pattern.
+                .opacity(showsHint ? 0 : 1)
+                .overlay(alignment: .trailing) {
+                    if showsHint, let shortcutLabel {
+                        ShortcutHintPill(
+                            text: shortcutLabel,
+                            fontSize: 10,
+                            emphasis: selected ? 1.0 : 0.9
+                        )
+                        .offset(
+                            x: ShortcutHintDebugSettings.clamped(shortcutHintXOffset),
+                            y: ShortcutHintDebugSettings.clamped(shortcutHintYOffset)
+                        )
+                        .shortcutHintTransition()
+                    }
+                }
+                .shortcutHintVisibilityAnimation(value: showsHint)
             }
             .padding(.leading, 4)
             .padding(.trailing, 10)

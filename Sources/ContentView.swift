@@ -9707,6 +9707,14 @@ struct VerticalTabsSidebar: View {
         let withinGroupSpacing: CGFloat = 1
         let betweenGroupSpacing: CGFloat = 14
         let collapsedKeys = workspaceGroupCollapseStore.collapsedKeys
+        // Short-circuit on `isCasperCompactSidebar` so the non-compact path
+        // doesn't tie this `workspaceRows` body to the modifier monitor —
+        // the non-compact `workspaceRow(_:)` helper reads the monitor itself
+        // on its own subscription boundary inside `TabItemView`. When compact
+        // is active, we read once here so every panel row in the ForEach
+        // shares the same value rather than each subscribing individually.
+        let liveShowsModifierShortcutHints = isCasperCompactSidebar && modifierKeyMonitor.isModifierPressed
+        let alwaysShowShortcutHints = isCasperCompactSidebar && renderContext.tabItemSettings.alwaysShowShortcutHints
         // CASPER: drive off-main Claude JSONL activity refresh. Per-workspace
         // session paths sourced from `~/.cmuxterm/claude-hook-sessions.json`
         // so each workspace's "last activity" comes from its own JSONLs,
@@ -9763,8 +9771,28 @@ struct VerticalTabsSidebar: View {
                         if isCasperCompactSidebar {
                             let ownsWorkspaceAnchor = firstEntryIdsPerWorkspace.contains(entry.id)
                             let workspaceId = entry.key.workspaceId
+                            // Numbered ⌘N selects the workspace (panels share
+                            // a workspace), so only the anchor-owning row gets
+                            // the badge. Digit derives from the workspace's
+                            // position in `tabManager.tabs` — same source the
+                            // shortcut handler uses — not the activity-sorted
+                            // sidebar order.
+                            let workspaceShortcutDigit: Int? = ownsWorkspaceAnchor
+                                ? renderContext.tabIndexById[workspaceId].flatMap { workspaceIndex in
+                                    WorkspaceShortcutMapper.digitForWorkspace(
+                                        at: workspaceIndex,
+                                        workspaceCount: renderContext.workspaceCount
+                                    )
+                                }
+                                : nil
                             CasperSidebarPanelRow(
                                 entry: entry,
+                                workspaceShortcutDigit: workspaceShortcutDigit,
+                                workspaceShortcutModifierSymbol: renderContext.workspaceNumberShortcut.numberedDigitHintPrefix,
+                                showsModifierShortcutHints: liveShowsModifierShortcutHints,
+                                alwaysShowShortcutHints: alwaysShowShortcutHints,
+                                shortcutHintXOffset: renderContext.tabItemSettings.sidebarShortcutHintXOffset,
+                                shortcutHintYOffset: renderContext.tabItemSettings.sidebarShortcutHintYOffset,
                                 onSelect: { [weak tabManager] in
                                     guard let tabManager,
                                           let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
