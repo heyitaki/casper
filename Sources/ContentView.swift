@@ -10953,12 +10953,56 @@ private struct SidebarFooter: View {
     var body: some View {
         HStack(spacing: 6) {
             SidebarSettingsMenuButton()
+            SidebarLastUpdatedLabel()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, 6)
         .padding(.trailing, 10)
         .padding(.bottom, 6)
     }
+}
+
+// CASPER: Surfaces the running build's mtime so Casper vs Casper Preview can be told apart at a glance; delete if upstream ships an equivalent build-identity affordance.
+private struct SidebarLastUpdatedLabel: View {
+    var body: some View {
+        if let date = Self.buildDate {
+            let template = String(
+                localized: "sidebar.footer.lastUpdated",
+                defaultValue: "Last updated at %@"
+            )
+            let formatted = Self.shortFormatter.string(from: date)
+            Text(String(format: template, formatted))
+                .font(.system(size: 10))
+                .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(Self.mediumFormatter.string(from: date))
+                .accessibilityIdentifier("SidebarLastUpdatedLabel")
+        }
+    }
+
+    private static let buildDate: Date? = {
+        guard let url = Bundle.main.executableURL,
+              let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let date = attrs[.modificationDate] as? Date
+        else { return nil }
+        return date
+    }()
+
+    private static let shortFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        f.doesRelativeDateFormatting = true
+        return f
+    }()
+
+    private static let mediumFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .medium
+        return f
+    }()
 }
 
 private struct FeedbackComposerMessageEditor: NSViewRepresentable {
