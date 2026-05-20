@@ -174,7 +174,8 @@ final class CasperBoundedAsyncWorkPoolTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 10_000_000)
             if await pool._debugSnapshot().waiting == 0 { break }
         }
-        XCTAssertEqual(await pool._debugSnapshot().waiting, 0, "Cancelled waiter must drain from queue")
+        let drainedWaiting = await pool._debugSnapshot().waiting
+        XCTAssertEqual(drainedWaiting, 0, "Cancelled waiter must drain from queue")
 
         blockerCanFinish.fulfill()
         _ = await blockerTask.value
