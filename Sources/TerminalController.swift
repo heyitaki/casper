@@ -481,6 +481,25 @@ class TerminalController {
         return currentSorted != nextSorted
     }
 
+    // CASPER: single-pass replacement for the per-id `tabs.first(where:)`
+    // scan PortScanner runs every 5s + 6x per burst kick. Delete if upstream
+    // gives TabManager a UUID→Workspace dict.
+    @MainActor
+    static func collectAgentPIDsByWorkspace(
+        in tabs: [Workspace],
+        matching workspaceIds: Set<UUID>
+    ) -> [UUID: Set<Int>] {
+        guard !workspaceIds.isEmpty else { return [:] }
+        var pidsByWorkspace: [UUID: Set<Int>] = [:]
+        for workspace in tabs where workspaceIds.contains(workspace.id) {
+            let pids = Set(workspace.agentPIDs.values.compactMap { $0 > 0 ? Int($0) : nil })
+            if !pids.isEmpty {
+                pidsByWorkspace[workspace.id] = pids
+            }
+        }
+        return pidsByWorkspace
+    }
+
     private struct SocketSurfaceKey: Hashable {
         let workspaceId: UUID
         let panelId: UUID
@@ -1190,6 +1209,13 @@ class TerminalController {
             guard let workspace = tabManager.tabs.first(where: { $0.id == workspaceId }) else { return }
             let validSurfaceIds = Set(workspace.panels.keys)
             guard validSurfaceIds.contains(panelId) else { return }
+            // CASPER: gate the @Published write so a burst-scan with no
+            // port changes doesn't fire 180 spurious objectWillChange
+            // events. Delete if upstream gates this assignment.
+            guard Self.shouldReplacePorts(
+                current: workspace.surfaceListeningPorts[panelId],
+                next: ports
+            ) else { return }
             workspace.surfaceListeningPorts[panelId] = ports.isEmpty ? nil : ports
             workspace.recomputeListeningPorts()
         }
@@ -1203,15 +1229,10 @@ class TerminalController {
         }
         PortScanner.shared.agentPIDsProvider = { [weak self] workspaceIds in
             guard let self, let tabManager = self.tabManager else { return [:] }
-            var pidsByWorkspace: [UUID: Set<Int>] = [:]
-            for workspaceId in workspaceIds {
-                guard let workspace = tabManager.tabs.first(where: { $0.id == workspaceId }) else { continue }
-                let pids = Set(workspace.agentPIDs.values.compactMap { $0 > 0 ? Int($0) : nil })
-                if !pids.isEmpty {
-                    pidsByWorkspace[workspaceId] = pids
-                }
-            }
-            return pidsByWorkspace
+            return Self.collectAgentPIDsByWorkspace(
+                in: tabManager.tabs,
+                matching: workspaceIds
+            )
         }
 
         startAcceptSource(listenerSocket: listenerSocket, generation: generation)
@@ -16905,8 +16926,13 @@ class TerminalController {
                 return
             }
 
-            tab.surfaceListeningPorts[surfaceId] = ports
-            tab.recomputeListeningPorts()
+            // CASPER: gate the @Published write so idle workspaces
+            // reporting the same port set don't emit objectWillChange.
+            // Delete if upstream gates this assignment.
+            if Self.shouldReplacePorts(current: tab.surfaceListeningPorts[surfaceId], next: ports) {
+                tab.surfaceListeningPorts[surfaceId] = ports.isEmpty ? nil : ports
+                tab.recomputeListeningPorts()
+            }
         }
         return result
     }

@@ -51,7 +51,9 @@ final class PortScanner: @unchecked Sendable {
     /// Each scan fires at this absolute offset; the recursive scheduler
     /// converts to relative delays between consecutive scans.
     private static let burstOffsets: [Double] = [0.5, 1.5, 3, 5, 7.5, 10]
-    private static let agentRescanInterval: TimeInterval = 2
+    // CASPER: raised from 2s — 2s was ~6% CPU on ps+lsof bursts.
+    // Delete if upstream adopts a different cadence.
+    private static let agentRescanInterval: TimeInterval = 5
 
     // MARK: - Public API
 

@@ -1010,6 +1010,13 @@ class TabManager: ObservableObject {
         label: "com.cmux.initial-workspace-git-probe",
         qos: .utility
     )
+    // CASPER: bound concurrent git probes so a 60s poll across 30 workspaces
+    // doesn't spawn 30 simultaneous `git status` processes (which would
+    // saturate cores and queue 30 main-thread follow-ups in rapid succession).
+    // Cap of 4 matches typical "useful parallelism for disk-bound git work"
+    // without piling on cores under bigger workloads. Delete if upstream
+    // introduces a project-wide concurrency limiter for background scans.
+    private static let workspaceGitProbeWorkPool = CasperBoundedAsyncWorkPool(maxConcurrent: 4)
     private var workspaceGitProbeStateByKey: [WorkspaceGitProbeKey: WorkspaceGitProbeState] = [:]
     private var workspaceGitProbeTimersByKey: [WorkspaceGitProbeKey: [DispatchSourceTimer]] = [:]
     private var workspaceGitTrackedDirectoryByKey: [WorkspaceGitProbeKey: String] = [:]
@@ -2361,7 +2368,9 @@ class TabManager: ObservableObject {
         }
 
         Task.detached(priority: .utility) { [weak self] in
-            let snapshot = await Self.initialWorkspaceGitMetadataSnapshot(for: expectedDirectory)
+            let snapshot = await Self.workspaceGitProbeWorkPool.run {
+                await Self.initialWorkspaceGitMetadataSnapshot(for: expectedDirectory)
+            }
             guard !Task.isCancelled else { return }
             await MainActor.run { [weak self] in
                 self?.applyWorkspaceGitMetadataSnapshot(

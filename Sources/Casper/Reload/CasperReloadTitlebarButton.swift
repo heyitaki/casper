@@ -52,10 +52,23 @@ struct CasperReloadTitlebarButton: View {
                 accessibilityIdentifier: "titlebarControl.casperReload",
                 accessibilityLabel: "Reload \(ctx.displayName)",
                 action: {
-                    guard !isReloading else { return }
-                    cmuxDebugLog("titlebar.casperReload tag=\(ctx.tag)")
+                    // Log BEFORE the guard so even a stuck-`isReloading` state
+                    // produces an event — that distinguishes "click never
+                    // reached the action" from "click denied by gate".
+                    // NSLog mirrors to Console.app/syslog independently of our
+                    // debug-log file handle in case the latter is misconfigured.
+                    let wasReloading = isReloading
+                    cmuxDebugLog("titlebar.casperReload.tap tag=\(ctx.tag) wasReloading=\(wasReloading)")
+                    NSLog("[casper] titlebar.casperReload.tap tag=%@ wasReloading=%@", ctx.tag, String(wasReloading))
+                    guard !wasReloading else {
+                        cmuxDebugLog("titlebar.casperReload.skip tag=\(ctx.tag) reason=alreadyReloading")
+                        return
+                    }
                     isReloading = true
-                    if !CasperReloadLauncher.launch(ctx: ctx) {
+                    let spawned = CasperReloadLauncher.launch(ctx: ctx)
+                    cmuxDebugLog("titlebar.casperReload.launch tag=\(ctx.tag) spawned=\(spawned)")
+                    NSLog("[casper] titlebar.casperReload.launch tag=%@ spawned=%@", ctx.tag, String(spawned))
+                    if !spawned {
                         // Spawn itself failed (missing bash, missing repo,
                         // sandbox denial). The terminal pkill will never fire,
                         // so reset immediately instead of stranding the button.
@@ -66,7 +79,8 @@ struct CasperReloadTitlebarButton: View {
                     // before its pkill step (zig/xcodebuild/codesign failure),
                     // so without this the button stays spinning forever.
                     // 180s comfortably exceeds a clean rebuild (~25s).
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 180) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [tag = ctx.tag] in
+                        cmuxDebugLog("titlebar.casperReload.safetyReset tag=\(tag)")
                         isReloading = false
                     }
                 }
@@ -90,6 +104,12 @@ struct CasperReloadTitlebarButton: View {
                     ? "Rebuilding \(ctx.displayName)…"
                     : "Rebuild \(ctx.displayName) (./scripts/reload.sh --tag \(ctx.tag) --launch)"
             )
+            .onAppear {
+                cmuxDebugLog("titlebar.casperReload.mount tag=\(ctx.tag) isReloading=\(isReloading)")
+            }
+            .onDisappear {
+                cmuxDebugLog("titlebar.casperReload.unmount tag=\(ctx.tag) isReloading=\(isReloading)")
+            }
         }
     }
 }
@@ -123,11 +143,16 @@ private enum CasperReloadLauncher {
         process.standardError = FileHandle.nullDevice
         process.environment = augmentedEnvironment()
 
+        cmuxDebugLog("titlebar.casperReload.spawn.attempt tag=\(ctx.tag) script=\(script) logPath=\(logPath)")
+
         do {
             try process.run()
+            cmuxDebugLog("titlebar.casperReload.spawn.ok tag=\(ctx.tag) pid=\(process.processIdentifier)")
+            NSLog("[casper] titlebar.casperReload.spawn.ok tag=%@ pid=%d", ctx.tag, Int(process.processIdentifier))
             return true
         } catch {
-            cmuxDebugLog("titlebar.casperReload.failed error=\(error)")
+            cmuxDebugLog("titlebar.casperReload.spawn.failed tag=\(ctx.tag) error=\(error)")
+            NSLog("[casper] titlebar.casperReload.spawn.failed tag=%@ error=%@", ctx.tag, String(describing: error))
             return false
         }
     }

@@ -83,8 +83,17 @@ struct CasperWorkspaceActivityIndicator: View {
     /// the blue selection chip) instead of the unreadable blue-on-blue.
     let selectedColor: Color?
 
+    /// Shared anchor for the 30-second tick across every row. Without this,
+    /// each row's `.periodic(from: .now, by: 30)` starts its clock at row
+    /// mount time, so 30 unsynchronized clocks fire ~1 tick/sec into main —
+    /// each one a separate SwiftUI layout pass. Anchoring to one type-load
+    /// timestamp aligns every row's ticks to the same wall-clock moments
+    /// (load + N×30s), letting SwiftUI batch them into a single layout pass
+    /// every 30s regardless of how many rows are visible.
+    private static let timelineEpoch: Date = Date()
+
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
+        TimelineView(.periodic(from: Self.timelineEpoch, by: 30)) { context in
             let activity = activityProvider()
             switch activity.state {
             case .working:

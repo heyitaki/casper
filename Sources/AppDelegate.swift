@@ -875,6 +875,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
     private var lastSessionAutosaveFingerprint: Int?
     private var lastSessionAutosavePersistedAt: Date = .distantPast
+    // CASPER: bound the cadence of the heavy `loadIncludingProcessDetectedSnapshots`
+    // call. The cheap `.load()` path is used for the skip check on intermediate
+    // ticks; the heavy scan only fires when the cheap fingerprint diverges OR
+    // this many seconds have elapsed since the last heavy scan. Delete if
+    // upstream restructures the autosave path to avoid process inspection.
+    private var lastSessionAutosaveHeavyScanAt: Date = .distantPast
+    private static let sessionAutosaveHeavyScanInterval: TimeInterval = 60
     private var lastTypingActivityAt: TimeInterval = 0
     var didHandleExplicitOpenIntentAtStartup = false
     private var didScheduleInitialMainWindowBootstrap = false
@@ -1010,6 +1017,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         AppIconLaunchState.markDidFinishLaunching()
 #if DEBUG
         MainThreadHangWatchdog.shared.start()
+        // CASPER: boot-probe sentinel. Bumped manually to verify that a
+        // refresh-button rebuild actually deployed a new binary. Delete once
+        // the in-app reload flow is trusted.
+        cmuxDebugLog("casper.boot.probe=beta tag=\(ProcessInfo.processInfo.environment["CMUX_TAG"] ?? "<none>") pid=\(ProcessInfo.processInfo.processIdentifier)")
+        NSLog("[casper] casper.boot.probe=beta tag=%@ pid=%d", ProcessInfo.processInfo.environment["CMUX_TAG"] ?? "<none>", Int(ProcessInfo.processInfo.processIdentifier))
 #endif
         if isRunningUnderXCTest {
             NSApp.setActivationPolicy(.regular)
@@ -3410,17 +3422,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #endif
 
         let now = Date()
+        // CASPER: Heavy `loadIncludingProcessDetectedSnapshots` was the autosave
+        // path's largest cost (~9% CPU per hang window @ 8s cadence). We now
+        // first compute the cheap (hook-store-only) fingerprint, and skip
+        // entirely when it matches the last saved fingerprint. The heavy scan
+        // only runs when the cheap fingerprint diverges OR the periodic
+        // safety-net interval has elapsed (so non-hook process-detected agents
+        // are still discovered, just with bounded latency).
+        let heavyScanDue = now.timeIntervalSince(lastSessionAutosaveHeavyScanAt)
+            >= Self.sessionAutosaveHeavyScanInterval
+
 #if DEBUG
         let fingerprintStart = ProcessInfo.processInfo.systemUptime
 #endif
-        let restorableAgentIndex = await RestorableAgentSessionIndex.loadIncludingProcessDetectedSnapshots()
-        let autosaveFingerprint = sessionAutosaveFingerprint(
+        let cheapAgentIndex = RestorableAgentSessionIndex.load()
+        let cheapFingerprint = sessionAutosaveFingerprint(
             includeScrollback: false,
-            restorableAgentIndex: restorableAgentIndex
+            restorableAgentIndex: cheapAgentIndex
         )
 #if DEBUG
         fingerprintMs = (ProcessInfo.processInfo.systemUptime - fingerprintStart) * 1000.0
 #endif
+
+        if !heavyScanDue,
+           Self.shouldSkipSessionAutosaveForUnchangedFingerprint(
+               isTerminatingApp: isTerminatingApp,
+               includeScrollback: false,
+               previousFingerprint: lastSessionAutosaveFingerprint,
+               currentFingerprint: cheapFingerprint,
+               lastPersistedAt: lastSessionAutosavePersistedAt,
+               now: now
+           ) {
+#if DEBUG
+            cmuxDebugLog(
+                "session.save.skipped reason=unchanged_cheap_fingerprint includeScrollback=0 source=\(source)"
+            )
+#endif
+            return
+        }
+
+        let restorableAgentIndex = await RestorableAgentSessionIndex.loadIncludingProcessDetectedSnapshots()
+        lastSessionAutosaveHeavyScanAt = now
+
+        let autosaveFingerprint: Int?
+        if heavyScanDue {
+#if DEBUG
+            let heavyFingerprintStart = ProcessInfo.processInfo.systemUptime
+#endif
+            autosaveFingerprint = sessionAutosaveFingerprint(
+                includeScrollback: false,
+                restorableAgentIndex: restorableAgentIndex
+            )
+#if DEBUG
+            fingerprintMs += (ProcessInfo.processInfo.systemUptime - heavyFingerprintStart) * 1000.0
+#endif
+        } else {
+            // Cheap and heavy fingerprints will only differ when the heavy scan
+            // surfaces process-detected agents not in the hook store. Recompute
+            // only when escalating from a cheap-mismatch to be safe.
+            autosaveFingerprint = sessionAutosaveFingerprint(
+                includeScrollback: false,
+                restorableAgentIndex: restorableAgentIndex
+            )
+        }
+
         if Self.shouldSkipSessionAutosaveForUnchangedFingerprint(
             isTerminatingApp: isTerminatingApp,
             includeScrollback: false,
@@ -3431,7 +3496,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ) {
 #if DEBUG
             cmuxDebugLog(
-                "session.save.skipped reason=unchanged_autosave_fingerprint includeScrollback=0 source=\(source)"
+                "session.save.skipped reason=unchanged_autosave_fingerprint includeScrollback=0 source=\(source) heavyScanDue=\(heavyScanDue ? 1 : 0)"
             )
 #endif
             return
