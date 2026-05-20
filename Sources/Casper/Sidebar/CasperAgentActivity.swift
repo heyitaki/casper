@@ -279,7 +279,7 @@ private let casperISO8601Formatter: ISO8601DateFormatter = {
 /// workspaces, and per-cwd attribution pegs every sibling workspace to the
 /// most-recently-active session's timestamp.
 @MainActor
-final class CasperClaudeSessionMap {
+final class CasperClaudeSessionMap: ObservableObject {
     static let shared = CasperClaudeSessionMap()
 
     private struct CachedState {
@@ -288,46 +288,78 @@ final class CasperClaudeSessionMap {
     }
 
     private var cached: CachedState?
-    private var lastCheckedAt: Date = .distantPast
-    /// Skip the hook-file stat on repeat reads within this window. At N=50
-    /// workspaces, `claudeJSONLPaths(for:)` would otherwise stat this file
-    /// 50× per sidebar body re-eval via `jsonlPaths(forWorkspaceID:)`. 2s
-    /// is short enough that a freshly registered session shows up almost
-    /// immediately.
-    private let stalenessCheckTTL: TimeInterval = 2.0
 
+    /// Version stamp for the cached hook map. Bumps only when the hook store
+    /// file's mtime changes (a session was registered/cleared). View body
+    /// callers use this as part of memoization keys; SwiftUI subscribes via
+    /// `@ObservedObject` on the sidebar so a new session triggers a re-eval
+    /// + `.task(id:)` restart.
+    @Published private(set) var mapVersion: TimeInterval = 0
+
+    private let refreshQueue = DispatchQueue(
+        label: "casper.claude-session-map.refresh",
+        qos: .userInitiated
+    )
+    private var refreshInFlight = false
+    private var lastRefreshKickAt: Date = .distantPast
+    /// Skip kicking another off-main refresh within this window. At N=50
+    /// workspaces, body-driven `jsonlPaths(forWorkspaceID:)` reads would
+    /// otherwise kick 50× per re-eval. 2s is short enough that a freshly
+    /// registered session shows up almost immediately.
+    private let refreshKickTTL: TimeInterval = 2.0
+
+    init() {
+        // `lastRefreshKickAt` defaults to `.distantPast`, so the TTL gate
+        // passes naturally on this first call — cold-start primes the cache
+        // without needing a separate force path.
+        kickRefresh()
+    }
+
+    /// Pure dict read. Schedules a best-effort off-main refresh if the cache
+    /// is stale (gated by `refreshKickTTL`). NEVER blocks the caller — view
+    /// body sees the current snapshot, and the next body re-eval after the
+    /// refresh completes picks up updates via `@Published mapVersion`.
     func jsonlPaths(forWorkspaceID id: UUID) -> [String] {
-        refreshIfStale()
+        kickRefresh()
         return cached?.map[id] ?? []
     }
 
-    /// Stable identity of the current cached map; changes only when the hook
-    /// file is reparsed (session register/clear). Cheap to call — refresh is
-    /// already gated by `stalenessCheckTTL`. Used as a memoization version
-    /// key by downstream callers in view body.
-    var mapVersion: TimeInterval {
-        refreshIfStale()
-        return cached?.mtime.timeIntervalSinceReferenceDate ?? 0
+    /// Best-effort off-main refresh, TTL-gated and in-flight-coalesced.
+    /// Safe to call from view body — schedules work on a background queue
+    /// and posts back via `@Published mapVersion`.
+    func kickRefresh() {
+        if refreshInFlight { return }
+        let now = Date()
+        if now.timeIntervalSince(lastRefreshKickAt) < refreshKickTTL { return }
+        refreshInFlight = true
+        lastRefreshKickAt = now
+        let priorMtime = cached?.mtime
+        refreshQueue.async { [weak self] in
+            let next = Self.computeRefresh(priorMtime: priorMtime)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.refreshInFlight = false
+                guard let next else { return }
+                self.cached = next
+                self.mapVersion = next.mtime.timeIntervalSinceReferenceDate
+            }
+        }
     }
 
-    private func refreshIfStale() {
-        let now = Date()
-        if cached != nil, now.timeIntervalSince(lastCheckedAt) < stalenessCheckTTL { return }
-        lastCheckedAt = now
-        // Route through `RestorableAgentKind.claude.hookStoreFileURL()` so the
-        // `CMUX_AGENT_HOOK_STATE_DIR` override is honored — otherwise Casper
-        // reads `~/.cmuxterm/...` while the hook writer (Resources/bin/claude)
-        // writes to the override dir, and per-workspace attribution silently
-        // falls through to the cwd fallback for every session.
+    private static func computeRefresh(priorMtime: Date?) -> CachedState? {
+        // Route through `RestorableAgentKind.claude.hookStoreFileURL()` so
+        // the `CMUX_AGENT_HOOK_STATE_DIR` override is honored — otherwise
+        // Casper reads `~/.cmuxterm/...` while the hook writer
+        // (Resources/bin/claude) writes to the override dir, and
+        // per-workspace attribution silently falls through to the cwd
+        // fallback. The function is non-isolated, safe to call from this
+        // background queue.
         let path = RestorableAgentKind.claude.hookStoreFileURL().path
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let mtime = attrs[.modificationDate] as? Date
-        else {
-            cached = nil
-            return
-        }
-        if let cached, cached.mtime == mtime { return }
-        cached = CachedState(mtime: mtime, map: Self.parse(path: path))
+        else { return nil }
+        if priorMtime == mtime { return nil }
+        return CachedState(mtime: mtime, map: parse(path: path))
     }
 
     private static func parse(path: String) -> [UUID: [String]] {
@@ -598,22 +630,22 @@ final class CasperClaudeActivityStore: ObservableObject {
                         changed = true
                     }
                 }
+                // Single publish + disk-save when (and only when) at least one
+                // workspace's date changed. Skipping the publish on a no-op
+                // scan is the whole point: the row's relative-time text
+                // updates via TimelineView, and TabItemView.Equatable forces
+                // a re-render whenever a date actually changes — so a
+                // best-effort publish here would only trigger wasted sidebar
+                // body re-evals (which re-walk all the JSONL-path stats).
                 if changed {
                     self.latestActivityByWorkspace = snapshot
+                    self.scheduleDiskSave()
                 }
                 #if DEBUG
                 cmuxDebugLog(
                     "casper.claudeActivity.refresh.publish changed=\(changed) storeCount=\(self.latestActivityByWorkspace.count)"
                 )
                 #endif
-                if changed {
-                    self.scheduleDiskSave()
-                }
-                // No-op when nothing changed: the row's relative-time text
-                // updates via TimelineView, and TabItemView.Equatable forces
-                // a re-render whenever a date actually changes — so a
-                // best-effort publish here only triggers wasted sidebar
-                // body re-evals (which re-walk all the JSONL-path stats).
             }
         }
     }

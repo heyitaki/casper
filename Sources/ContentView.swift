@@ -9235,6 +9235,13 @@ struct VerticalTabsSidebar: View {
     // precomputed dict passed through workspaceRows. Delete with the
     // activity-state patch.
     @ObservedObject private var claudeActivityStore = CasperClaudeActivityStore.shared
+    // CASPER: claude-hook session→workspace map, refreshed off-main.
+    // Observed here so when a new session registers (mtime changes →
+    // `mapVersion` bumps), the sidebar re-evals and restarts the
+    // `.task(id:)` poll loop. Row subtrees must NOT observe this — body
+    // reads stay at the sidebar layer. Delete with the activity-state
+    // patch.
+    @ObservedObject private var claudeSessionMap = CasperClaudeSessionMap.shared
     // CASPER: workspace title search; delete if upstream adds workspace search.
     @State private var workspaceSearchQuery: String = ""
     @State private var draggedTabId: UUID?
@@ -9738,7 +9745,7 @@ struct VerticalTabsSidebar: View {
         // that should restart the poll loop: hook-file version (new
         // session registered/cleared) and the visible-workspace set.
         let claudeWorkspaceSessionsTaskID = CasperClaudeSessionsTaskID(
-            mapVersion: CasperClaudeSessionMap.shared.mapVersion,
+            mapVersion: claudeSessionMap.mapVersion,
             workspaceIDs: localWorkspaceIDs
         )
         return VStack(spacing: 0) {
