@@ -110,85 +110,98 @@ enum CasperAgentActivity {
         CasperClaudeActivityStore.shared.latestActivity(forWorkspaceID: workspace.id)
     }
 
-    /// JSONL paths to scan for this workspace's last activity:
-    /// 1. Prefer the hook records (per-session attribution via
-    ///    `~/.cmuxterm/claude-hook-sessions.json`).
-    /// 2. Fall back to every `*.jsonl` in `~/.claude/projects/<encoded-cwd>/`
-    ///    for each cwd the workspace knows about (currentDirectory + every
-    ///    panel directory). Workspaces sharing a cwd in this fallback path
-    ///    will all see the same time — `CasperClaudeActivityIO` dedupes
-    ///    identical path sets so the JSONLs are only read once per refresh.
-    /// Paths are sorted so identical sets hash identically for that dedup.
+    /// JSONL paths to scan for this workspace's last activity. Always tied
+    /// to a specific session — never aggregates across siblings:
+    /// 1. Hook records (`~/.cmuxterm/claude-hook-sessions.json`) — the
+    ///    SessionStart hook records `(workspaceId, sessionId, cwd)` per
+    ///    Claude launch.
+    /// 2. Restored agent snapshots — session persistence stores each panel's
+    ///    `(sessionId, workingDirectory)` under `terminal.agent`, so workspaces
+    ///    that came back from disk (no live hook record) still attribute to
+    ///    their own JSONL.
+    /// 3. Neither → []. We deliberately do NOT fall back to "every JSONL in
+    ///    `~/.claude/projects/<encoded-cwd>/`": that aggregated max(time)
+    ///    across every sibling session in the project dir, pegging every
+    ///    workspace sharing a cwd (e.g. all `~/code/pixie` tabs) to the
+    ///    most-recently-active sibling's time. Better to show no time than
+    ///    a wildly misleading one.
+    /// Paths are sorted so identical sets hash identically for the activity
+    /// store's per-path-set dedup.
     static func claudeJSONLPaths(
         for workspace: Workspace,
-        precomputedClaimed: Set<String>,
         now: Date = Date()
     ) -> [String] {
         // Memoize per-workspace because this is called from SwiftUI body
-        // (VerticalTabsSidebar.workspaceRows) on every re-eval — N=48 tabs
-        // × per-call directory iteration + sort was burning ~7s of every
-        // 17s body re-eval cycle. Key includes everything the body actually
-        // depends on; TTL covers the `liveCutoff` mtime transition that
-        // isn't part of the key.
+        // (VerticalTabsSidebar.workspaceRows) on every re-eval. Key contains
+        // every input the computation reads.
         let key = CasperClaudeJSONLPathsCache.Key(
             hookVersion: CasperClaudeSessionMap.shared.mapVersion,
-            currentDir: workspace.currentDirectory,
-            panelDirsHash: workspace.panelDirectories.values.sorted().hashValue,
-            agentPIDsCount: workspace.agentPIDs.count,
-            snapshotsEmpty: workspace.restoredAgentSnapshotsByPanelId.isEmpty,
-            claimedHash: precomputedClaimed.hashValue
+            snapshotsHash: claudeSnapshotSignature(for: workspace)
         )
         if let cached = CasperClaudeJSONLPathsCache.lookup(workspaceId: workspace.id, key: key, now: now) {
             return cached
         }
-        let result = computeClaudeJSONLPaths(
-            for: workspace,
-            precomputedClaimed: precomputedClaimed,
-            now: now
-        )
+        let result = computeClaudeJSONLPaths(for: workspace)
         CasperClaudeJSONLPathsCache.store(workspaceId: workspace.id, key: key, value: result, now: now)
         return result
     }
 
-    private static func computeClaudeJSONLPaths(
-        for workspace: Workspace,
-        precomputedClaimed: Set<String>,
-        now: Date
-    ) -> [String] {
+    private static func computeClaudeJSONLPaths(for workspace: Workspace) -> [String] {
         let hookPaths = CasperClaudeSessionMap.shared.jsonlPaths(forWorkspaceID: workspace.id)
         if !hookPaths.isEmpty { return hookPaths.sorted() }
-        // Cwd fallback is only safe when this workspace has actually had an
-        // agent — otherwise a fresh workspace defaulting to ~/code/cmux would
-        // inherit the newest non-live JSONL in that project dir (e.g. "2d")
-        // even though no agent ever ran here.
-        let hasAgentEvidence = !workspace.agentPIDs.isEmpty
-            || !workspace.restoredAgentSnapshotsByPanelId.isEmpty
-        guard hasAgentEvidence else { return [] }
-        var cwds: Set<String> = []
-        let trimmedCurrent = workspace.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedCurrent.isEmpty { cwds.insert(trimmedCurrent) }
-        for dir in workspace.panelDirectories.values {
-            let trimmed = dir.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { cwds.insert(trimmed) }
+        return claudeSnapshotJSONLPaths(for: workspace).sorted()
+    }
+
+    /// Session-attributed fallback paths used when the live hook map has no
+    /// record for this workspace — typically because the workspace was
+    /// restored from session persistence and Claude hasn't relaunched yet.
+    /// Returns `[]` when there are no claude snapshots: the caller treats
+    /// that as "no attribution available" and surfaces no trailing time
+    /// rather than risk a misleading aggregate across siblings.
+    private static func claudeSnapshotJSONLPaths(for workspace: Workspace) -> [String] {
+        let home = NSHomeDirectory() as NSString
+        // Dedup so two panels sharing the same `(sessionId, cwd)` produce one
+        // path — keeps the activity store's per-path-set grouping aligned with
+        // single-panel workspaces pointing at the same JSONL.
+        var paths: Set<String> = []
+        for (sid, cwd) in validClaudeSnapshots(for: workspace) {
+            let encoded = cwd.replacingOccurrences(of: "/", with: "-")
+            paths.insert(home.appendingPathComponent(".claude/projects/\(encoded)/\(sid).jsonl"))
         }
-        // Exclude (a) JSONLs claimed by another *local* workspace's hook
-        // record (caller passes `precomputedClaimed` so we don't rebuild that
-        // set per workspace) and (b) JSONLs currently being written (mtime
-        // within last 120s, i.e. "live" sessions like the user's current
-        // Claude conversation).
-        let liveCutoff: TimeInterval = 120
-        var allPaths: [String] = []
-        for cwd in cwds {
-            for path in CasperClaudeProjectDirMap.shared.jsonlPaths(forCwd: cwd) {
-                if precomputedClaimed.contains(path) { continue }
-                if let mtime = CasperFileMtimeCache.mtime(for: path, now: now),
-                   now.timeIntervalSince(mtime) < liveCutoff {
-                    continue
-                }
-                allPaths.append(path)
+        return Array(paths)
+    }
+
+    /// Stable hash of the workspace's claude snapshot identity for cache
+    /// keying. Pairs are sorted so the value doesn't depend on dict
+    /// iteration order.
+    private static func claudeSnapshotSignature(for workspace: Workspace) -> Int {
+        let pairs = validClaudeSnapshots(for: workspace)
+            .sorted { lhs, rhs in
+                lhs.sid == rhs.sid ? lhs.cwd < rhs.cwd : lhs.sid < rhs.sid
             }
+        var hasher = Hasher()
+        for pair in pairs {
+            hasher.combine(pair.sid)
+            hasher.combine(pair.cwd)
         }
-        return allPaths.sorted()
+        return hasher.finalize()
+    }
+
+    /// `(sessionId, workingDirectory)` pairs from this workspace's restored
+    /// claude snapshots, with empty/whitespace entries dropped. Shared by
+    /// `claudeSnapshotJSONLPaths` (path builder) and `claudeSnapshotSignature`
+    /// (cache key) so the validation rules can't drift between them.
+    private static func validClaudeSnapshots(
+        for workspace: Workspace
+    ) -> [(sid: String, cwd: String)] {
+        workspace.restoredAgentSnapshotsByPanelId.values.compactMap { snapshot in
+            guard snapshot.kind == .claude else { return nil }
+            let sid = snapshot.sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !sid.isEmpty else { return nil }
+            let cwd = (snapshot.workingDirectory ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cwd.isEmpty else { return nil }
+            return (sid, cwd)
+        }
     }
 
     /// Sort comparator: pinned-first, then activity-desc with `.none` last.
@@ -277,11 +290,10 @@ final class CasperClaudeSessionMap {
     private var cached: CachedState?
     private var lastCheckedAt: Date = .distantPast
     /// Skip the hook-file stat on repeat reads within this window. At N=50
-    /// workspaces with no hook records, `claudeJSONLPaths(for:)` would
-    /// otherwise stat this file 100× per sidebar body re-eval (twice per
-    /// workspace, via the `jsonlPaths(forWorkspaceID:)` +
-    /// `claimedJSONLPaths(forLocalWorkspaceIDs:)` pair). 2s is short enough
-    /// that a freshly registered session shows up almost immediately.
+    /// workspaces, `claudeJSONLPaths(for:)` would otherwise stat this file
+    /// 50× per sidebar body re-eval via `jsonlPaths(forWorkspaceID:)`. 2s
+    /// is short enough that a freshly registered session shows up almost
+    /// immediately.
     private let stalenessCheckTTL: TimeInterval = 2.0
 
     func jsonlPaths(forWorkspaceID id: UUID) -> [String] {
@@ -296,27 +308,6 @@ final class CasperClaudeSessionMap {
     var mapVersion: TimeInterval {
         refreshIfStale()
         return cached?.mtime.timeIntervalSinceReferenceDate ?? 0
-    }
-
-    /// Paths claimed by the given set of *local* workspaces' hook records.
-    /// The cwd fallback uses this to skip JSONLs that already belong to a
-    /// known local workspace — without it, that workspace's session timestamp
-    /// leaks into every sibling sharing the same cwd.
-    ///
-    /// Scoped to local IDs because `~/.cmuxterm/claude-hook-sessions.json` is
-    /// shared across bundle IDs (Casper Preview, pinned Casper, dev cmux all
-    /// write to it). Records for workspaces in other apps must not suppress
-    /// this app's fallback candidates — those workspace UUIDs don't exist
-    /// here, so we have no way to display the times those records would
-    /// otherwise hide.
-    func claimedJSONLPaths(forLocalWorkspaceIDs ids: Set<UUID>) -> Set<String> {
-        refreshIfStale()
-        guard let map = cached?.map, !ids.isEmpty else { return [] }
-        var out = Set<String>()
-        for id in ids {
-            if let paths = map[id] { out.formUnion(paths) }
-        }
-        return out
     }
 
     private func refreshIfStale() {
@@ -369,30 +360,6 @@ struct CasperClaudeSessionsTaskID: Hashable {
     let workspaceIDs: Set<UUID>
 }
 
-/// Per-file mtime cache with a short TTL. Used by the cwd fallback to
-/// avoid stat()-ing every JSONL on every sidebar body re-eval.
-@MainActor
-enum CasperFileMtimeCache {
-    private static var cache: [String: (checkedAt: Date, mtime: Date?)] = [:]
-    /// Cap so a long-running app accumulating thousands of seen JSONLs
-    /// (months of `~/.claude/projects/*/*.jsonl`) doesn't grow the dict
-    /// unboundedly. When the cap trips we drop entries whose `checkedAt`
-    /// is older than the TTL — they would re-stat on next access anyway.
-    private static let maxEntries = 1024
-
-    static func mtime(for path: String, now: Date = Date(), ttl: TimeInterval = 10) -> Date? {
-        if let cached = cache[path], now.timeIntervalSince(cached.checkedAt) < ttl {
-            return cached.mtime
-        }
-        if cache.count >= maxEntries {
-            cache = cache.filter { now.timeIntervalSince($0.value.checkedAt) < ttl }
-        }
-        let mtime = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
-        cache[path] = (now, mtime)
-        return mtime
-    }
-}
-
 /// Per-workspace memoization of `CasperAgentActivity.claudeJSONLPaths`.
 /// The function runs inside `VerticalTabsSidebar.workspaceRows`' reduce on
 /// every body re-eval (driven by the 20s `latestActivityByWorkspace`
@@ -401,18 +368,14 @@ enum CasperFileMtimeCache {
 @MainActor
 enum CasperClaudeJSONLPathsCache {
     struct Key: Hashable {
+        /// `CasperClaudeSessionMap.mapVersion` — bumps whenever the hook
+        /// store file is reparsed.
         let hookVersion: TimeInterval
-        let currentDir: String
-        let panelDirsHash: Int
-        let agentPIDsCount: Int
-        let snapshotsEmpty: Bool
-        /// Content-hash of the `precomputedClaimed` set. Counting alone
-        /// would alias two sets of equal cardinality but different members
-        /// (one workspace claims a path while another drops one) into a
-        /// single key, returning stale path lists. `Set.hashValue` uses
-        /// the process-randomized hash seed, so this Key is in-process
-        /// only — never persist it.
-        let claimedHash: Int
+        /// Content hash of the workspace's `(sessionId, workingDirectory)`
+        /// claude restored-snapshot pairs. `Set.hashValue` uses the
+        /// process-randomized hash seed, so this Key is in-process only —
+        /// never persist it.
+        let snapshotsHash: Int
     }
     private struct Entry {
         let key: Key
@@ -445,64 +408,6 @@ enum CasperClaudeJSONLPathsCache {
     }
 }
 
-/// Fallback path resolver for workspaces that have no Claude hook record:
-/// returns every `*.jsonl` file in `~/.claude/projects/<encoded-cwd>/`.
-/// Cached on the project dir's mtime (changes when a JSONL is added/removed
-/// — which is what we care about; per-file content changes are handled by
-/// the activity store's poll loop).
-@MainActor
-final class CasperClaudeProjectDirMap {
-    static let shared = CasperClaudeProjectDirMap()
-
-    private struct CachedDir {
-        let checkedAt: Date
-        let mtime: Date
-        let paths: [String]
-    }
-    private var cache: [String: CachedDir] = [:]
-    /// Same reason as `CasperClaudeSessionMap.stalenessCheckTTL` — without this
-    /// every body re-eval stats `~/.claude/projects/<encoded-cwd>` once per
-    /// unique cwd. 2s lets a new JSONL appearing in a project dir surface
-    /// within the same poll cycle.
-    private let stalenessCheckTTL: TimeInterval = 2.0
-    /// Cap so closed-workspace cwds don't accumulate indefinitely. On
-    /// overflow drop entries past their TTL — they'd re-stat on next access
-    /// anyway. Same pattern as `CasperFileMtimeCache` / `CasperClaudeJSONLPathsCache`.
-    private let maxEntries = 128
-
-    func jsonlPaths(forCwd cwd: String) -> [String] {
-        let now = Date()
-        if let entry = cache[cwd], now.timeIntervalSince(entry.checkedAt) < stalenessCheckTTL {
-            return entry.paths
-        }
-        let encoded = cwd.replacingOccurrences(of: "/", with: "-")
-        let projectDir = (NSHomeDirectory() as NSString)
-            .appendingPathComponent(".claude/projects/\(encoded)")
-        let fm = FileManager.default
-        guard let attrs = try? fm.attributesOfItem(atPath: projectDir),
-              let mtime = attrs[.modificationDate] as? Date
-        else {
-            cache.removeValue(forKey: cwd)
-            return []
-        }
-        if let entry = cache[cwd], entry.mtime == mtime {
-            cache[cwd] = CachedDir(checkedAt: now, mtime: entry.mtime, paths: entry.paths)
-            return entry.paths
-        }
-        if cache.count >= maxEntries, cache[cwd] == nil {
-            cache = cache.filter { now.timeIntervalSince($0.value.checkedAt) < stalenessCheckTTL }
-        }
-        guard let entries = try? fm.contentsOfDirectory(atPath: projectDir) else {
-            return []
-        }
-        let paths = entries
-            .filter { $0.hasSuffix(".jsonl") }
-            .map { (projectDir as NSString).appendingPathComponent($0) }
-        cache[cwd] = CachedDir(checkedAt: now, mtime: mtime, paths: paths)
-        return paths
-    }
-}
-
 /// MainActor snapshot of "latest real-activity timestamp per workspace"
 /// derived from each workspace's recorded Claude Code JSONL session files.
 /// Reads are pure dict lookups; refreshes are dispatched to a background
@@ -532,8 +437,14 @@ final class CasperClaudeActivityStore: ObservableObject {
     /// the off-main JSONL scan still runs and overwrites with fresh values
     /// within ~1s, but the user sees something immediately instead of an
     /// empty trailing column on cold start.
+    ///
+    /// `-v2` suffix: the v1 cache was populated by the cwd-aggregate fallback
+    /// in `computeClaudeJSONLPaths`, which leaked the most-recently-active
+    /// sibling session's timestamp to every workspace sharing a project root.
+    /// Renaming the file ensures the first cold start after the per-session
+    /// attribution fix paints from a fresh scan rather than the stale v1 map.
     private static let cacheURL: URL = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".cmuxterm/casper-claude-activity-cache.json")
+        .appendingPathComponent(".cmuxterm/casper-claude-activity-cache-v2.json")
 
     init() {
         // Disk read + JSON parse runs off-main so the first `.shared`

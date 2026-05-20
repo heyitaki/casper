@@ -9723,17 +9723,11 @@ struct VerticalTabsSidebar: View {
         // activityByID already keys on every filteredTab id; reuse it instead
         // of a second .map pass over filteredTabs.
         let localWorkspaceIDs: Set<UUID> = Set(activityByID.keys)
-        // Hoist the cross-workspace claimed-paths set out of the per-tab loop;
-        // without it `claudeJSONLPaths` rebuilds the same Set<String> N times
-        // per render.
-        let claimedJSONLPaths = CasperClaudeSessionMap.shared
-            .claimedJSONLPaths(forLocalWorkspaceIDs: localWorkspaceIDs)
         let claudeNow = Date()
         let claudeWorkspaceSessions: [UUID: [String]] = filteredTabs
             .reduce(into: [UUID: [String]]()) { acc, tab in
                 let paths = CasperAgentActivity.claudeJSONLPaths(
                     for: tab,
-                    precomputedClaimed: claimedJSONLPaths,
                     now: claudeNow
                 )
                 if !paths.isEmpty { acc[tab.id] = paths }
