@@ -904,6 +904,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private static let commandPalettePendingOpenMaxAge: TimeInterval = 8.0
     private static let sessionAutosaveTypingQuietPeriod: TimeInterval = 0.65
 
+    /// True when a modal window is up or the key window has an attached sheet —
+    /// the only AppKit states in which an `NSAlert` (incl. close-confirmation
+    /// alerts) can be on screen. Used to gate keystroke-hot-path scans.
+    private var isModalOrSheetPresented: Bool {
+        NSApp.modalWindow != nil || NSApp.keyWindow?.attachedSheet != nil
+    }
+
     var updateViewModel: UpdateViewModel {
         updateController.viewModel
     }
@@ -10862,21 +10869,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         // Don't steal shortcuts from close-confirmation alerts. Keep standard alert key
         // equivalents working and avoid surprising actions while the confirmation is up.
-        let closeConfirmationTitles = [
-            String(localized: "dialog.closeWorkspace.title", defaultValue: "Close workspace?"),
-            String(localized: "dialog.closeWorkspaces.title", defaultValue: "Close workspaces?"),
-            String(localized: "dialog.closeTab.title", defaultValue: "Close tab?"),
-            String(localized: "dialog.closeOtherTabs.title", defaultValue: "Close other tabs?"),
-            String(localized: "dialog.closeWindow.title", defaultValue: "Close window?"),
-        ]
-        let closeConfirmationPanel = NSApp.windows
-            .compactMap { $0 as? NSPanel }
-            .first { panel in
-                guard panel.isVisible, let root = panel.contentView else { return false }
-                return closeConfirmationTitles.contains { title in
-                    findStaticText(in: root, equals: title)
+        // The recursive view-tree scan runs only when an alert can actually be present
+        // (see `isModalOrSheetPresented`) — every keystroke would otherwise pay for it.
+        let closeConfirmationPanel: NSPanel? = {
+            guard isModalOrSheetPresented else { return nil }
+            let titles = [
+                String(localized: "dialog.closeWorkspace.title", defaultValue: "Close workspace?"),
+                String(localized: "dialog.closeWorkspaces.title", defaultValue: "Close workspaces?"),
+                String(localized: "dialog.closeTab.title", defaultValue: "Close tab?"),
+                String(localized: "dialog.closeOtherTabs.title", defaultValue: "Close other tabs?"),
+                String(localized: "dialog.closeWindow.title", defaultValue: "Close window?"),
+            ]
+            return NSApp.windows
+                .compactMap { $0 as? NSPanel }
+                .first { panel in
+                    guard panel.isVisible, let root = panel.contentView else { return false }
+                    return titles.contains { title in
+                        findStaticText(in: root, equals: title)
+                    }
                 }
-            }
+        }()
         if let closeConfirmationPanel {
             // Special-case: Cmd+D should confirm destructive close on alerts.
             // XCUITest key events often hit the app-level local monitor first, so forward the key
@@ -10896,7 +10908,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return false
         }
 
-        if NSApp.modalWindow != nil || NSApp.keyWindow?.attachedSheet != nil {
+        if isModalOrSheetPresented {
             return false
         }
 
@@ -12949,7 +12961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func shouldSuppressStaleCmuxMenuShortcut(event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
-        if event.window is NSPanel || NSApp.keyWindow is NSPanel || NSApp.modalWindow != nil || NSApp.keyWindow?.attachedSheet != nil {
+        if event.window is NSPanel || NSApp.keyWindow is NSPanel || isModalOrSheetPresented {
             return false
         }
         let flags = event.modifierFlags

@@ -5504,6 +5504,8 @@ final class TerminalSurface: Identifiable, ObservableObject {
 
     /// Force a full size recalculation and surface redraw.
     func forceRefresh(reason: String = "unspecified") {
+        // Keystroke hot path: do not add release-build allocations before the guard.
+        #if DEBUG
         let hasSurface = surface != nil
         let viewState: String
         if let view = attachedView {
@@ -5514,7 +5516,6 @@ final class TerminalSurface: Identifiable, ObservableObject {
         } else {
             viewState = "NO_ATTACHED_VIEW hasSurface=\(hasSurface)"
         }
-        #if DEBUG
         cmuxDebugLog("forceRefresh: \(id) reason=\(reason) \(viewState)")
         #endif
         guard let view = attachedView,
