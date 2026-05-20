@@ -509,8 +509,10 @@ class TerminalController {
         private let queue = DispatchQueue(label: "com.cmux.socket-fast-path")
         private var lastReportedDirectories: [SocketSurfaceKey: String] = [:]
         private var lastReportedShellStates: [SocketSurfaceKey: Workspace.PanelShellActivityState] = [:]
+        private var lastReportedPorts: [SocketSurfaceKey: [Int]] = [:]
         private let maxTrackedDirectories = 4096
         private let maxTrackedShellStates = 4096
+        private let maxTrackedPorts = 4096
 
         func shouldPublishDirectory(workspaceId: UUID, panelId: UUID, directory: String) -> Bool {
             let key = SocketSurfaceKey(workspaceId: workspaceId, panelId: panelId)
@@ -540,6 +542,23 @@ class TerminalController {
                     lastReportedShellStates.removeAll(keepingCapacity: true)
                 }
                 lastReportedShellStates[key] = state
+                return true
+            }
+        }
+
+        /// Off-main dedup for `report_ports`. Caller passes the already-normalized
+        /// (sorted + uniqued) port list so equality comparison is O(n) without
+        /// re-allocating Sets per call.
+        func shouldPublishPorts(workspaceId: UUID, panelId: UUID, normalizedPorts: [Int]) -> Bool {
+            let key = SocketSurfaceKey(workspaceId: workspaceId, panelId: panelId)
+            return queue.sync {
+                if lastReportedPorts[key] == normalizedPorts {
+                    return false
+                }
+                if lastReportedPorts.count >= maxTrackedPorts {
+                    lastReportedPorts.removeAll(keepingCapacity: true)
+                }
+                lastReportedPorts[key] = normalizedPorts
                 return true
             }
         }
@@ -16890,7 +16909,40 @@ class TerminalController {
             }
             ports.append(port)
         }
+        let normalizedPorts = Array(Set(ports)).sorted()
 
+        // Fast path: when cmuxd supplies explicit --tab/--panel scope, dedup off
+        // the main actor and dispatch the mutation asynchronously. This is the
+        // socket-thread hot path during deploys that bind many listening ports —
+        // a synchronous `v2MainSync` hop here can convoy behind in-flight sidebar
+        // re-renders and freeze the app. Required by the "Socket command
+        // threading policy" in CLAUDE.md.
+        if let scope = Self.explicitSocketScope(options: parsed.options) {
+            guard Self.socketFastPathState.shouldPublishPorts(
+                workspaceId: scope.workspaceId,
+                panelId: scope.panelId,
+                normalizedPorts: normalizedPorts
+            ) else {
+                return "OK"
+            }
+            TerminalMutationBus.shared.enqueueMainActorMutation {
+                guard let tabManager = AppDelegate.shared?.tabManagerFor(tabId: scope.workspaceId),
+                      let tab = tabManager.tabs.first(where: { $0.id == scope.workspaceId }) else {
+                    return
+                }
+                let validSurfaceIds = Set(tab.panels.keys)
+                tab.pruneSurfaceMetadata(validSurfaceIds: validSurfaceIds)
+                guard validSurfaceIds.contains(scope.panelId) else { return }
+                if Self.shouldReplacePorts(current: tab.surfaceListeningPorts[scope.panelId], next: ports) {
+                    tab.surfaceListeningPorts[scope.panelId] = ports.isEmpty ? nil : ports
+                    tab.recomputeListeningPorts()
+                }
+            }
+            return "OK"
+        }
+
+        // Legacy fallback for ad-hoc CLI/test invocations without --tab/--panel.
+        // Keeps synchronous error reporting; not on the high-frequency deploy path.
         var result = "OK"
         v2MainSync {
             guard let tab = resolveTabForReport(args) else {
@@ -16926,9 +16978,6 @@ class TerminalController {
                 return
             }
 
-            // CASPER: gate the @Published write so idle workspaces
-            // reporting the same port set don't emit objectWillChange.
-            // Delete if upstream gates this assignment.
             if Self.shouldReplacePorts(current: tab.surfaceListeningPorts[surfaceId], next: ports) {
                 tab.surfaceListeningPorts[surfaceId] = ports.isEmpty ? nil : ports
                 tab.recomputeListeningPorts()
