@@ -9,15 +9,16 @@ enum CasperFindFileIcon {
     /// Returns a tinted SF Symbol that represents the file's type, picked from
     /// its filename / extension. The caller is expected to apply the tint via
     /// `NSImageView.contentTintColor` using `symbolTint(forRelativePath:)`.
+    ///
+    /// The returned `NSImage` is shared from a process-wide cache keyed on the
+    /// SF Symbol name — Find-sidebar group headers reconfigure on every
+    /// snapshot and on every scroll tick (sticky-header tracking), and
+    /// `NSImage(systemSymbolName:)` + `withSymbolConfiguration` alone are
+    /// ~10× more expensive than a dictionary lookup. Treat the result as
+    /// shared: do not mutate per-call (callers only set it on
+    /// `NSImageView.image`, which AppKit handles safely).
     static func symbol(forRelativePath relativePath: String) -> NSImage {
-        let name = symbolName(forRelativePath: relativePath)
-        let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
-        let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)
-            ?? NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
-            ?? NSImage()
-        let configured = base.withSymbolConfiguration(config) ?? base
-        configured.isTemplate = true
-        return configured
+        cachedSymbol(named: resolve(forRelativePath: relativePath).name)
     }
 
     /// Returns a language-specific tint color for the file's icon. Approximates
@@ -25,9 +26,82 @@ enum CasperFindFileIcon {
     /// scan of the sidebar tells the user what language each result is in,
     /// rather than every file looking like the same grey glyph.
     static func symbolTint(forRelativePath relativePath: String) -> NSColor {
-        let ext = (relativePath as NSString).pathExtension.lowercased()
-        if let color = extensionTints[ext] { return color }
-        return .secondaryLabelColor
+        resolve(forRelativePath: relativePath).tint
+    }
+
+    /// Combined lookup that derives the relative path's filename/extension
+    /// once and resolves both the cached symbol image and tint in one shot.
+    /// Cell views should prefer this over calling `symbol` + `symbolTint`
+    /// independently — those two each repeat the NSString cast + dictionary
+    /// lookups on the same path.
+    static func icon(forRelativePath relativePath: String) -> (image: NSImage, tint: NSColor) {
+        let resolved = resolve(forRelativePath: relativePath)
+        return (cachedSymbol(named: resolved.name), resolved.tint)
+    }
+
+    // CASPER: single resolution path for symbol name + tint. Keeping this in
+    // one helper means a future map edit (extension precedence, fallback
+    // symbol, new exact-name rule) lands in exactly one place rather than
+    // having to be mirrored across symbol/symbolTint/icon.
+    private static func resolve(forRelativePath relativePath: String) -> (name: String, tint: NSColor) {
+        let lowerName = ((relativePath as NSString).lastPathComponent).lowercased()
+        let ext = (lowerName as NSString).pathExtension
+        let name: String
+        if let exact = exactNameSymbols[lowerName] {
+            name = exact
+        } else if !ext.isEmpty, let mapped = extensionSymbols[ext] {
+            name = mapped
+        } else {
+            name = "doc.text"
+        }
+        let tint: NSColor = ext.isEmpty
+            ? .secondaryLabelColor
+            : (extensionTints[ext] ?? .secondaryLabelColor)
+        return (name, tint)
+    }
+
+    // CASPER: process-wide cache for configured symbol images keyed on SF
+    // Symbol name. Capped at a generous bound (~120 entries cover every name
+    // in the maps below); evictions are not needed in practice. Reads are
+    // dominant — sticky-header updates fire on every scroll tick — so we use
+    // an unfair lock for the rare write path rather than serialize behind a
+    // queue or actor.
+    private static let symbolCacheLock = NSLock()
+    private static var symbolCache: [String: NSImage] = [:]
+    private static let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+
+    private static func cachedSymbol(named name: String) -> NSImage {
+        symbolCacheLock.lock()
+        if let cached = symbolCache[name] {
+            symbolCacheLock.unlock()
+            return cached
+        }
+        symbolCacheLock.unlock()
+
+        let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+            ?? NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
+            ?? NSImage()
+        let configured = base.withSymbolConfiguration(symbolConfiguration) ?? base
+        configured.isTemplate = true
+
+        symbolCacheLock.lock()
+        // Another thread may have raced ahead; prefer the existing entry so
+        // every caller observes the same reference.
+        if let existing = symbolCache[name] {
+            symbolCacheLock.unlock()
+            return existing
+        }
+        symbolCache[name] = configured
+        symbolCacheLock.unlock()
+        return configured
+    }
+
+    /// Test hook — wipes the symbol cache so per-call resolution behavior can
+    /// be observed independently between cases.
+    static func _resetSymbolCacheForTests() {
+        symbolCacheLock.lock()
+        symbolCache.removeAll(keepingCapacity: true)
+        symbolCacheLock.unlock()
     }
 
     private static let extensionTints: [String: NSColor] = [
@@ -161,16 +235,6 @@ enum CasperFindFileIcon {
         "diff": .systemGreen,
         "patch": .systemGreen,
     ]
-
-    private static func symbolName(forRelativePath relativePath: String) -> String {
-        let lowerName = ((relativePath as NSString).lastPathComponent).lowercased()
-        if let exactName = exactNameSymbols[lowerName] { return exactName }
-
-        let ext = (relativePath as NSString).pathExtension.lowercased()
-        if !ext.isEmpty, let mapped = extensionSymbols[ext] { return mapped }
-
-        return "doc.text"
-    }
 
     // Filenames whose semantics outrank their extension (e.g. "Dockerfile",
     // "Makefile", lockfiles).

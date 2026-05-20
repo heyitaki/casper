@@ -68,6 +68,25 @@ final class CasperFindGroupedResultsTests: XCTestCase {
         XCTAssertEqual(groups[0].path, "/abs/root/src/Game.ts")
     }
 
+    /// Perf guardrail — grouping a 500-result snapshot must stay cheap.
+    /// `CasperFindResultsView.apply` calls this on every snapshot, including
+    /// the coalesced-tail emit at the end of a streaming search and on every
+    /// re-apply when the user toggles match-case / code-only options.
+    func testGroupPageSizedInputIsCheap() {
+        var results: [FileSearchResult] = []
+        results.reserveCapacity(500)
+        for fileIndex in 0..<100 {
+            for line in 1...5 {
+                results.append(hit("src/dir\(fileIndex % 12)/file\(fileIndex).ts", line: line))
+            }
+        }
+        measure {
+            for _ in 0..<200 {
+                _ = CasperFindGrouper.group(results)
+            }
+        }
+    }
+
     private func hit(_ relativePath: String, line: Int) -> FileSearchResult {
         FileSearchResult(
             path: "/abs/" + relativePath,

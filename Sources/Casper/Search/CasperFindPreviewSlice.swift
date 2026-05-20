@@ -48,15 +48,39 @@ enum CasperFindPreviewSlicer {
         // "…   foo" with awkward gap between the ellipsis and the first
         // visible char. Trailing whitespace is also stripped so rows that
         // happen to end on a tab/space don't render a phantom selection tail.
-        let rawSuffix = nsPreview.substring(from: sliceStart)
-        let suffixTrimmed = trimSuffixWhitespace(rawSuffix, leadingTrimAllowed: needsLeadingEllipsis)
+        // Using NSString index math (O(n)) instead of String.removeFirst/Last
+        // (O(n) per char ⇒ O(n²) for long whitespace runs).
+        var trimmedStart = sliceStart
+        let nsPreviewEnd = nsPreview.length
+        if needsLeadingEllipsis {
+            while trimmedStart < nsPreviewEnd,
+                  isWhitespace(nsPreview.character(at: trimmedStart)) {
+                trimmedStart += 1
+            }
+        }
+        var trimmedEnd = nsPreviewEnd
+        while trimmedEnd > trimmedStart,
+              isWhitespace(nsPreview.character(at: trimmedEnd - 1)) {
+            trimmedEnd -= 1
+        }
+
+        let suffixLength = trimmedEnd - trimmedStart
+        let suffixRange = NSRange(location: trimmedStart, length: suffixLength)
+        let suffixTrimmed = nsPreview.substring(with: suffixRange)
         let text = needsLeadingEllipsis ? "\u{2026}" + suffixTrimmed : suffixTrimmed
 
+        // CASPER: collect every occurrence of the query in `text` for
+        // highlight ranges. We re-scan inside `text` (not `nsPreview`) so the
+        // ranges line up with the rendered string — `text` may carry a
+        // prepended ellipsis and have a different leading/trailing whitespace
+        // profile than the source slice.
         let nsText = text as NSString
+        let textLength = nsText.length
         var matches: [NSRange] = []
+        matches.reserveCapacity(4)
         var cursor = 0
-        while cursor < nsText.length {
-            let remaining = NSRange(location: cursor, length: nsText.length - cursor)
+        while cursor < textLength {
+            let remaining = NSRange(location: cursor, length: textLength - cursor)
             let found = nsText.range(of: query, options: [.caseInsensitive], range: remaining)
             if found.location == NSNotFound { break }
             matches.append(found)
@@ -66,18 +90,22 @@ enum CasperFindPreviewSlicer {
         return CasperFindPreviewSlice(text: text, matchRanges: matches, leadingEllipsis: needsLeadingEllipsis)
     }
 
-    private static func trimSuffixWhitespace(_ suffix: String, leadingTrimAllowed: Bool) -> String {
-        var working = suffix
-        if leadingTrimAllowed {
-            // Drop any whitespace immediately after the ellipsis so the visible
-            // text starts on a real character.
-            while let first = working.first, first.isWhitespace {
-                working.removeFirst()
-            }
+    @inline(__always)
+    private static func isWhitespace(_ unit: unichar) -> Bool {
+        // Match `.whitespacesAndNewlines` for the BMP code units we care about
+        // in source-line previews. Avoids bridging each character through
+        // CharacterSet for every step of the trim loop.
+        switch unit {
+        case 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+             0x20, 0xA0,
+             0x1680,
+             0x2028, 0x2029,
+             0x202F, 0x205F, 0x3000:
+            return true
+        case 0x2000...0x200A:
+            return true
+        default:
+            return false
         }
-        while let last = working.last, last.isWhitespace {
-            working.removeLast()
-        }
-        return working
     }
 }

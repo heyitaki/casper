@@ -967,10 +967,10 @@ final class CasperFindGroupHeaderCellView: NSTableCellView {
     }
 
     func configure(with group: CasperFindFileGroup, isExpanded: Bool) {
-        let symbolName = isExpanded ? "chevron.down" : "chevron.right"
-        chevronView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
-        iconView.image = CasperFindFileIcon.symbol(forRelativePath: group.relativePath)
-        iconView.contentTintColor = CasperFindFileIcon.symbolTint(forRelativePath: group.relativePath)
+        chevronView.image = isExpanded ? Self.chevronDownImage : Self.chevronRightImage
+        let icon = CasperFindFileIcon.icon(forRelativePath: group.relativePath)
+        iconView.image = icon.image
+        iconView.contentTintColor = icon.tint
         titleLabel.attributedStringValue = Self.makeTitle(
             filename: group.filename,
             directoryDisplay: group.directoryDisplay
@@ -978,6 +978,19 @@ final class CasperFindGroupHeaderCellView: NSTableCellView {
         badgeLabel.stringValue = "\(group.hits.count)"
         toolTip = group.relativePath
     }
+
+    // CASPER: chevron images are shared singletons so toggling expansion does
+    // not re-allocate a configured NSImage per row on every snapshot apply or
+    // sticky scroll tick. AppKit caches NSImage assets, but each `NSImage(systemSymbolName:)`
+    // still returns a fresh wrapper.
+    private static let chevronDownImage: NSImage? = NSImage(
+        systemSymbolName: "chevron.down",
+        accessibilityDescription: nil
+    )
+    private static let chevronRightImage: NSImage? = NSImage(
+        systemSymbolName: "chevron.right",
+        accessibilityDescription: nil
+    )
 
     private static func makeTitle(filename: String, directoryDisplay: String) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()

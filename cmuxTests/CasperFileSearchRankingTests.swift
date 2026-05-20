@@ -80,6 +80,52 @@ final class CasperFileSearchRankingTests: XCTestCase {
         XCTAssertEqual(ranked.first?.relativePath, "UPPER/HIT.TS")
     }
 
+    /// Regression: ranker must keep hits sorted by line number when rg
+    /// happens to emit them out of order (e.g. multiline matches, reordering
+    /// inside parallelism). Earlier optimization paths skipped the per-file
+    /// sort entirely as a fast-path; this asserts the sort still runs when
+    /// arrival order isn't monotonic.
+    func testHitsResortedWhenNotMonotonic() {
+        let results = [
+            hit("a/Game.ts", line: 9),
+            hit("a/Game.ts", line: 2),
+            hit("a/Game.ts", line: 5),
+        ]
+        let ranked = CasperFileSearchRanking.apply(to: results, query: "game")
+        XCTAssertEqual(ranked.map(\.lineNumber), [2, 5, 9])
+    }
+
+    func testHitsAlreadyMonotonicStayInArrivalOrder() {
+        let results = [
+            hit("a/Game.ts", line: 1),
+            hit("a/Game.ts", line: 2),
+            hit("a/Game.ts", line: 3),
+        ]
+        let ranked = CasperFileSearchRanking.apply(to: results, query: "game")
+        XCTAssertEqual(ranked.map(\.lineNumber), [1, 2, 3])
+    }
+
+    /// Perf guardrail — a page of ~500 streamed results across ~50 files must
+    /// rank in well under a frame. `FileSearchController.appendNewlyBufferedToDisplay`
+    /// calls into this on every pipeline emit during streaming, so a
+    /// regression that reintroduced O(n²) work or chained sort allocations
+    /// would surface here.
+    func testRankPageSizedInputIsCheap() {
+        var results: [FileSearchResult] = []
+        results.reserveCapacity(500)
+        for fileIndex in 0..<50 {
+            let basename = (fileIndex % 7 == 0) ? "Game.ts" : "module\(fileIndex).ts"
+            for line in 1...10 {
+                results.append(hit("src/dir\(fileIndex)/\(basename)", line: line))
+            }
+        }
+        measure {
+            for _ in 0..<200 {
+                _ = CasperFileSearchRanking.apply(to: results, query: "game")
+            }
+        }
+    }
+
     private func hit(_ relativePath: String, line: Int) -> FileSearchResult {
         FileSearchResult(
             path: "/abs/" + relativePath,

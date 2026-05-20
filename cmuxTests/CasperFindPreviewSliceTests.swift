@@ -86,4 +86,59 @@ final class CasperFindPreviewSliceTests: XCTestCase {
         XCTAssertTrue(result.matchRanges.isEmpty)
         XCTAssertFalse(result.leadingEllipsis)
     }
+
+    /// Regression: an earlier implementation used `String.removeFirst()` /
+    /// `removeLast()` in a loop, which is O(n) per call and O(n²) over a long
+    /// whitespace run. Source-file previews of minified/blob lines with deep
+    /// leading indentation could push this into a visible cliff during scroll.
+    /// Verifies behaviour matches the original semantics: leading whitespace
+    /// dropped after the ellipsis, trailing whitespace stripped, match
+    /// rebased into the trimmed string.
+    func testLongLeadingWhitespacePrefixIsTrimmedAfterEllipsis() {
+        // 200 leading spaces + 'foo bar baz qux match' with trailing spaces.
+        let leading = String(repeating: " ", count: 200)
+        let preview = leading + "foo bar baz qux match" + String(repeating: " ", count: 50)
+        let result = CasperFindPreviewSlicer.slice(preview: preview, query: "match", leadingBudget: 12)
+        XCTAssertTrue(result.leadingEllipsis)
+        XCTAssertTrue(result.text.hasPrefix("\u{2026}"))
+        // Whitespace between ellipsis and visible text must be stripped.
+        let afterEllipsis = String(result.text.dropFirst())
+        XCTAssertFalse(afterEllipsis.first?.isWhitespace ?? true, "Whitespace after ellipsis was not trimmed")
+        // Trailing whitespace must be stripped too.
+        XCTAssertFalse(result.text.last?.isWhitespace ?? true, "Trailing whitespace was not trimmed")
+        XCTAssertEqual(result.matchRanges.count, 1)
+    }
+
+    func testTrailingWhitespaceTrimmedWhenNoEllipsis() {
+        let result = CasperFindPreviewSlicer.slice(preview: "match here    ", query: "match")
+        XCTAssertFalse(result.leadingEllipsis)
+        XCTAssertEqual(result.text, "match here")
+    }
+
+    func testUnicodeWhitespaceIsTrimmed() {
+        // U+2003 EM SPACE, U+00A0 NO-BREAK SPACE, then a regular ASCII match.
+        let leading = String(repeating: "\u{2003}", count: 50) + String(repeating: "\u{00A0}", count: 50)
+        let preview = leading + "foo bar baz qux match"
+        let result = CasperFindPreviewSlicer.slice(preview: preview, query: "match", leadingBudget: 12)
+        XCTAssertTrue(result.leadingEllipsis)
+        let afterEllipsis = String(result.text.dropFirst())
+        XCTAssertFalse(afterEllipsis.first?.isWhitespace ?? true, "Unicode whitespace after ellipsis was not trimmed")
+    }
+
+    /// Perf guardrail — slicing a single visible hit cell must stay fast even
+    /// with a worst-case long-line preview. The Find sidebar's
+    /// `refreshVisibleHitCells()` walks every visible row on snapshot apply,
+    /// so a regression that reintroduced quadratic trim would show up here as
+    /// a 100×+ slowdown.
+    func testLongLineSliceIsCheap() {
+        let leading = String(repeating: " ", count: 200)
+        let body = String(repeating: "foo bar baz ", count: 25)
+        let trailing = String(repeating: " ", count: 100)
+        let preview = leading + body + "needle" + trailing
+        measure {
+            for _ in 0..<2000 {
+                _ = CasperFindPreviewSlicer.slice(preview: preview, query: "needle")
+            }
+        }
+    }
 }
