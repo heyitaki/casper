@@ -214,4 +214,122 @@ final class RestorableAgentNonInteractiveTests: XCTestCase {
         XCTAssertNil(factoryExec.resumeCommand)
         XCTAssertNil(qoderPrint.resumeCommand)
     }
+
+    func testClaudeOrphanHookEntryFallsBackToFreshLaunchWithNotice() throws {
+        let fileManager = FileManager.default
+        let homeDirectory = try fileManager.url(
+            for: .itemReplacementDirectory,
+            in: .userDomainMask,
+            appropriateFor: URL(fileURLWithPath: NSTemporaryDirectory()),
+            create: true
+        )
+        defer { try? fileManager.removeItem(at: homeDirectory) }
+
+        let cwd = homeDirectory.appendingPathComponent("workspaces/code-cmux").path
+        try fileManager.createDirectory(
+            at: URL(fileURLWithPath: cwd, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        let orphan = SessionRestorableAgentSnapshot(
+            kind: .claude,
+            sessionId: "orphan-session-aaaa-bbbb",
+            workingDirectory: cwd,
+            launchCommand: AgentLaunchCommandSnapshot(
+                launcher: "claude",
+                executablePath: "/opt/bin/claude",
+                arguments: ["/opt/bin/claude", "--dangerously-skip-permissions"],
+                workingDirectory: cwd,
+                environment: nil,
+                capturedAt: nil,
+                source: "test"
+            )
+        )
+
+        let temporaryDirectory = homeDirectory.appendingPathComponent("tmp", isDirectory: true)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+
+        let startup = orphan.resumeStartupInput(
+            fileManager: fileManager,
+            temporaryDirectory: temporaryDirectory,
+            homeDirectory: homeDirectory.path
+        )
+
+        XCTAssertNotNil(startup, "orphan should produce a fresh-launch fallback startup input")
+        let input = startup ?? ""
+        // The fresh-launch path runs through the script store for any non-trivially-short
+        // command, so check both the inline and script-launching shapes.
+        let inlineHasNotice = input.contains("cmux: previous Claude session orphan-session-aaaa-bbbb was orphaned")
+            && input.contains("'/opt/bin/claude' '--dangerously-skip-permissions'")
+            && !input.contains("--resume")
+        if !inlineHasNotice {
+            XCTAssertTrue(input.hasPrefix("/bin/zsh "), "expected zsh script invocation, got: \(input)")
+            let scriptPath = String(input.dropFirst("/bin/zsh ".count).dropLast(/* trailing \n */ 1))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "'"))
+            let body = try String(contentsOfFile: scriptPath, encoding: .utf8)
+            XCTAssertTrue(body.contains("cmux: previous Claude session orphan-session-aaaa-bbbb was orphaned"))
+            XCTAssertTrue(body.contains("'/opt/bin/claude' '--dangerously-skip-permissions'"))
+            XCTAssertFalse(body.contains("--resume"))
+        }
+    }
+
+    func testClaudeWithTranscriptOnDiskStillProducesResumeStartup() throws {
+        let fileManager = FileManager.default
+        let homeDirectory = try fileManager.url(
+            for: .itemReplacementDirectory,
+            in: .userDomainMask,
+            appropriateFor: URL(fileURLWithPath: NSTemporaryDirectory()),
+            create: true
+        )
+        defer { try? fileManager.removeItem(at: homeDirectory) }
+
+        let cwd = homeDirectory.appendingPathComponent("workspaces/code-cmux").path
+        try fileManager.createDirectory(
+            at: URL(fileURLWithPath: cwd, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        let sessionId = "live-session-cccc-dddd"
+        let encoded = cwd.replacingOccurrences(of: "/", with: "-")
+        let projectsDir = homeDirectory
+            .appendingPathComponent(".claude/projects/\(encoded)", isDirectory: true)
+        try fileManager.createDirectory(at: projectsDir, withIntermediateDirectories: true)
+        try Data().write(to: projectsDir.appendingPathComponent("\(sessionId).jsonl"))
+
+        let live = SessionRestorableAgentSnapshot(
+            kind: .claude,
+            sessionId: sessionId,
+            workingDirectory: cwd,
+            launchCommand: AgentLaunchCommandSnapshot(
+                launcher: "claude",
+                executablePath: "/opt/bin/claude",
+                arguments: ["/opt/bin/claude"],
+                workingDirectory: cwd,
+                environment: nil,
+                capturedAt: nil,
+                source: "test"
+            )
+        )
+
+        let temporaryDirectory = homeDirectory.appendingPathComponent("tmp", isDirectory: true)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+
+        let startup = live.resumeStartupInput(
+            fileManager: fileManager,
+            temporaryDirectory: temporaryDirectory,
+            homeDirectory: homeDirectory.path
+        )
+        XCTAssertNotNil(startup)
+        XCTAssertTrue(startup?.contains("--resume") == true)
+        XCTAssertFalse(startup?.contains("cmux: previous Claude session") ?? false)
+    }
+
+    func testClaudeTranscriptExistenceFallsBackToTrueWithoutCwd() {
+        XCTAssertTrue(RestorableAgentSessionIndex.claudeTranscriptExists(
+            sessionId: "any-session",
+            workingDirectory: nil,
+            homeDirectory: NSHomeDirectory(),
+            fileManager: .default
+        ))
+    }
 }

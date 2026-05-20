@@ -752,7 +752,7 @@ extension Workspace {
             )
             let autoResumeAgentSessions = AgentSessionAutoResumeSettings.isEnabled()
             let restoredAgentResumeInput = autoResumeAgentSessions
-                ? restorableAgent?.resumeStartupInput()
+                ? restorableAgent?.resumeStartupInput(homeDirectory: NSHomeDirectory())
                 : nil
 #if DEBUG
             if let restorableAgent {

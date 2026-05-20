@@ -36,7 +36,65 @@ enum AgentResumeCommandBuilder {
               !argv.isEmpty else {
             return nil
         }
+        return assembleShellCommand(
+            kind: kind,
+            argv: argv,
+            launchCommand: launchCommand,
+            workingDirectory: workingDirectory,
+            registrationOverride: customRegistration,
+            includeWorkingDirectoryPrefix: includeWorkingDirectoryPrefix
+        )
+    }
 
+    /// Builds the shell command for *starting a fresh agent* (no resume). Used
+    /// as a fallback when the recorded session is orphaned (e.g. Claude's
+    /// transcript file is missing). Preserves cwd + environment from the
+    /// original launch so the new process inherits auth selection etc.
+    static func freshLaunchShellCommand(
+        kind: RestorableAgentKind,
+        launchCommand: AgentLaunchCommandSnapshot?,
+        workingDirectory: String?,
+        registrationOverride: CmuxVaultAgentRegistration? = nil,
+        includeWorkingDirectoryPrefix: Bool = true
+    ) -> String? {
+        let metadata = agentMetadata(kind: kind, registration: registrationOverride)
+        let original = commandParts(
+            launchCommand: launchCommand,
+            fallbackExecutable: metadata.executable
+        )
+        let preservedTail: [String]
+        if let sanitizerKey = metadata.sanitizerKey {
+            guard let preserved = AgentLaunchSanitizer.preservedArguments(
+                kind: sanitizerKey,
+                args: original.tail
+            ) else {
+                return nil
+            }
+            preservedTail = preserved
+        } else {
+            preservedTail = original.tail
+        }
+        return assembleShellCommand(
+            kind: kind,
+            argv: [original.executable] + preservedTail,
+            launchCommand: launchCommand,
+            workingDirectory: workingDirectory,
+            registrationOverride: registrationOverride,
+            includeWorkingDirectoryPrefix: includeWorkingDirectoryPrefix
+        )
+    }
+
+    /// Shared tail of `resumeShellCommand` / `freshLaunchShellCommand`: prepend
+    /// preserved env vars as an `env …` prefix, quote everything, and add a
+    /// `cd <cwd> &&` prefix when one was requested.
+    private static func assembleShellCommand(
+        kind: RestorableAgentKind,
+        argv: [String],
+        launchCommand: AgentLaunchCommandSnapshot?,
+        workingDirectory: String?,
+        registrationOverride: CmuxVaultAgentRegistration?,
+        includeWorkingDirectoryPrefix: Bool
+    ) -> String {
         var commandParts: [String] = []
         let environmentParts = launchEnvironmentParts(kind: kind, environment: launchCommand?.environment)
         if !environmentParts.isEmpty {
@@ -44,15 +102,42 @@ enum AgentResumeCommandBuilder {
             commandParts.append(contentsOf: environmentParts)
         }
         commandParts.append(contentsOf: argv)
-
         var shellCommand = commandParts.map(shellSingleQuoted).joined(separator: " ")
-        let cwd = !includeWorkingDirectoryPrefix || customRegistration?.cwd == .ignore
+        let cwd = !includeWorkingDirectoryPrefix || registrationOverride?.cwd == .ignore
             ? nil
             : normalized(workingDirectory ?? launchCommand?.workingDirectory)
         if let cwd {
             shellCommand = "cd \(shellSingleQuoted(cwd)) && \(shellCommand)"
         }
         return shellCommand
+    }
+
+    /// Per-kind dispatch: default executable name for `commandParts` fallback,
+    /// and the `AgentLaunchSanitizer` key used to whitelist arguments. Kept in
+    /// one place so `freshLaunchShellCommand` and `resumeArguments` can't drift
+    /// out of sync. `sanitizerKey == nil` means "preserve all original args".
+    private static func agentMetadata(
+        kind: RestorableAgentKind,
+        registration: CmuxVaultAgentRegistration?
+    ) -> (executable: String, sanitizerKey: String?) {
+        if case .custom = kind, let registration {
+            return (registration.defaultExecutable, nil)
+        }
+        switch kind {
+        case .claude: return ("claude", "claude")
+        case .codex: return ("codex", "codex")
+        case .pi: return ("pi", "pi")
+        case .cursor: return ("cursor-agent", "cursor")
+        case .gemini: return ("gemini", "gemini")
+        case .opencode: return ("opencode", "opencode")
+        case .rovodev: return ("acli", "rovodev")
+        case .hermesAgent: return ("hermes", "hermes-agent")
+        case .copilot: return ("copilot", "copilot")
+        case .codebuddy: return ("codebuddy", "codebuddy")
+        case .factory: return ("droid", "factory")
+        case .qoder: return ("qodercli", "qoder")
+        case .custom: return ("cmux", nil)
+        }
     }
 
     private static func launchEnvironmentParts(
@@ -130,87 +215,48 @@ enum AgentResumeCommandBuilder {
             return arguments.isEmpty ? nil : arguments
         }
 
+        let metadata = agentMetadata(kind: kind, registration: customRegistration)
         switch kind {
-        case .claude:
+        case .claude, .cursor, .gemini, .copilot, .codebuddy, .factory, .qoder:
             return resumeWithOption(
-                kind: "claude",
+                kind: metadata.sanitizerKey ?? "",
                 launchCommand: launchCommand,
-                fallbackExecutable: "claude",
+                fallbackExecutable: metadata.executable,
                 option: "--resume",
                 sessionId: sessionId
             )
-        case .codex:
-            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: "codex")
-            guard let preserved = AgentLaunchSanitizer.preservedArguments(kind: "codex", args: original.tail) else { return nil }
-            return [original.executable, "resume"] + preserved + [sessionId]
         case .pi:
             return resumeWithOption(
-                kind: "pi",
+                kind: metadata.sanitizerKey ?? "",
                 launchCommand: launchCommand,
-                fallbackExecutable: "pi",
+                fallbackExecutable: metadata.executable,
                 option: "--session",
                 sessionId: sessionId
             )
-        case .cursor:
-            return resumeWithOption(
-                kind: "cursor",
-                launchCommand: launchCommand,
-                fallbackExecutable: "cursor-agent",
-                option: "--resume",
-                sessionId: sessionId
-            )
-        case .gemini:
-            return resumeWithOption(
-                kind: "gemini",
-                launchCommand: launchCommand,
-                fallbackExecutable: "gemini",
-                option: "--resume",
-                sessionId: sessionId
-            )
+        case .codex:
+            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: metadata.executable)
+            guard let sanitizerKey = metadata.sanitizerKey,
+                  let preserved = AgentLaunchSanitizer.preservedArguments(kind: sanitizerKey, args: original.tail)
+            else { return nil }
+            return [original.executable, "resume"] + preserved + [sessionId]
         case .opencode:
-            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: "opencode")
-            guard let preserved = AgentLaunchSanitizer.preservedArguments(kind: "opencode", args: original.tail) else { return nil }
+            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: metadata.executable)
+            guard let sanitizerKey = metadata.sanitizerKey,
+                  let preserved = AgentLaunchSanitizer.preservedArguments(kind: sanitizerKey, args: original.tail)
+            else { return nil }
             return [original.executable, "--session", sessionId] + preserved
         case .rovodev:
-            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: "acli")
-            guard let preserved = AgentLaunchSanitizer.preservedArguments(kind: "rovodev", args: original.tail) else { return nil }
+            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: metadata.executable)
+            guard let sanitizerKey = metadata.sanitizerKey,
+                  let preserved = AgentLaunchSanitizer.preservedArguments(kind: sanitizerKey, args: original.tail)
+            else { return nil }
             return [original.executable, "rovodev", "run", "--restore", sessionId] + preserved
         case .hermesAgent:
-            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: "hermes")
-            guard let preserved = AgentLaunchSanitizer.preservedArguments(kind: "hermes-agent", args: original.tail) else { return nil }
+            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: metadata.executable)
+            guard let sanitizerKey = metadata.sanitizerKey,
+                  let preserved = AgentLaunchSanitizer.preservedArguments(kind: sanitizerKey, args: original.tail)
+            else { return nil }
             return [original.executable] + preserved + ["--resume", sessionId]
-        case .copilot:
-            return resumeWithOption(
-                kind: "copilot",
-                launchCommand: launchCommand,
-                fallbackExecutable: "copilot",
-                option: "--resume",
-                sessionId: sessionId
-            )
-        case .codebuddy:
-            return resumeWithOption(
-                kind: "codebuddy",
-                launchCommand: launchCommand,
-                fallbackExecutable: "codebuddy",
-                option: "--resume",
-                sessionId: sessionId
-            )
-        case .factory:
-            return resumeWithOption(
-                kind: "factory",
-                launchCommand: launchCommand,
-                fallbackExecutable: "droid",
-                option: "--resume",
-                sessionId: sessionId
-            )
-        case .qoder:
-            return resumeWithOption(
-                kind: "qoder",
-                launchCommand: launchCommand,
-                fallbackExecutable: "qodercli",
-                option: "--resume",
-                sessionId: sessionId
-            )
         case .custom:
             return nil
         }
@@ -376,12 +422,50 @@ struct SessionRestorableAgentSnapshot: Codable, Sendable {
         )
     }
 
+    /// Returns the shell input to run on terminal start for this restored agent.
+    /// When `homeDirectory` is supplied, Claude orphan detection is enabled:
+    /// a recorded session with no transcript on disk falls back to a fresh
+    /// launch with a console notice. Pass `nil` (the default) to skip the
+    /// disk check — tests that don't seed transcripts opt out this way.
     func resumeStartupInput(
         fileManager: FileManager = .default,
-        temporaryDirectory: URL = FileManager.default.temporaryDirectory
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        homeDirectory: String? = nil
     ) -> String? {
         guard let command = resumeCommand else { return nil }
 
+        // SessionStart fires before Claude persists any messages, so a process
+        // killed before its first prompt leaves a hook record with no
+        // ~/.claude/projects/<slug>/<sessionId>.jsonl. Resuming that orphan
+        // makes Claude exit immediately with "No conversation found". When we
+        // can detect that, fall back to spawning a fresh session (with the
+        // captured launch settings) and print a notice so the user knows why.
+        if let homeDirectory,
+           kind == .claude,
+           !RestorableAgentSessionIndex.claudeTranscriptExists(
+               sessionId: sessionId,
+               workingDirectory: workingDirectory,
+               homeDirectory: homeDirectory,
+               fileManager: fileManager
+           ) {
+            return freshLaunchStartupInput(
+                fileManager: fileManager,
+                temporaryDirectory: temporaryDirectory
+            )
+        }
+
+        return materializeStartupInput(
+            command: command,
+            fileManager: fileManager,
+            temporaryDirectory: temporaryDirectory
+        )
+    }
+
+    private func materializeStartupInput(
+        command: String,
+        fileManager: FileManager,
+        temporaryDirectory: URL
+    ) -> String? {
         let inlineInput = command + "\n"
         guard inlineInput.utf8.count > Self.maxInlineStartupInputBytes else {
             return inlineInput
@@ -398,6 +482,27 @@ struct SessionRestorableAgentSnapshot: Codable, Sendable {
 
         let scriptInput = "/bin/zsh \(shellSingleQuoted(scriptURL.path))\n"
         return scriptInput.utf8.count <= Self.maxInlineStartupInputBytes ? scriptInput : nil
+    }
+
+    private func freshLaunchStartupInput(
+        fileManager: FileManager,
+        temporaryDirectory: URL
+    ) -> String? {
+        guard let launchPart = AgentResumeCommandBuilder.freshLaunchShellCommand(
+            kind: kind,
+            launchCommand: launchCommand,
+            workingDirectory: workingDirectory,
+            registrationOverride: registration
+        ) else {
+            return nil
+        }
+        let noticeBody = "cmux: previous Claude session \(sessionId) was orphaned (no transcript found); starting a fresh session."
+        let combined = "echo \(shellSingleQuoted(noticeBody)) && \(launchPart)"
+        return materializeStartupInput(
+            command: combined,
+            fileManager: fileManager,
+            temporaryDirectory: temporaryDirectory
+        )
     }
 }
 
@@ -583,6 +688,52 @@ struct RestorableAgentSessionIndex: Sendable {
             return nil
         }
         return rawValue
+    }
+
+    /// Returns true when a Claude transcript for `sessionId` can be located.
+    /// Tries the exact `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` path
+    /// first, then falls back to scanning sibling project directories — Claude's
+    /// project-slug encoding doesn't always match `cwd.replacingOccurrences(of:)`
+    /// (e.g. symlinks, alternate path representations), so a slug mismatch alone
+    /// shouldn't trigger orphan-fallback when the transcript actually exists.
+    /// Without a cwd we can't even attempt the exact path, so we don't filter —
+    /// Claude will surface its own error if the session is missing.
+    static func claudeTranscriptExists(
+        sessionId: String,
+        workingDirectory: String?,
+        homeDirectory: String,
+        fileManager: FileManager
+    ) -> Bool {
+        guard let workingDirectory,
+              !workingDirectory.isEmpty else {
+            return true
+        }
+        let projectsRoot = URL(fileURLWithPath: homeDirectory, isDirectory: true)
+            .appendingPathComponent(".claude", isDirectory: true)
+            .appendingPathComponent("projects", isDirectory: true)
+        let encoded = workingDirectory.replacingOccurrences(of: "/", with: "-")
+        let exactPath = projectsRoot
+            .appendingPathComponent(encoded, isDirectory: true)
+            .appendingPathComponent("\(sessionId).jsonl", isDirectory: false)
+            .path
+        if fileManager.fileExists(atPath: exactPath) {
+            return true
+        }
+        let transcriptName = "\(sessionId).jsonl"
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: projectsRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return false
+        }
+        for entry in entries {
+            let candidate = entry.appendingPathComponent(transcriptName).path
+            if fileManager.fileExists(atPath: candidate) {
+                return true
+            }
+        }
+        return false
     }
 
     private init(snapshotsByPanel: [PanelKey: SessionRestorableAgentSnapshot]) {
