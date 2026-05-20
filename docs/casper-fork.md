@@ -167,6 +167,21 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete if upstream restores `customTitlebar`/`WindowDragHandleView` in minimal mode or otherwise blocks AppKit's auto-titlebar-drag for the bonsplit tab strip.
 
+### Workspace sidebar grouping by repo path
+
+- Files (added):
+  - `Sources/Casper/Sidebar/CasperWorkspaceGroups.swift`
+- Files (upstream files modified):
+  - `Sources/ContentView.swift` (replaces flat `ForEach` in `workspaceRows` with a grouped `ForEach`; headers only render when ≥2 groups)
+  - `Sources/TabManager.swift` (`moveTabToTopForNotification` bumps to the top of the workspace's repo group instead of the global top)
+  - `GhosttyTabs.xcodeproj/project.pbxproj` (registers the new file)
+- Summary:
+  - When workspaces span multiple repos, the sidebar groups them under section headers named after the repo (basename of the directory containing `.git`). Headers are collapsible; per-group collapse state is persisted to `UserDefaults` under `casperWorkspaceGroupCollapsedKeys`. Within a group, ordering matches the underlying `tabs` array; notification-driven auto-reorder still moves a workspace to the top, but only within its group, so a notification in repo B can't shove repo A's workspaces down. Single-repo users see no visual change (headers hidden when there's only one group).
+  - Group membership is resolved from **all** panel directories (`Workspace.panelDirectories.values`), not just the focused panel's `currentDirectory`. Panels resolved to the user's home directory are treated as neutral and ignored unless every panel is in `~` (new splits default to `~`, and a workspace already anchored to a real repo shouldn't reclassify just because the user opened more terminals). Among the non-neutral panels, the repo root with the highest count wins, with alphabetical tiebreak for stability. This prevents the workspace from bouncing between groups when the user shifts focus between two panels in different repos. Falls back to `currentDirectory` only before any OSC 7 has fired.
+  - Repo root resolution walks up from each panel's directory looking for `.git`, with a process-lifetime cache keyed by the directory we resolved from. Cache is monotonic (entries never invalidate) which is fine since repo roots don't move within a session.
+- Deletion condition:
+  - Delete if upstream cmux adds first-class workspace grouping in the sidebar.
+
 ### Compact one-line sidebar workspace row
 
 - Files (added):
@@ -241,7 +256,9 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 These upstream files are touched by fork patches and tend to drift upstream. Re-check each one when running `git merge upstream/main`:
 
 - `Sources/ContentView.swift`
-  - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
+  - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), the workspace grouping patch (`workspaceRows` now wraps rows in a per-group `ForEach`), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
+- `Sources/TabManager.swift`
+  - Touched by the workspace grouping patch (`moveTabToTopForNotification` now bumps within the workspace's repo group). Stock cmux unconditionally bumps to global top of unpinned.
 - `Sources/AppDelegate.swift`
   - Touched by patch 2 (sidebar reveal mouse-down handlers, `cmux_sendEvent` intercept, `runSidebarRevealEdgeMouseDownLoop`), patch 3 (new-workspace context menu shortcut display), and the restore-time agent warmup patch (two one-line `CasperStartupAgentWarmup.applyStartupWarmup` calls in `applySessionWindowSnapshot` and `createMainWindow`).
 - `Sources/BackgroundWorkspacePrimeCoordinator.swift`
