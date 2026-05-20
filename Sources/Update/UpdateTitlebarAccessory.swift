@@ -682,6 +682,11 @@ struct TitlebarControlsView: View {
     ) -> [(action: KeyboardShortcutSettings.Action, shortcut: StoredShortcut, width: CGFloat, interval: ClosedRange<CGFloat>)] {
         guard shouldShowTitlebarShortcutHints else { return [] }
 
+        // CASPER: `controlsGroup` renders `CasperReloadTitlebarButton` ahead of
+        // the slot buttons in the same HStack, so each slot's visual index is
+        // shifted right by one. Without this offset the Cmd+I hint lands over
+        // the reload icon instead of the notification bell.
+        let leadingButtonCount = titlebarHintLeadingButtonCount()
         return slots.enumerated().compactMap { index, slot in
             let action = Self.keyboardAction(for: slot)
             let shortcut = KeyboardShortcutSettings.shortcut(for: action)
@@ -689,12 +694,20 @@ struct TitlebarControlsView: View {
 
             let width = titlebarHintWidth(for: shortcut, config: config)
             let rightEdge = config.groupPadding.leading
-                + titlebarButtonRightEdge(forSlotIndex: index, config: config)
+                + titlebarButtonRightEdge(forSlotIndex: index + leadingButtonCount, config: config)
                 + xOffset
                 + titlebarHintRightSafetyShift
                 + titlebarHintBaseXShift
             return (action, shortcut, width, (rightEdge - width)...rightEdge)
         }
+    }
+
+    private func titlebarHintLeadingButtonCount() -> Int {
+        #if DEBUG
+        return CasperReloadTitlebarButton.isRendered ? 1 : 0
+        #else
+        return 0
+        #endif
     }
 
     private func titlebarHintWidth(for shortcut: StoredShortcut, config: TitlebarControlsStyleConfig) -> CGFloat {

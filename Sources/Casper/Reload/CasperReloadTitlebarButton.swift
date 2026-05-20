@@ -45,8 +45,14 @@ struct CasperReloadTitlebarButton: View {
     /// out the clock until pkill.
     @State private var isReloading = false
 
+    /// Single source of truth for whether this button mounts. Other layout
+    /// code (titlebar hint positioning) reads this so the gate can't drift.
+    static var isRendered: Bool {
+        CasperBuildEnvironment.isBranded && CasperReloadContext.current != nil
+    }
+
     var body: some View {
-        if CasperBuildEnvironment.isBranded, let ctx = CasperReloadContext.current {
+        if Self.isRendered, let ctx = CasperReloadContext.current {
             TitlebarControlButton(
                 config: config,
                 accessibilityIdentifier: "titlebarControl.casperReload",
