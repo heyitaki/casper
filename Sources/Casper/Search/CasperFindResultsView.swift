@@ -34,6 +34,30 @@ final class CasperFindResultsView: NSScrollView {
     private var groupItems: [CasperFindGroupItem] = []
     private var collapsedPaths: Set<String> = []
 
+    // CASPER: keepalive for the pointer-identity short-circuit in `apply`.
+    // Retaining the prior snapshot's results array keeps its buffer alive, so
+    // a subsequent controller-side mutation triggers Swift's COW and allocates
+    // a NEW buffer — meaning a stale `baseAddress` here can't accidentally
+    // collide with a fresh allocation at the same address. `status` is the
+    // only scalar that isn't already mirrored on `self` (query → self.query,
+    // hasMore → self.snapshotHasMore), so it rides along.
+    private struct AppliedIdentity {
+        let results: [FileSearchResult]
+        let status: FileSearchSnapshot.Status
+    }
+    private var lastAppliedIdentity: AppliedIdentity?
+    #if DEBUG
+    /// Test-only counter incremented each time `apply` performs real work (i.e.
+    /// did NOT short-circuit on the identity cache). Exposed so perf/regression
+    /// tests can observe duplicate-emit coalescing.
+    private(set) var debugAppliedWorkCount: Int = 0
+    /// Test-only mirror of the empty-state label's visibility. Pins the
+    /// contract that a settled `.noMatches` apply leaves the label visible
+    /// while every other terminal status keeps it hidden — the short-circuit
+    /// must not silently bypass this update.
+    var debugEmptyStateLabelHidden: Bool { emptyStateLabel.isHidden }
+    #endif
+
     // CASPER: pagination state. `snapshotHasMore` mirrors the latest snapshot's
     // hasMore field; `lastLoadMoreRequestedAtCount` is the result count that
     // was visible when we last asked the controller for more. The next request
@@ -292,6 +316,10 @@ final class CasperFindResultsView: NSScrollView {
         // re-entry (cache reseed → background re-search → identical results
         // come back) and on every keystroke during slow typing. The new
         // logic:
+        //   0. Identity short-circuit: same results buffer + same query/state
+        //      → no work. Catches the early-emit + finish() duplicate-emit
+        //      sequence at O(1) cost (vs the O(n) grouper + outline diff that
+        //      would otherwise run twice for byte-identical results).
         //   1. Fast-path: structure unchanged → only refresh hit-cell
         //      highlights if the query string changed.
         //   2. Same groups, hits differ → mutate group items in place and
@@ -300,14 +328,25 @@ final class CasperFindResultsView: NSScrollView {
         //      around in-place mutation of matched groups.
         //   4. Worst-case fallback → reloadData (only when the diff can't
         //      preserve relative order of common groups).
+        if shouldShortCircuitApply(for: snapshot) {
+            return
+        }
+        defer { stashAppliedIdentity(for: snapshot) }
+        #if DEBUG
+        debugAppliedWorkCount += 1
+        #endif
         let newQuery = snapshot.query
         let queryChanged = newQuery != query
         query = newQuery
 
         // Reset pagination dedupe when the query changes — a fresh query starts
-        // a fresh load-more cursor, regardless of prior result counts.
+        // a fresh load-more cursor, regardless of prior result counts. Also
+        // drop the prior epoch's results array so a multi-MB result set from
+        // the previous query isn't double-retained across the boundary; the
+        // duplicate-emit short-circuit only matters within a single query.
         if queryChanged {
             lastLoadMoreRequestedAtCount = -1
+            lastAppliedIdentity = nil
         }
         snapshotHasMore = snapshot.hasMore
         lastSnapshotResultCount = snapshot.results.count
@@ -330,6 +369,29 @@ final class CasperFindResultsView: NSScrollView {
         }
         updateStickyHeader()
         maybeRequestLoadMore()
+    }
+
+    /// O(1) duplicate-emit guard. Bails when the incoming snapshot's results
+    /// buffer is the same allocation as the last applied snapshot's AND every
+    /// scalar field that this view's render depends on is unchanged.
+    private func shouldShortCircuitApply(for snapshot: FileSearchSnapshot) -> Bool {
+        guard let last = lastAppliedIdentity else { return false }
+        guard query == snapshot.query,
+              snapshotHasMore == snapshot.hasMore,
+              last.status == snapshot.status,
+              last.results.count == snapshot.results.count else {
+            return false
+        }
+        let lastPointer = last.results.withUnsafeBufferPointer { $0.baseAddress }
+        let nextPointer = snapshot.results.withUnsafeBufferPointer { $0.baseAddress }
+        return lastPointer == nextPointer
+    }
+
+    private func stashAppliedIdentity(for snapshot: FileSearchSnapshot) {
+        lastAppliedIdentity = AppliedIdentity(
+            results: snapshot.results,
+            status: snapshot.status
+        )
     }
 
     /// Attempts an incremental update of `outlineView` to match `nextItems`.

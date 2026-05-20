@@ -627,7 +627,8 @@ final class FileExplorerContainerView: NSView {
     // before spawning so a burst of fast keystrokes doesn't fork a fresh
     // process for every char.
     private var pendingSearchRefreshTask: Task<Void, Never>?
-    private let searchDebounceDelayMilliseconds: UInt64 = 25
+    // CASPER: coalesces burst keystrokes; stays below the ~80ms "instant" threshold.
+    private let searchDebounceDelayMilliseconds: UInt64 = 50
     private var isSearchVisible = false {
         didSet {
             if !isSearchVisible {
@@ -1393,7 +1394,14 @@ final class FileExplorerContainerView: NSView {
         } else {
             searchStatusLabel.stringValue = statusText(for: snapshot)
         }
-        applySearchResultsUpdate(previousResults: previousResults, nextResults: snapshot.results)
+        // CASPER: the flat NSTableView is permanently hidden when the grouped
+        // view is active (see `updateSearchLayout`); reloading its data per
+        // snapshot was burning ~10–20% of the per-keystroke apply budget on a
+        // view nobody sees. Delete this conditional when upstream adopts the
+        // grouped UI.
+        if casperFindResultsView == nil {
+            applySearchResultsUpdate(previousResults: previousResults, nextResults: snapshot.results)
+        }
         // CASPER: feed the grouped Find view from the same snapshot stream so the two implementations stay in lockstep.
         casperFindResultsView?.apply(snapshot)
 #if DEBUG
