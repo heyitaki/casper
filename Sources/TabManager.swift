@@ -914,6 +914,10 @@ class TabManager: ObservableObject {
     static var nextPortOrdinal: Int = 0
     private nonisolated static let initialWorkspaceGitProbeDelays: [TimeInterval] = [0, 0.5, 1.5, 3.0, 6.0, 10.0]
     private nonisolated static let backgroundPollInterval: TimeInterval = 60
+    // CASPER: see refreshTrackedWorkspaceGitMetadata for rationale.
+    private nonisolated static let backgroundPollStaggerStride: TimeInterval = 0.25
+    private nonisolated static let backgroundPollMaxStaggerDelay: TimeInterval =
+        max(0, backgroundPollInterval - backgroundPollStaggerStride)
     private nonisolated static let selectedPollInterval: TimeInterval = 10
     private nonisolated static let workspacePullRequestRepoCacheLifetime: TimeInterval = 15
     private nonisolated static let workspacePullRequestRepoCachePruneLifetime: TimeInterval = 60
@@ -1215,15 +1219,28 @@ class TabManager: ObservableObject {
     private func refreshTrackedWorkspaceGitMetadata() {
         let activeProbeKeys = activeWorkspaceGitProbeKeys
 
+        // CASPER: Stagger per-panel probes so concurrent gitProbe.apply writes
+        // don't land in the same CA commit frame and stall the main thread via
+        // SwiftUI sidebar invalidation. selectedPeriodicPoll (delay=0) remains
+        // the fast path for the focused workspace.
+        // Delete if upstream coalesces sidebar invalidation per frame.
+        var staggerIndex = 0
+
         for workspace in tabs {
             for panelId in trackedWorkspaceGitMetadataPollCandidatePanelIds(
                 in: workspace,
                 activeProbeKeys: activeProbeKeys
             ) {
+                let delay = min(
+                    TimeInterval(staggerIndex) * Self.backgroundPollStaggerStride,
+                    Self.backgroundPollMaxStaggerDelay
+                )
+                staggerIndex += 1
                 scheduleWorkspaceGitMetadataRefreshIfPossible(
                     workspaceId: workspace.id,
                     panelId: panelId,
-                    reason: "periodicPoll"
+                    reason: "periodicPoll",
+                    delays: [delay]
                 )
             }
         }
