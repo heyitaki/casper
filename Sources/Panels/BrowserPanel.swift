@@ -603,16 +603,20 @@ final class BrowserProfileStore: ObservableObject {
 
 enum BrowserLinkOpenSettings {
     static let openTerminalLinksInCmuxBrowserKey = "browserOpenTerminalLinksInCmuxBrowser"
-    static let defaultOpenTerminalLinksInCmuxBrowser: Bool = true
+    // CASPER: route links to the user's external default browser by default; delete if upstream adds a brand-aware default.
+    static let defaultOpenTerminalLinksInCmuxBrowser: Bool = !CasperBuildEnvironment.isBranded
 
     static let openSidebarPullRequestLinksInCmuxBrowserKey = "browserOpenSidebarPullRequestLinksInCmuxBrowser"
-    static let defaultOpenSidebarPullRequestLinksInCmuxBrowser: Bool = true
+    // CASPER: route links to the user's external default browser by default; delete if upstream adds a brand-aware default.
+    static let defaultOpenSidebarPullRequestLinksInCmuxBrowser: Bool = !CasperBuildEnvironment.isBranded
 
     static let openSidebarPortLinksInCmuxBrowserKey = "browserOpenSidebarPortLinksInCmuxBrowser"
-    static let defaultOpenSidebarPortLinksInCmuxBrowser: Bool = true
+    // CASPER: route links to the user's external default browser by default; delete if upstream adds a brand-aware default.
+    static let defaultOpenSidebarPortLinksInCmuxBrowser: Bool = !CasperBuildEnvironment.isBranded
 
     static let interceptTerminalOpenCommandInCmuxBrowserKey = "browserInterceptTerminalOpenCommandInCmuxBrowser"
-    static let defaultInterceptTerminalOpenCommandInCmuxBrowser: Bool = true
+    // CASPER: route `open <url>` from the terminal to the user's external default browser by default; delete if upstream adds a brand-aware default.
+    static let defaultInterceptTerminalOpenCommandInCmuxBrowser: Bool = !CasperBuildEnvironment.isBranded
 
     static let browserHostWhitelistKey = "browserHostWhitelist"
     static let defaultBrowserHostWhitelist: String = ""
