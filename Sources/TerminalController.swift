@@ -16657,12 +16657,7 @@ class TerminalController {
                 result = parsed.options["tab"] != nil ? "ERROR: Tab not found" : "ERROR: No tab selected"
                 return
             }
-            tab.logEntries.append(SidebarLogEntry(message: message, level: level, source: source, timestamp: Date()))
-            let configuredLimit = UserDefaults.standard.object(forKey: "sidebarMaxLogEntries") as? Int ?? 50
-            let limit = max(1, min(500, configuredLimit))
-            if tab.logEntries.count > limit {
-                tab.logEntries.removeFirst(tab.logEntries.count - limit)
-            }
+            tab.appendLog(SidebarLogEntry(message: message, level: level, source: source, timestamp: Date()))
         }
         return result
     }

@@ -7084,6 +7084,63 @@ struct ClosedBrowserPanelRestoreSnapshot {
     let fallbackAnchorPaneId: UUID?
 }
 
+/// Sidebar-only metadata extracted onto its own ObservableObject so the
+/// heavy `WorkspaceContentView` subtree (which observes `Workspace` wholesale)
+/// is NOT invalidated by high-frequency agent/git write bursts. Only the
+/// sidebar's `sidebarObservationPublisher` subscribes here; mutations
+/// propagate through computed forwarders on `Workspace` so existing call
+/// sites compile unchanged.
+///
+/// Holds:
+///   - git/PR probe results (10s/60s poll cadence)
+///   - per-panel titles (Claude OSC 30Hz coalesced)
+///   - agent hook telemetry (statusEntries, progress, logEntries, metadataBlocks)
+///   - remote workspace heartbeat tick
+@MainActor
+final class WorkspaceSidebarMetadataStore: ObservableObject {
+    @Published var gitBranch: SidebarGitBranchState?
+    @Published var panelGitBranches: [UUID: SidebarGitBranchState] = [:]
+    @Published var pullRequest: SidebarPullRequestState?
+    @Published var panelPullRequests: [UUID: SidebarPullRequestState] = [:]
+    @Published var panelTitles: [UUID: String] = [:]
+    @Published var statusEntries: [String: SidebarStatusEntry] = [:]
+    @Published var metadataBlocks: [String: SidebarMetadataBlock] = [:]
+    @Published var logEntries: [SidebarLogEntry] = []
+    @Published var progress: SidebarProgressState?
+    @Published var remoteHeartbeatCount: Int = 0
+    @Published var remoteLastHeartbeatAt: Date?
+
+    /// Drops per-panel entries whose surface id is no longer in `validSurfaceIds`.
+    /// Kept here so `pruneSurfaceMetadata` doesn't need to know which dicts live
+    /// on the sub-store vs on `Workspace` directly. Guarded per-dict so the
+    /// common "nothing stale" case (called from many panel-lifecycle paths)
+    /// avoids the filter allocation and the `@Published` publish.
+    func pruneToValidSurfaces(_ validSurfaceIds: Set<UUID>) {
+        if panelTitles.keys.contains(where: { !validSurfaceIds.contains($0) }) {
+            panelTitles = panelTitles.filter { validSurfaceIds.contains($0.key) }
+        }
+        if panelGitBranches.keys.contains(where: { !validSurfaceIds.contains($0) }) {
+            panelGitBranches = panelGitBranches.filter { validSurfaceIds.contains($0.key) }
+        }
+        if panelPullRequests.keys.contains(where: { !validSurfaceIds.contains($0) }) {
+            panelPullRequests = panelPullRequests.filter { validSurfaceIds.contains($0.key) }
+        }
+    }
+
+    /// Appends a log entry, trimming to the configured max in a single setter
+    /// call so the sidebar observation pipeline sees one publish per message.
+    func appendLog(_ entry: SidebarLogEntry) {
+        let configured = UserDefaults.standard.object(forKey: "sidebarMaxLogEntries") as? Int ?? 50
+        let limit = max(1, min(500, configured))
+        var next = logEntries
+        next.append(entry)
+        if next.count > limit {
+            next.removeFirst(next.count - limit)
+        }
+        logEntries = next
+    }
+}
+
 /// Workspace represents a sidebar tab.
 /// Each workspace contains one BonsplitController that manages split panes and nested surfaces.
 @MainActor
@@ -7183,7 +7240,13 @@ final class Workspace: Identifiable, ObservableObject {
 
     /// Published directory for each panel
     @Published var panelDirectories: [UUID: String] = [:]
-    @Published var panelTitles: [UUID: String] = [:]
+    // CASPER: panelTitles moved to `sidebarMetadataStore` so 30Hz Claude OSC
+    // title coalescer writes don't invalidate `WorkspaceContentView`; delete
+    // this forwarder if upstream moves panelTitles off `Workspace.@Published`.
+    var panelTitles: [UUID: String] {
+        get { sidebarMetadataStore.panelTitles }
+        set { sidebarMetadataStore.panelTitles = newValue }
+    }
     @Published var panelCustomTitles: [UUID: String] = [:]
     @Published var pinnedPanelIds: Set<UUID> = []
     @Published var manualUnreadPanelIds: Set<UUID> = []
@@ -7194,15 +7257,61 @@ final class Workspace: Identifiable, ObservableObject {
     var manualUnreadMarkedAt: [UUID: Date] = [:]
     nonisolated private static let manualUnreadFocusGraceInterval: TimeInterval = 0.2
     nonisolated private static let manualUnreadClearDelayAfterFocusFlash: TimeInterval = 0.2
-    @Published var statusEntries: [String: SidebarStatusEntry] = [:]
-    @Published var metadataBlocks: [String: SidebarMetadataBlock] = [:]
+    // CASPER: agent hook telemetry (statusEntries, metadataBlocks, logEntries,
+    // progress) moved to `sidebarMetadataStore` so multi-Hz socket-driven
+    // writes don't invalidate the entire `WorkspaceContentView` subtree;
+    // delete these forwarders if upstream moves the fields off
+    // `Workspace.@Published` or restructures `WorkspaceContentView` to stop
+    // observing the workspace wholesale.
+    var statusEntries: [String: SidebarStatusEntry] {
+        get { sidebarMetadataStore.statusEntries }
+        set { sidebarMetadataStore.statusEntries = newValue }
+    }
+    var metadataBlocks: [String: SidebarMetadataBlock] {
+        get { sidebarMetadataStore.metadataBlocks }
+        set { sidebarMetadataStore.metadataBlocks = newValue }
+    }
     @Published private(set) var latestSubmittedMessage: String?
-    @Published var logEntries: [SidebarLogEntry] = []
-    @Published var progress: SidebarProgressState?
-    @Published var gitBranch: SidebarGitBranchState?
-    @Published var panelGitBranches: [UUID: SidebarGitBranchState] = [:]
-    @Published var pullRequest: SidebarPullRequestState?
-    @Published var panelPullRequests: [UUID: SidebarPullRequestState] = [:]
+    var logEntries: [SidebarLogEntry] {
+        get { sidebarMetadataStore.logEntries }
+        set { sidebarMetadataStore.logEntries = newValue }
+    }
+    var progress: SidebarProgressState? {
+        get { sidebarMetadataStore.progress }
+        set { sidebarMetadataStore.progress = newValue }
+    }
+    // CASPER: git/PR state lives on a sub-ObservableObject so the
+    // `WorkspaceContentView` `@ObservedObject var workspace` subscription is
+    // NOT invalidated by periodic git-probe write bursts (which previously
+    // fanned out to Core Animation and stalled the main thread inside
+    // `wait_for_allocations` for tens of seconds). Sidebar code observes
+    // `sidebarMetadataStore` via the existing `sidebarObservationPublisher`;
+    // delete this sub-store if upstream restructures these fields to avoid
+    // invalidating `WorkspaceContentView`.
+    private let sidebarMetadataStore = WorkspaceSidebarMetadataStore()
+
+    /// Appends a single bounded log entry. Delegates to the sub-store so the
+    /// trim/append fires one publish; lets external callers (e.g. the
+    /// `report log` socket handler) stay out of the sub-store internals.
+    func appendLog(_ entry: SidebarLogEntry) {
+        sidebarMetadataStore.appendLog(entry)
+    }
+    var gitBranch: SidebarGitBranchState? {
+        get { sidebarMetadataStore.gitBranch }
+        set { sidebarMetadataStore.gitBranch = newValue }
+    }
+    var panelGitBranches: [UUID: SidebarGitBranchState] {
+        get { sidebarMetadataStore.panelGitBranches }
+        set { sidebarMetadataStore.panelGitBranches = newValue }
+    }
+    var pullRequest: SidebarPullRequestState? {
+        get { sidebarMetadataStore.pullRequest }
+        set { sidebarMetadataStore.pullRequest = newValue }
+    }
+    var panelPullRequests: [UUID: SidebarPullRequestState] {
+        get { sidebarMetadataStore.panelPullRequests }
+        set { sidebarMetadataStore.panelPullRequests = newValue }
+    }
     @Published var surfaceListeningPorts: [UUID: [Int]] = [:]
     var agentListeningPorts: [Int] = []
     @Published var remoteConfiguration: WorkspaceRemoteConfiguration?
@@ -7213,8 +7322,20 @@ final class Workspace: Identifiable, ObservableObject {
     @Published var remoteForwardedPorts: [Int] = []
     @Published var remotePortConflicts: [Int] = []
     @Published var remoteProxyEndpoint: BrowserProxyEndpoint?
-    @Published var remoteHeartbeatCount: Int = 0
-    @Published var remoteLastHeartbeatAt: Date?
+    // CASPER: remote heartbeat moved to `sidebarMetadataStore`. These fields
+    // tick on every keepalive from the remote daemon and feed a
+    // BrowserRemoteWorkspaceStatus snapshot pushed to browser panels — they
+    // do not need to invalidate any SwiftUI view subscribed to Workspace;
+    // delete this forwarder if upstream stops `@Published`-ing heartbeat
+    // fields on `Workspace` directly.
+    var remoteHeartbeatCount: Int {
+        get { sidebarMetadataStore.remoteHeartbeatCount }
+        set { sidebarMetadataStore.remoteHeartbeatCount = newValue }
+    }
+    var remoteLastHeartbeatAt: Date? {
+        get { sidebarMetadataStore.remoteLastHeartbeatAt }
+        set { sidebarMetadataStore.remoteLastHeartbeatAt = newValue }
+    }
     @Published var listeningPorts: [Int] = []
     @Published private(set) var activeRemoteTerminalSessionCount: Int = 0
     var surfaceTTYNames: [UUID: String] = [:]
@@ -7295,14 +7416,15 @@ final class Workspace: Identifiable, ObservableObject {
                 .map { _ in () }
                 .eraseToAnyPublisher(),
             sidebarObservationSignal($panelDirectories),
-            sidebarObservationSignal($statusEntries),
-            sidebarObservationSignal($metadataBlocks),
-            sidebarObservationSignal($logEntries),
-            sidebarObservationSignal($progress),
-            sidebarObservationSignal($gitBranch),
-            sidebarObservationSignal($panelGitBranches),
-            sidebarObservationSignal($pullRequest),
-            sidebarObservationSignal($panelPullRequests),
+            sidebarObservationSignal(sidebarMetadataStore.$panelTitles),
+            sidebarObservationSignal(sidebarMetadataStore.$statusEntries),
+            sidebarObservationSignal(sidebarMetadataStore.$metadataBlocks),
+            sidebarObservationSignal(sidebarMetadataStore.$logEntries),
+            sidebarObservationSignal(sidebarMetadataStore.$progress),
+            sidebarObservationSignal(sidebarMetadataStore.$gitBranch),
+            sidebarObservationSignal(sidebarMetadataStore.$panelGitBranches),
+            sidebarObservationSignal(sidebarMetadataStore.$pullRequest),
+            sidebarObservationSignal(sidebarMetadataStore.$panelPullRequests),
             sidebarObservationSignal($remoteConfiguration),
             sidebarObservationSignal($remoteConnectionState),
             sidebarObservationSignal($remoteConnectionDetail),
@@ -8779,17 +8901,15 @@ final class Workspace: Identifiable, ObservableObject {
             removePendingTerminalInputObservers(forPanelId: panelId)
         }
         panelDirectories = panelDirectories.filter { validSurfaceIds.contains($0.key) }
-        panelTitles = panelTitles.filter { validSurfaceIds.contains($0.key) }
         panelCustomTitles = panelCustomTitles.filter { validSurfaceIds.contains($0.key) }
         pinnedPanelIds = pinnedPanelIds.filter { validSurfaceIds.contains($0) }
         manualUnreadPanelIds = manualUnreadPanelIds.filter { validSurfaceIds.contains($0) }
-        panelGitBranches = panelGitBranches.filter { validSurfaceIds.contains($0.key) }
         manualUnreadMarkedAt = manualUnreadMarkedAt.filter { validSurfaceIds.contains($0.key) }
         surfaceListeningPorts = surfaceListeningPorts.filter { validSurfaceIds.contains($0.key) }
         surfaceTTYNames = surfaceTTYNames.filter { validSurfaceIds.contains($0.key) }
         remoteDetectedSurfaceIds = remoteDetectedSurfaceIds.filter { validSurfaceIds.contains($0) }
         panelShellActivityStates = panelShellActivityStates.filter { validSurfaceIds.contains($0.key) }
-        panelPullRequests = panelPullRequests.filter { validSurfaceIds.contains($0.key) }
+        sidebarMetadataStore.pruneToValidSurfaces(validSurfaceIds)
         let staleAgentPIDPanelIds = agentPIDKeysByPanelId.keys.filter { !validSurfaceIds.contains($0) }
         var didClearStaleAgentRuntime = false
         for panelId in staleAgentPIDPanelIds {
@@ -9671,12 +9791,7 @@ final class Workspace: Identifiable, ObservableObject {
     private func appendSidebarLog(message: String, level: SidebarLogLevel, source: String?) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        logEntries.append(SidebarLogEntry(message: trimmed, level: level, source: source, timestamp: Date()))
-        let configuredLimit = UserDefaults.standard.object(forKey: "sidebarMaxLogEntries") as? Int ?? 50
-        let limit = max(1, min(500, configuredLimit))
-        if logEntries.count > limit {
-            logEntries.removeFirst(logEntries.count - limit)
-        }
+        appendLog(SidebarLogEntry(message: trimmed, level: level, source: source, timestamp: Date()))
     }
 
     // MARK: - Panel Operations
