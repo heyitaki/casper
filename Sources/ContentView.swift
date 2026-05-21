@@ -9798,8 +9798,11 @@ struct VerticalTabsSidebar: View {
                                     guard let tabManager,
                                           let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
                                     else { return }
-                                    tabManager.selectTab(workspace)
-                                    workspace.focusPanel(entry.key.panelId)
+                                    // Route through focusTab so lastFocusedPanelByTab is primed
+                                    // before selectedTabId.didSet's async restore reads it;
+                                    // otherwise the restore re-focuses the previously remembered
+                                    // panel and clobbers the clicked one when switching workspaces.
+                                    tabManager.focusTab(workspace.id, surfaceId: entry.key.panelId)
                                     // Disambiguate: panels in the same workspace share a ⌘N digit.
                                     if workspace.panels.count > 1 {
                                         workspace.triggerFocusFlash(panelId: entry.key.panelId)
