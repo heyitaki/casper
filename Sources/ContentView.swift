@@ -9242,6 +9242,16 @@ struct VerticalTabsSidebar: View {
     // reads stay at the sidebar layer. Delete with the activity-state
     // patch.
     @ObservedObject private var claudeSessionMap = CasperClaudeSessionMap.shared
+    // CASPER: bridges each visible workspace's narrow `statusEntries`
+    // publisher into a single ObservableObject the sidebar observes. After
+    // commit 73d79ad0 moved statusEntries onto a sub-ObservableObject,
+    // changes no longer fired `Workspace.objectWillChange`, leaving the
+    // "3 blue dots" agent-activity indicator on the compact sidebar
+    // intermittent (refreshing only on incidental tabManager /
+    // claudeActivityStore publishes). Throttled at 80ms inside the
+    // refresher so a hook-burst turn folds into a small number of
+    // body re-evals. Delete with the activity-state patch.
+    @StateObject private var sidebarActivityRefresher = CasperSidebarActivityRefresher()
     // CASPER: workspace title search; delete if upstream adds workspace search.
     @State private var workspaceSearchQuery: String = ""
     @State private var draggedTabId: UUID?
@@ -9352,6 +9362,13 @@ struct VerticalTabsSidebar: View {
 
     var body: some View {
         let _ = terminalScrollBarVisibilityGeneration
+        // CASPER: take a read on the refresher's generation so the @StateObject
+        // dependency stays explicit — body must re-eval when a throttled
+        // statusEntries publish bumps the counter. Without this read, SwiftUI's
+        // current behavior still invalidates on @StateObject objectWillChange,
+        // but the explicit read documents the contract and survives any future
+        // "untouched property" optimization.
+        let _ = sidebarActivityRefresher.generation
         let tabs = tabManager.tabs
         let workspaceCount = tabs.count
         let canCloseWorkspace = workspaceCount > 1
@@ -9449,10 +9466,20 @@ struct VerticalTabsSidebar: View {
             dragAutoScrollController.stop()
             dropIndicator = nil
         }
+        // CASPER: `sidebarActivityRefresher.sync` keeps per-workspace
+        // statusEntries subscriptions aligned with the visible set so the
+        // compact sidebar's "3 blue dots" indicator can update. Folded into
+        // the existing frozenTabItemPresentation onChange to avoid mapping
+        // `tabs.map(\.id)` twice per tab-list change.
+        .onAppear {
+            sidebarActivityRefresher.sync(workspaces: tabManager.tabs)
+        }
         .onChange(of: tabs.map(\.id)) { tabIds in
-            guard let frozenTabItemPresentation,
-                  !tabIds.contains(frozenTabItemPresentation.tabId) else { return }
-            self.frozenTabItemPresentation = nil
+            if let frozenTabItemPresentation,
+               !tabIds.contains(frozenTabItemPresentation.tabId) {
+                self.frozenTabItemPresentation = nil
+            }
+            sidebarActivityRefresher.sync(workspaces: tabManager.tabs)
         }
         .onReceive(NotificationCenter.default.publisher(for: SidebarDragLifecycleNotification.requestClear)) { notification in
             guard draggedTabId != nil else { return }

@@ -7435,6 +7435,25 @@ final class Workspace: Identifiable, ObservableObject {
         return Publishers.MergeMany(publishers).eraseToAnyPublisher()
     }()
 
+    // CASPER: narrow publisher for the compact sidebar's agent-activity
+    // indicator ("3 blue dots"). After commit 73d79ad0 moved statusEntries
+    // onto a sub-ObservableObject (so `WorkspaceContentView` stops being
+    // invalidated by every agent hook write), the compact sidebar lost its
+    // signal path — `VerticalTabsSidebar` observes `tabManager` wholesale
+    // and `Workspace.objectWillChange` no longer fires for statusEntries.
+    // The non-compact `TabItemView` is fine because it subscribes to
+    // `sidebarObservationPublisher` per-row; the compact path uses
+    // `.equatable()` rows and recomputes activity at the sidebar level on
+    // body re-eval only. This publisher carries ONLY statusEntries so
+    // refresh frequency stays decoupled from the 30Hz Claude OSC title
+    // coalescer and the periodic git/PR probes already on the wider
+    // `sidebarObservationPublisher`. Consumed by
+    // `CasperSidebarActivityRefresher`. Delete with the activity-state
+    // patch if upstream surfaces agent state on Workspace directly.
+    lazy var sidebarActivityObservationPublisher: AnyPublisher<Void, Never> = {
+        sidebarObservationSignal(sidebarMetadataStore.$statusEntries)
+    }()
+
     private static func isProxyOnlyRemoteError(_ detail: String) -> Bool {
         let lowered = detail.lowercased()
         return lowered.contains("remote proxy")
