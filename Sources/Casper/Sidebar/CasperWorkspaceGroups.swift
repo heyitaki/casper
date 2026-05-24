@@ -656,7 +656,6 @@ struct CasperSidebarPanelRow: View, Equatable {
 
                 CasperWorkspaceActivityIndicator(
                     activityProvider: { activity },
-                    workingFont: .system(size: 11, weight: .regular),
                     timeFont: .system(size: 10, weight: .regular),
                     doneColor: Color.secondary.opacity(0.65),
                     selectedColor: selected ? Color.white : nil

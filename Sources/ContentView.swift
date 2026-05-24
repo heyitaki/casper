@@ -12708,10 +12708,10 @@ private struct TabItemView: View, Equatable {
 
                 Spacer(minLength: isCasperCompact ? 8 : 0)
 
-                // CASPER: right edge. Blue ellipsis while the agent is working
-                // (title-glyph present); blue relative-time when it needs user
-                // input (unread > 0 with no glyph); otherwise secondary-colored
-                // relative-time. `.fixedSize` pins the column so title truncation
+                // CASPER: right edge. Blue 3-dot indicator while the agent is
+                // working (title-glyph present); blue relative-time when it
+                // needs user input (unread > 0 with no glyph); otherwise
+                // secondary-colored relative-time. `.fixedSize` pins the column so title truncation
                 // can't push it off the trailing edge. The shortcut-hint pill
                 // (⌘1, ⌘2, …) is overlaid on this element so it shares the same
                 // trailing anchor as the non-compact path — without that anchor
@@ -12721,7 +12721,6 @@ private struct TabItemView: View, Equatable {
                 if isCasperCompact {
                     CasperWorkspaceActivityIndicator(
                         activityProvider: casperActivityProvider,
-                        workingFont: .system(size: 11, weight: .regular),
                         timeFont: .system(size: 10, weight: .regular),
                         doneColor: activeSecondaryColor(0.65),
                         selectedColor: usesInvertedActiveForeground ? activePrimaryTextColor : nil
