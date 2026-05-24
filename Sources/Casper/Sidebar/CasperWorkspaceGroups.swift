@@ -10,6 +10,7 @@
 //
 // Delete if upstream adds first-class per-panel rows in the sidebar.
 
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -375,7 +376,18 @@ enum CasperSidebarPanelEntryBuilder {
 
 // MARK: - Header / section views
 
-struct CasperWorkspaceGroupHeader: View {
+struct CasperWorkspaceGroupHeader: View, Equatable {
+    // CASPER: Equatable + .equatable() at the call site so the header doesn't
+    // re-evaluate body when the sidebar metadata store publishes an unrelated
+    // change. Closures are excluded from == — they reallocate every parent
+    // eval but don't affect rendering. Delete if upstream introduces
+    // Observation-tracked sidebar rows that skip closure-driven invalidation.
+    nonisolated static func == (lhs: CasperWorkspaceGroupHeader, rhs: CasperWorkspaceGroupHeader) -> Bool {
+        lhs.displayName == rhs.displayName &&
+        lhs.isCollapsed == rhs.isCollapsed &&
+        lhs.showsAddWorkspaceButton == rhs.showsAddWorkspaceButton
+    }
+
     let displayName: String
     let isCollapsed: Bool
     /// Drives the trailing `+` button's opacity. The parent
@@ -498,16 +510,20 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
                         isHoveringAddButton = newValue
                     }
                 )
+                // CASPER: see CasperWorkspaceGroupHeader ==(_:_:).
+                .equatable()
             }
             if !isCollapsed {
                 content()
             }
         }
         .contentShape(Rectangle())
-        .onHover { hovering in
-            let next = (isCollapsed && !hovering) ? false : hovering
-            guard isHoveringSection != next else { return }
-            isHoveringSection = next
+        .overlay {
+            CasperHoverTracker { hovering in
+                let next = (isCollapsed && !hovering) ? false : hovering
+                guard isHoveringSection != next else { return }
+                isHoveringSection = next
+            }
         }
     }
 }
@@ -525,7 +541,27 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
 ///
 /// Click selects the workspace and focuses this panel; close calls back into
 /// the parent to invoke `Workspace.closePanel(panelId)`.
-struct CasperSidebarPanelRow: View {
+struct CasperSidebarPanelRow: View, Equatable {
+    // CASPER: Equatable + .equatable() at the ForEach call site so rows skip
+    // body re-evaluation when the sidebar metadata store publishes a change
+    // that doesn't affect this specific row. Without this, every
+    // panelGitBranches / panelPullRequests / panelTitles publish re-evaluates
+    // every visible row, accumulating display-list churn that backs the
+    // render server up into multi-hundred-ms CA::Transaction::commit waits
+    // (foreground-only freeze). Closures, @State, and @Environment are
+    // excluded from == — they don't affect this row's visible inputs.
+    // Delete if upstream introduces Observation-tracked sidebar rows that
+    // skip closure-driven invalidation.
+    nonisolated static func == (lhs: CasperSidebarPanelRow, rhs: CasperSidebarPanelRow) -> Bool {
+        lhs.entry == rhs.entry &&
+        lhs.workspaceShortcutDigit == rhs.workspaceShortcutDigit &&
+        lhs.workspaceShortcutModifierSymbol == rhs.workspaceShortcutModifierSymbol &&
+        lhs.showsModifierShortcutHints == rhs.showsModifierShortcutHints &&
+        lhs.alwaysShowShortcutHints == rhs.alwaysShowShortcutHints &&
+        lhs.shortcutHintXOffset == rhs.shortcutHintXOffset &&
+        lhs.shortcutHintYOffset == rhs.shortcutHintYOffset
+    }
+
     let entry: CasperSidebarPanelEntry
     /// `⌘N` digit to display when the user is holding the modifier. Set only
     /// on the first panel row per workspace (the anchor-owning row) since the
@@ -657,13 +693,100 @@ struct CasperSidebarPanelRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            guard isHoveringRow != hovering else { return }
-            isHoveringRow = hovering
+        .overlay {
+            CasperHoverTracker { hovering in
+                guard isHoveringRow != hovering else { return }
+                isHoveringRow = hovering
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(entry.displayTitle)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+    }
+}
+
+// MARK: - Hover tracking
+
+/// AppKit-backed hover detector for the compact sidebar's row + group section.
+/// SwiftUI's `.onHover` modifier transiently misses hover state when the row
+/// subtree re-evaluates under main-thread load (sort flips, activity bumps,
+/// session-map refreshes): the modifier's NSTrackingArea is torn down and
+/// re-installed without replaying `mouseEntered` against the cursor's current
+/// position, so `isHoveringRow` / `isHoveringSection` stays stuck at `false`
+/// even while the cursor is over the row — hiding the X / `+` affordances.
+///
+/// This tracker reinstalls its tracking area in `updateTrackingAreas` like a
+/// normal NSView, AND polls `window.mouseLocationOutsideOfEventStream` from
+/// `updateTrackingAreas` / `viewDidMoveToWindow` so the post-layout hover state
+/// is always reconciled against the actual pointer position. Mirrors the
+/// `SidebarWorkspaceRowHoverTracker` pattern used by the non-compact
+/// `TabItemView` — kept separate so the compact path doesn't pull in
+/// `SidebarWorkspaceRowInteractionState`'s context-menu plumbing.
+struct CasperHoverTracker: NSViewRepresentable {
+    let onHoverChanged: (Bool) -> Void
+
+    func makeNSView(context: Context) -> CasperHoverTrackingView {
+        let view = CasperHoverTrackingView()
+        view.onHoverChanged = onHoverChanged
+        return view
+    }
+
+    func updateNSView(_ nsView: CasperHoverTrackingView, context: Context) {
+        nsView.onHoverChanged = onHoverChanged
+    }
+}
+
+final class CasperHoverTrackingView: NSView {
+    var onHoverChanged: ((Bool) -> Void)?
+    private var trackingArea: NSTrackingArea?
+    private var lastReportedHover: Bool?
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override var acceptsFirstResponder: Bool { false }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let next = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(next)
+        trackingArea = next
+        reconcileCurrentPointerLocation()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        reconcileCurrentPointerLocation()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        reconcileCurrentPointerLocation()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        report(false)
+    }
+
+    private func reconcileCurrentPointerLocation() {
+        guard let window else {
+            report(false)
+            return
+        }
+        let pointInWindow = window.mouseLocationOutsideOfEventStream
+        let pointInView = convert(pointInWindow, from: nil)
+        report(bounds.contains(pointInView))
+    }
+
+    private func report(_ hovering: Bool) {
+        guard lastReportedHover != hovering else { return }
+        lastReportedHover = hovering
+        onHoverChanged?(hovering)
     }
 }
 

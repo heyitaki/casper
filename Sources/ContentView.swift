@@ -9822,6 +9822,10 @@ struct VerticalTabsSidebar: View {
                                     }
                                 }
                             )
+                            // CASPER: see CasperSidebarPanelRow ==(_:_:) — skips
+                            // body re-evaluation when upstream metadata-store
+                            // publishes don't change this row's visible inputs.
+                            .equatable()
                             // Anchor-owning row claims the workspace UUID as
                             // its SwiftUI explicit identity so
                             // `ScrollViewProxy.scrollTo(selectedWorkspaceId)`
