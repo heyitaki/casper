@@ -1128,18 +1128,33 @@ final class WindowTerminalPortal: NSObject {
         }
     }
 
-    /// Hide a portal entry without detaching it. Updates visibleInUI to false and
-    /// sets isHidden = true so subsequent synchronizeHostedView calls keep it hidden.
+    /// Hide a portal entry without detaching it from the entry table. Updates
+    /// visibleInUI to false, hides the view, and removes it from the view
+    /// hierarchy so its CAMetalLayer no longer participates in the render
+    /// server's shared surface allocation during CA::Transaction::commit.
     /// Used when a workspace is permanently unmounted (vs. transient bonsplit dismantles).
     func hideEntry(forHostedId hostedId: ObjectIdentifier) {
         guard var entry = entriesByHostedId[hostedId] else { return }
         entry.visibleInUI = false
         entry.transientRecoveryRetriesRemaining = 0
         entriesByHostedId[hostedId] = entry
-        entry.hostedView?.isHidden = true
+        if let hostedView = entry.hostedView {
+            hideAndDetach(hostedView)
+        }
 #if DEBUG
         cmuxDebugLog("portal.hideEntry hosted=\(portalDebugToken(entry.hostedView)) reason=workspaceUnmount")
 #endif
+    }
+
+    /// Hide a hosted view and remove it from the view hierarchy so its
+    /// CAMetalLayer no longer participates in CA::Transaction::commit.
+    /// No-op if the view is already hidden.
+    private func hideAndDetach(_ hostedView: GhosttySurfaceScrollView) {
+        guard !hostedView.isHidden else { return }
+        hostedView.isHidden = true
+        if hostedView.superview === hostView {
+            hostedView.removeFromSuperview()
+        }
     }
 
     /// Update the visibleInUI flag on an existing entry without rebinding.
@@ -1238,7 +1253,7 @@ final class WindowTerminalPortal: NSObject {
         // before the hosted view enters a window.
         hostedView.reconcileGeometryNow()
 
-        if hostedView.superview !== hostView {
+        if hostedView.superview !== hostView, !hostedView.isHidden {
 #if DEBUG
             cmuxDebugLog(
                 "portal.reparent hosted=\(portalDebugToken(hostedView)) " +
@@ -1246,7 +1261,7 @@ final class WindowTerminalPortal: NSObject {
             )
 #endif
             hostView.addSubview(hostedView, positioned: .above, relativeTo: nil)
-        } else if (becameVisible || priorityIncreased), hostView.subviews.last !== hostedView {
+        } else if (becameVisible || priorityIncreased), hostView.subviews.last !== hostedView, !hostedView.isHidden {
             // Refresh z-order only when a view becomes visible or gets a higher priority.
             // Anchor-only churn is common during split tree updates; forcing remove/add there
             // causes transient inWindow=0 -> 1 bounces that can flash black.
@@ -1383,7 +1398,7 @@ final class WindowTerminalPortal: NSObject {
                 cmuxDebugLog("portal.hidden hosted=\(portalDebugToken(hostedView)) value=1 reason=missingAnchorOrWindow")
             }
 #endif
-            hostedView.isHidden = true
+            hideAndDetach(hostedView)
             if entry.visibleInUI {
                 _ = scheduleTransientRecoveryRetryIfNeeded(
                     forHostedId: hostedId,
@@ -1423,7 +1438,7 @@ final class WindowTerminalPortal: NSObject {
             } else {
                 resetTransientRecoveryRetryIfNeeded(forHostedId: hostedId, entry: &entry)
             }
-            hostedView.isHidden = true
+            hideAndDetach(hostedView)
             if entry.visibleInUI {
                 _ = scheduleTransientRecoveryRetryIfNeeded(
                     forHostedId: hostedId,
@@ -1477,7 +1492,7 @@ final class WindowTerminalPortal: NSObject {
             } else {
                 resetTransientRecoveryRetryIfNeeded(forHostedId: hostedId, entry: &entry)
             }
-            hostedView.isHidden = true
+            hideAndDetach(hostedView)
             if entry.visibleInUI {
                 if Self.transientRecoveryEnabled {
                     _ = scheduleTransientRecoveryRetryIfNeeded(
@@ -1582,7 +1597,7 @@ final class WindowTerminalPortal: NSObject {
                 "host=\(portalDebugFrame(hostBounds))"
             )
 #endif
-            hostedView.isHidden = true
+            hideAndDetach(hostedView)
         }
         if shouldPreserveVisibleOnTransientGeometry {
 #if DEBUG
@@ -1634,6 +1649,9 @@ final class WindowTerminalPortal: NSObject {
                 "host=\(portalDebugFrame(hostBounds))"
             )
 #endif
+            if hostedView.superview !== hostView {
+                hostView.addSubview(hostedView, positioned: .above, relativeTo: nil)
+            }
             hostedView.isHidden = false
             // A reveal can happen without any frame delta (same targetFrame), which means the
             // normal frame-change refresh path won't run. Nudge geometry + redraw so newly
@@ -1759,6 +1777,11 @@ final class WindowTerminalPortal: NSObject {
 
         let staleEntryCount = entriesByHostedId.values.reduce(0) { partialResult, entry in
             guard let hostedView = entry.hostedView else { return partialResult + 1 }
+            if hostedView.isHidden {
+                // Hidden views are intentionally detached from the hierarchy;
+                // flag as stale only if the invariant is violated.
+                return hostedView.superview === hostView ? partialResult + 1 : partialResult
+            }
             return hostedView.superview === hostView ? partialResult : partialResult + 1
         }
 
