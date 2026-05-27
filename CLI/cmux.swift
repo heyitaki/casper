@@ -14477,6 +14477,42 @@ struct CMUXCLI {
                 workspaceId: workspaceId ?? workspaceArg
             )
         }
+        func registerClaudeSession(
+            sessionId: String,
+            workspaceId: String,
+            surfaceId: String
+        ) {
+            let env = ProcessInfo.processInfo.environment
+            let claudePid: Int? = {
+                guard let raw = env["CMUX_CLAUDE_PID"]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                    let pid = Int(raw),
+                    pid > 0 else {
+                    return nil
+                }
+                return pid
+            }()
+            let launchCommand = agentLaunchCommandFromEnvironment(
+                env,
+                fallbackPID: claudePid,
+                fallbackKind: "claude",
+                cwd: parsedInput.cwd
+            )
+            try? sessionStore.upsert(
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                surfaceId: surfaceId,
+                cwd: parsedInput.cwd,
+                pid: claudePid,
+                launchCommand: launchCommand
+            )
+            if let claudePid {
+                _ = try? sendV1Command(
+                    "set_agent_pid claude_code \(claudePid) --tab=\(workspaceId)\(socketPanelOption(surfaceId))",
+                    client: client
+                )
+            }
+        }
         defer {
             if !didSendFeedTelemetry {
                 sendClaudeFeedTelemetry()
@@ -14498,39 +14534,15 @@ struct CMUXCLI {
                 client: client
             )
             sendClaudeFeedTelemetry(workspaceId: workspaceId)
-            let claudePid: Int? = {
-                guard let raw = ProcessInfo.processInfo.environment["CMUX_CLAUDE_PID"]?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                    let pid = Int(raw),
-                    pid > 0 else {
-                    return nil
-                }
-                return pid
-            }()
-            let launchCommand = agentLaunchCommandFromEnvironment(
-                ProcessInfo.processInfo.environment,
-                fallbackPID: claudePid,
-                fallbackKind: "claude",
-                cwd: parsedInput.cwd
-            )
+            // Register session and PID for stale-session detection, OSC
+            // suppression, and sidebar JSONL path resolution, but don't set a
+            // visible status. "Running" only appears when the user submits a
+            // prompt (UserPromptSubmit) or Claude starts working (PreToolUse).
             if let sessionId = parsedInput.sessionId {
-                try? sessionStore.upsert(
+                registerClaudeSession(
                     sessionId: sessionId,
                     workspaceId: workspaceId,
-                    surfaceId: surfaceId,
-                    cwd: parsedInput.cwd,
-                    pid: claudePid,
-                    launchCommand: launchCommand
-                )
-            }
-            // Register PID for stale-session detection and OSC suppression,
-            // but don't set a visible status. "Running" only appears when the
-            // user submits a prompt (UserPromptSubmit) or Claude starts working
-            // (PreToolUse).
-            if let claudePid {
-                _ = try? sendV1Command(
-                    "set_agent_pid claude_code \(claudePid) --tab=\(workspaceId)\(socketPanelOption(surfaceId))",
-                    client: client
+                    surfaceId: surfaceId
                 )
             }
             print("OK")
@@ -14610,6 +14622,18 @@ struct CMUXCLI {
                 workspaceId: workspaceId,
                 client: client
             )
+            // Self-heal: if session-start failed (socket not ready during app
+            // startup race) or a notification upsert created a pid-less stub,
+            // register the full session now so the sidebar's JSONL path
+            // resolution and stale-session sweep work correctly.
+            if mappedSession?.pid == nil,
+               let sessionId = parsedInput.sessionId {
+                registerClaudeSession(
+                    sessionId: sessionId,
+                    workspaceId: workspaceId,
+                    surfaceId: surfaceId
+                )
+            }
             sendClaudeFeedTelemetry(workspaceId: workspaceId)
             _ = try sendV1Command("clear_notifications --tab=\(workspaceId)", client: client)
             try setClaudeStatus(
