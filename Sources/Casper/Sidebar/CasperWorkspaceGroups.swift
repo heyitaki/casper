@@ -263,20 +263,21 @@ enum CasperWorkspaceGroupResolver {
 enum CasperSidebarPanelEntryBuilder {
     /// Builds the sidebar's panel-entry list from the current `[Workspace]`.
     /// Each workspace emits one entry per panel; panels within a workspace are
-    /// ordered by UUID (cheap and stable). Activity is workspace-level for v1
-    /// — every entry from the same workspace carries the same value.
+    /// ordered by UUID (cheap and stable). Activity is per-panel when PID
+    /// attribution is available (multi-panel workspaces), falling back to
+    /// workspace-level for single-panel workspaces.
     static func entries(
         from workspaces: [Workspace],
         selectedWorkspaceId: UUID?,
-        activityByWorkspaceId: [UUID: CasperWorkspaceActivity]
+        activityByWorkspaceId: [UUID: CasperWorkspaceActivity],
+        notificationStore: TerminalNotificationStore
     ) -> [CasperSidebarPanelEntry] {
         var out: [CasperSidebarPanelEntry] = []
         out.reserveCapacity(workspaces.reduce(0) { $0 + $1.panels.count })
         for workspace in workspaces {
             let isWorkspaceSelected = workspace.id == selectedWorkspaceId
             let focusedPanelId = workspace.focusedPanelId
-            let activity = activityByWorkspaceId[workspace.id]
-                ?? CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
+            let isMultiPanel = workspace.panels.count > 1
             // Visual order from bonsplit (left-to-right pane walk, tabs in
             // tab-strip order within each pane). Falls back to UUID sort for
             // panels not yet tracked by bonsplit — see
@@ -310,6 +311,14 @@ enum CasperSidebarPanelEntryBuilder {
                     forPanel: panelId,
                     in: workspace
                 )
+                let activity: CasperWorkspaceActivity = isMultiPanel
+                    ? CasperAgentActivity.panelActivity(
+                        for: workspace,
+                        panelId: panelId,
+                        notificationStore: notificationStore
+                    )
+                    : activityByWorkspaceId[workspace.id]
+                        ?? CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
                 out.append(
                     CasperSidebarPanelEntry(
                         key: CasperSidebarPanelKey(

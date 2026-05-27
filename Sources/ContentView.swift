@@ -9712,7 +9712,8 @@ struct VerticalTabsSidebar: View {
             ? CasperSidebarPanelEntryBuilder.entries(
                 from: sortedTabs,
                 selectedWorkspaceId: tabManager.selectedTabId,
-                activityByWorkspaceId: activityByID
+                activityByWorkspaceId: activityByID,
+                notificationStore: notificationStore
             )
             : CasperSidebarPanelEntryBuilder.workspaceRowEntries(
                 from: sortedTabs,

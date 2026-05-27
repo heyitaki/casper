@@ -61,10 +61,67 @@ enum CasperAgentActivity {
         for workspace: Workspace,
         notificationStore: TerminalNotificationStore
     ) -> CasperWorkspaceActivity {
-        let agentEntries = workspace.statusEntries.compactMap { key, entry -> SidebarStatusEntry? in
+        return classifyActivity(
+            agentEntries: allAgentEntries(in: workspace),
+            workspace: workspace,
+            notificationStore: notificationStore
+        )
+    }
+
+    /// Per-panel activity. Only considers status entries whose agent PID key
+    /// maps to `panelId` via `workspace.agentPIDKeysByPanelId`. Panels with
+    /// no attributed agent entries fall through to `.done` / `.none` via the
+    /// JSONL and notification paths (same as workspace-level).
+    static func panelActivity(
+        for workspace: Workspace,
+        panelId: UUID,
+        notificationStore: TerminalNotificationStore
+    ) -> CasperWorkspaceActivity {
+        let panelStatusKeys = workspace.agentPIDKeysByPanelId[panelId] ?? []
+        let agentEntries: [SidebarStatusEntry]
+        if panelStatusKeys.isEmpty {
+            // No PID attribution for this panel — if the workspace has only
+            // one panel, inherit all agent entries (single-panel workspaces
+            // don't need disambiguation). Otherwise, no live agent here.
+            if workspace.panels.count <= 1 {
+                agentEntries = allAgentEntries(in: workspace)
+            } else {
+                agentEntries = []
+            }
+        } else {
+            agentEntries = panelStatusKeys.compactMap { pidKey -> SidebarStatusEntry? in
+                let statusKey = statusKeyForPIDKey(pidKey, in: workspace)
+                guard agentStatusKeys.contains(statusKey.lowercased()) else { return nil }
+                return workspace.statusEntries[statusKey]
+            }
+        }
+        return classifyActivity(
+            agentEntries: agentEntries,
+            workspace: workspace,
+            notificationStore: notificationStore
+        )
+    }
+
+    private static func allAgentEntries(in workspace: Workspace) -> [SidebarStatusEntry] {
+        workspace.statusEntries.compactMap { key, entry in
             agentStatusKeys.contains(key.lowercased()) ? entry : nil
         }
+    }
 
+    /// Mirror of `Workspace.agentStatusKey(forAgentPIDKey:)` — strips the
+    /// `.pid` suffix from a PID key to recover the status-entry key.
+    /// Canonical implementation: `Workspace+PanelLifecycle.swift`.
+    private static func statusKeyForPIDKey(_ pidKey: String, in workspace: Workspace) -> String {
+        if workspace.statusEntries[pidKey] != nil { return pidKey }
+        guard let dotIndex = pidKey.firstIndex(of: ".") else { return pidKey }
+        return String(pidKey[..<dotIndex])
+    }
+
+    private static func classifyActivity(
+        agentEntries: [SidebarStatusEntry],
+        workspace: Workspace,
+        notificationStore: TerminalNotificationStore
+    ) -> CasperWorkspaceActivity {
         // WORKING / NEEDS_INPUT only fire when cmux's hook system has live
         // agent state. Working wins over everything; needs-input includes
         // unread notifications even if the agent entry says Idle.
