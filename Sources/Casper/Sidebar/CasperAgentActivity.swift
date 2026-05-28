@@ -78,22 +78,26 @@ enum CasperAgentActivity {
         notificationStore: TerminalNotificationStore
     ) -> CasperWorkspaceActivity {
         let panelStatusKeys = workspace.agentPIDKeysByPanelId[panelId] ?? []
-        let agentEntries: [SidebarStatusEntry]
         if panelStatusKeys.isEmpty {
-            // No PID attribution for this panel — if the workspace has only
-            // one panel, inherit all agent entries (single-panel workspaces
-            // don't need disambiguation). Otherwise, no live agent here.
             if workspace.panels.count <= 1 {
-                agentEntries = allAgentEntries(in: workspace)
-            } else {
-                agentEntries = []
+                return classifyActivity(
+                    agentEntries: allAgentEntries(in: workspace),
+                    workspace: workspace,
+                    notificationStore: notificationStore
+                )
             }
-        } else {
-            agentEntries = panelStatusKeys.compactMap { pidKey -> SidebarStatusEntry? in
-                let statusKey = statusKeyForPIDKey(pidKey, in: workspace)
-                guard agentStatusKeys.contains(statusKey.lowercased()) else { return nil }
-                return workspace.statusEntries[statusKey]
+            // Multi-panel, no live PID attribution — check per-panel JSONL
+            // dates so panels retain their "done" timestamp after session-end
+            // clears the PID + status atomically.
+            if let panelDate = claudeActivityDate(forPanelId: panelId) {
+                return CasperWorkspaceActivity(state: .done, lastActivityAt: panelDate)
             }
+            return CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
+        }
+        let agentEntries = panelStatusKeys.compactMap { pidKey -> SidebarStatusEntry? in
+            let statusKey = statusKeyForPIDKey(pidKey, in: workspace)
+            guard agentStatusKeys.contains(statusKey.lowercased()) else { return nil }
+            return workspace.statusEntries[statusKey]
         }
         return classifyActivity(
             agentEntries: agentEntries,
@@ -167,6 +171,10 @@ enum CasperAgentActivity {
         CasperClaudeActivityStore.shared.latestActivity(forWorkspaceID: workspace.id)
     }
 
+    private static func claudeActivityDate(forPanelId panelId: UUID) -> Date? {
+        CasperClaudeActivityStore.shared.latestActivity(forPanelID: panelId)
+    }
+
     /// JSONL paths to scan for this workspace's last activity. Always tied
     /// to a specific session — never aggregates across siblings:
     /// 1. Hook records (`~/.cmuxterm/claude-hook-sessions.json`) — the
@@ -209,6 +217,22 @@ enum CasperAgentActivity {
         return claudeSnapshotJSONLPaths(for: workspace).sorted()
     }
 
+    static func claudeJSONLPaths(forPanel panelId: UUID, in workspace: Workspace) -> [String] {
+        let hookPaths = CasperClaudeSessionMap.shared.jsonlPaths(forPanelID: panelId)
+        if !hookPaths.isEmpty { return hookPaths.sorted() }
+        return claudeSnapshotJSONLPaths(forPanel: panelId, in: workspace).sorted()
+    }
+
+    private static func claudeSnapshotJSONLPaths(forPanel panelId: UUID, in workspace: Workspace) -> [String] {
+        guard let snapshot = workspace.restoredAgentSnapshotsByPanelId[panelId],
+              snapshot.kind == .claude else { return [] }
+        let sid = snapshot.sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sid.isEmpty else { return [] }
+        let cwd = (snapshot.workingDirectory ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cwd.isEmpty else { return [] }
+        return [claudeJSONLPath(sessionId: sid, cwd: cwd)]
+    }
+
     /// Session-attributed fallback paths used when the live hook map has no
     /// record for this workspace — typically because the workspace was
     /// restored from session persistence and Claude hasn't relaunched yet.
@@ -216,14 +240,12 @@ enum CasperAgentActivity {
     /// that as "no attribution available" and surfaces no trailing time
     /// rather than risk a misleading aggregate across siblings.
     private static func claudeSnapshotJSONLPaths(for workspace: Workspace) -> [String] {
-        let home = NSHomeDirectory() as NSString
         // Dedup so two panels sharing the same `(sessionId, cwd)` produce one
         // path — keeps the activity store's per-path-set grouping aligned with
         // single-panel workspaces pointing at the same JSONL.
         var paths: Set<String> = []
         for (sid, cwd) in validClaudeSnapshots(for: workspace) {
-            let encoded = cwd.replacingOccurrences(of: "/", with: "-")
-            paths.insert(home.appendingPathComponent(".claude/projects/\(encoded)/\(sid).jsonl"))
+            paths.insert(claudeJSONLPath(sessionId: sid, cwd: cwd))
         }
         return Array(paths)
     }
@@ -323,6 +345,16 @@ private let casperISO8601Formatter: ISO8601DateFormatter = {
     return f
 }()
 
+/// Encodes `(sessionId, cwd)` into Claude Code's on-disk JSONL path:
+/// `~/.claude/projects/<dashed-cwd>/<sessionId>.jsonl`. Single source of
+/// truth for the encoding rule — used by the hook session map parser, the
+/// workspace-level snapshot fallback, and the per-panel snapshot fallback.
+fileprivate func claudeJSONLPath(sessionId: String, cwd: String) -> String {
+    let encoded = cwd.replacingOccurrences(of: "/", with: "-")
+    return (NSHomeDirectory() as NSString)
+        .appendingPathComponent(".claude/projects/\(encoded)/\(sessionId).jsonl")
+}
+
 /// Maps cmux workspace UUIDs to the Claude Code session JSONL paths cmux's
 /// hook system has recorded for that workspace, by reading
 /// `~/.cmuxterm/claude-hook-sessions.json` (written by
@@ -342,6 +374,7 @@ final class CasperClaudeSessionMap: ObservableObject {
     private struct CachedState {
         let mtime: Date
         let map: [UUID: [String]]
+        let panelMap: [UUID: [String]]
     }
 
     private var cached: CachedState?
@@ -381,6 +414,11 @@ final class CasperClaudeSessionMap: ObservableObject {
         return cached?.map[id] ?? []
     }
 
+    func jsonlPaths(forPanelID id: UUID) -> [String] {
+        kickRefresh()
+        return cached?.panelMap[id] ?? []
+    }
+
     /// Best-effort off-main refresh, TTL-gated and in-flight-coalesced.
     /// Safe to call from view body — schedules work on a background queue
     /// and posts back via `@Published mapVersion`.
@@ -416,27 +454,30 @@ final class CasperClaudeSessionMap: ObservableObject {
               let mtime = attrs[.modificationDate] as? Date
         else { return nil }
         if priorMtime == mtime { return nil }
-        return CachedState(mtime: mtime, map: parse(path: path))
+        let (workspaceMap, panelMap) = parse(path: path)
+        return CachedState(mtime: mtime, map: workspaceMap, panelMap: panelMap)
     }
 
-    private static func parse(path: String) -> [UUID: [String]] {
+    private static func parse(path: String) -> (workspace: [UUID: [String]], panel: [UUID: [String]]) {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let sessions = obj["sessions"] as? [String: [String: Any]]
-        else { return [:] }
-        let home = NSHomeDirectory() as NSString
-        var out: [UUID: [String]] = [:]
+        else { return ([:], [:]) }
+        var workspaceOut: [UUID: [String]] = [:]
+        var panelOut: [UUID: [String]] = [:]
         for (sessionId, record) in sessions {
             guard let workspaceIdString = record["workspaceId"] as? String,
                   let workspaceId = UUID(uuidString: workspaceIdString),
                   let cwd = record["cwd"] as? String
             else { continue }
-            let encoded = cwd.replacingOccurrences(of: "/", with: "-")
-            let jsonlPath = home
-                .appendingPathComponent(".claude/projects/\(encoded)/\(sessionId).jsonl")
-            out[workspaceId, default: []].append(jsonlPath)
+            let jsonlPath = claudeJSONLPath(sessionId: sessionId, cwd: cwd)
+            workspaceOut[workspaceId, default: []].append(jsonlPath)
+            if let surfaceIdString = record["surfaceId"] as? String,
+               let surfaceId = UUID(uuidString: surfaceIdString) {
+                panelOut[surfaceId, default: []].append(jsonlPath)
+            }
         }
-        return out
+        return (workspaceOut, panelOut)
     }
 }
 
@@ -514,6 +555,7 @@ final class CasperClaudeActivityStore: ObservableObject {
     static let shared = CasperClaudeActivityStore()
 
     @Published private(set) var latestActivityByWorkspace: [UUID: Date] = [:]
+    @Published private(set) var latestActivityByPanel: [UUID: Date] = [:]
 
     private let refreshQueue = DispatchQueue(
         label: "casper.claude-activity.refresh",
@@ -623,84 +665,85 @@ final class CasperClaudeActivityStore: ObservableObject {
         latestActivityByWorkspace[id]
     }
 
+    func latestActivity(forPanelID id: UUID) -> Date? {
+        latestActivityByPanel[id]
+    }
+
     /// Kicks off a background scan for the given workspace → JSONL-paths map.
     /// Cadence is the caller's responsibility (the sidebar `.task` loop polls
     /// every 20s so resumes that reuse the same sessionId — JSONL grows, path
     /// set unchanged — still surface). The in-flight gate coalesces redundant
     /// calls into a single scan. Safe to call from `onAppear` / `.task(id:)`
     /// — never from `body` (would feed back through @Published).
-    func refresh(workspaceSessions: [UUID: [String]]) {
+    func refresh(workspaceSessions: [UUID: [String]], panelSessions: [UUID: [String]] = [:]) {
         var toRefresh: [UUID: [String]] = [:]
         for (id, paths) in workspaceSessions {
             if inFlightWorkspaces.contains(id) { continue }
             inFlightWorkspaces.insert(id)
             toRefresh[id] = paths
         }
+        var panelsToRefresh: [UUID: [String]] = [:]
+        for (id, paths) in panelSessions {
+            if inFlightWorkspaces.contains(id) { continue }
+            inFlightWorkspaces.insert(id)
+            panelsToRefresh[id] = paths
+        }
         #if DEBUG
         cmuxDebugLog(
-            "casper.claudeActivity.refresh.request asked=\(workspaceSessions.count) toRefresh=\(toRefresh.count)"
+            "casper.claudeActivity.refresh.request asked=\(workspaceSessions.count) toRefresh=\(toRefresh.count) panels=\(panelsToRefresh.count)"
         )
         #endif
-        guard !toRefresh.isEmpty else { return }
+        guard !toRefresh.isEmpty || !panelsToRefresh.isEmpty else { return }
+        // Merge into a single compute call so the dedup-by-path-set inside
+        // CasperClaudeActivityIO coalesces JSONLs that appear in both a
+        // workspace's path list and one of its panels' path lists (the
+        // common case for multi-panel workspaces). Workspace and panel IDs
+        // come from independent UUID v4 pools, so no key collisions.
+        var merged: [UUID: [String]] = toRefresh
+        for (id, paths) in panelsToRefresh { merged[id] = paths }
         refreshQueue.async { [weak self] in
             let start = Date()
-            let results = CasperClaudeActivityIO.computeActivities(forWorkspaceSessions: toRefresh)
+            let allResults = CasperClaudeActivityIO.computeActivities(forWorkspaceSessions: merged)
             let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
             #if DEBUG
-            let withDate = results.values.compactMap { $0 }.count
+            let withDate = allResults.values.compactMap { $0 }.count
             cmuxDebugLog(
-                "casper.claudeActivity.refresh.compute count=\(toRefresh.count) withDate=\(withDate) elapsedMs=\(elapsedMs)"
+                "casper.claudeActivity.refresh.compute ws=\(toRefresh.count) panels=\(panelsToRefresh.count) withDate=\(withDate) elapsedMs=\(elapsedMs)"
             )
             #endif
             Task { @MainActor [weak self] in
                 // Drop the in-flight gate BEFORE the self-guard so a torn-down
-                // store doesn't permanently wedge these IDs. The store is a
-                // singleton today, but the gate is what makes a future
-                // non-singleton split (per-window store) safe to add.
+                // store doesn't permanently wedge these IDs.
                 if let strong = self {
                     for id in toRefresh.keys { strong.inFlightWorkspaces.remove(id) }
+                    for id in panelsToRefresh.keys { strong.inFlightWorkspaces.remove(id) }
                 }
                 guard let self else { return }
-                // Stage mutations into a local copy and assign back ONCE.
-                // Mutating `self.latestActivityByWorkspace[id]` per entry fires
-                // `objectWillChange` per write — at 50 workspaces all returning
-                // new dates from a single poll, that's 50 synchronous publish
-                // calls before the loop ends. SwiftUI coalesces into one body
-                // re-eval, but the publish-storm is still wasted CPU on the
-                // hot main-thread loop. One assignment = one publish.
-                //
-                // Cross-scan key preservation: this snapshot-then-assign-once
-                // pattern relies on `refreshQueue` being serial and the
-                // MainActor task hops landing in dispatch order. Both are true
-                // — do not switch `refreshQueue` to `.concurrent` without
-                // adding a per-key merge here.
-                var snapshot = self.latestActivityByWorkspace
-                var changed = false
-                for (id, date) in results {
-                    // nil result means "no parseable activity found this
-                    // scan" — could be a transient miss (tail is all compact
-                    // summaries, file briefly locked). Leave any previously
-                    // known date in place so the sidebar doesn't blank out.
+                var wsSnapshot = self.latestActivityByWorkspace
+                var panelSnapshot = self.latestActivityByPanel
+                var wsChanged = false
+                var panelChanged = false
+                for (id, date) in allResults {
                     guard let date else { continue }
-                    if snapshot[id] != date {
-                        snapshot[id] = date
-                        changed = true
+                    if toRefresh[id] != nil, wsSnapshot[id] != date {
+                        wsSnapshot[id] = date
+                        wsChanged = true
+                    }
+                    if panelsToRefresh[id] != nil, panelSnapshot[id] != date {
+                        panelSnapshot[id] = date
+                        panelChanged = true
                     }
                 }
-                // Single publish + disk-save when (and only when) at least one
-                // workspace's date changed. Skipping the publish on a no-op
-                // scan is the whole point: the row's relative-time text
-                // updates via TimelineView, and TabItemView.Equatable forces
-                // a re-render whenever a date actually changes — so a
-                // best-effort publish here would only trigger wasted sidebar
-                // body re-evals (which re-walk all the JSONL-path stats).
-                if changed {
-                    self.latestActivityByWorkspace = snapshot
+                if wsChanged {
+                    self.latestActivityByWorkspace = wsSnapshot
                     self.scheduleDiskSave()
+                }
+                if panelChanged {
+                    self.latestActivityByPanel = panelSnapshot
                 }
                 #if DEBUG
                 cmuxDebugLog(
-                    "casper.claudeActivity.refresh.publish changed=\(changed) storeCount=\(self.latestActivityByWorkspace.count)"
+                    "casper.claudeActivity.refresh.publish wsChanged=\(wsChanged) panelChanged=\(panelChanged) storeCount=\(self.latestActivityByWorkspace.count)"
                 )
                 #endif
             }

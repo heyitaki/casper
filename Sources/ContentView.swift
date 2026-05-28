@@ -9759,14 +9759,26 @@ struct VerticalTabsSidebar: View {
         // of a second .map pass over filteredTabs.
         let localWorkspaceIDs: Set<UUID> = Set(activityByID.keys)
         let claudeNow = Date()
-        let claudeWorkspaceSessions: [UUID: [String]] = filteredTabs
-            .reduce(into: [UUID: [String]]()) { acc, tab in
-                let paths = CasperAgentActivity.claudeJSONLPaths(
-                    for: tab,
-                    now: claudeNow
-                )
-                if !paths.isEmpty { acc[tab.id] = paths }
+        var claudeWorkspaceSessions: [UUID: [String]] = [:]
+        var claudePanelSessions: [UUID: [String]] = [:]
+        for tab in filteredTabs {
+            let paths = CasperAgentActivity.claudeJSONLPaths(
+                for: tab,
+                now: claudeNow
+            )
+            if !paths.isEmpty { claudeWorkspaceSessions[tab.id] = paths }
+            if tab.panels.count > 1 {
+                for panelId in tab.sidebarOrderedPanelIds() {
+                    let panelPaths = CasperAgentActivity.claudeJSONLPaths(
+                        forPanel: panelId,
+                        in: tab
+                    )
+                    if !panelPaths.isEmpty {
+                        claudePanelSessions[panelId] = panelPaths
+                    }
+                }
             }
+        }
         // Cheap id for `.task(id:)` below. Hashing the full
         // `[UUID:[String]]` per body eval hashes hundreds of strings at
         // N=48 workspaces. The two fields below capture the only inputs
@@ -9823,9 +9835,25 @@ struct VerticalTabsSidebar: View {
                                 shortcutHintXOffset: renderContext.tabItemSettings.sidebarShortcutHintXOffset,
                                 shortcutHintYOffset: renderContext.tabItemSettings.sidebarShortcutHintYOffset,
                                 onSelect: { [weak tabManager] in
+                                    #if DEBUG
+                                    cmuxDebugLog(
+                                        "sidebar.panelRow.onSelect workspace=\(entry.key.workspaceId.uuidString.prefix(5)) " +
+                                        "panel=\(entry.key.panelId.uuidString.prefix(5)) " +
+                                        "tabManager=\(tabManager != nil ? "ok" : "nil")"
+                                    )
+                                    #endif
                                     guard let tabManager,
                                           let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
-                                    else { return }
+                                    else {
+                                        #if DEBUG
+                                        cmuxDebugLog(
+                                            "sidebar.panelRow.onSelect.BAIL workspace=\(entry.key.workspaceId.uuidString.prefix(5)) " +
+                                            "tabManager=\(tabManager != nil ? "ok" : "nil") " +
+                                            "workspaceFound=\(tabManager?.tabs.contains(where: { $0.id == entry.key.workspaceId }) ?? false)"
+                                        )
+                                        #endif
+                                        return
+                                    }
                                     // Route through focusTab so lastFocusedPanelByTab is primed
                                     // before selectedTabId.didSet's async restore reads it;
                                     // otherwise the restore re-focuses the previously remembered
@@ -9850,10 +9878,10 @@ struct VerticalTabsSidebar: View {
                                     }
                                 }
                             )
-                            // CASPER: see CasperSidebarPanelRow ==(_:_:) — skips
-                            // body re-evaluation when upstream metadata-store
-                            // publishes don't change this row's visible inputs.
-                            .equatable()
+                            // CASPER: `.equatable()` TEMPORARILY REMOVED to debug
+                            // sidebar click-through failure. Re-enable once root
+                            // cause is confirmed. See CasperSidebarPanelRow ==(_:_:).
+                            // .equatable()
                             // Anchor-owning row claims the workspace UUID as
                             // its SwiftUI explicit identity so
                             // `ScrollViewProxy.scrollTo(selectedWorkspaceId)`
@@ -9899,7 +9927,8 @@ struct VerticalTabsSidebar: View {
                 )
                 #endif
                 CasperClaudeActivityStore.shared.refresh(
-                    workspaceSessions: claudeWorkspaceSessions
+                    workspaceSessions: claudeWorkspaceSessions,
+                    panelSessions: claudePanelSessions
                 )
                 try? await Task.sleep(for: .seconds(20))
             }
