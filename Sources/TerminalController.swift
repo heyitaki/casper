@@ -2630,6 +2630,8 @@ class TerminalController {
             return v2Result(id: id, self.v2SurfaceClearHistory(params: params))
         case "surface.trigger_flash":
             return v2Result(id: id, self.v2SurfaceTriggerFlash(params: params))
+        case "surface.set_title":
+            return v2Result(id: id, self.v2SurfaceSetTitle(params: params))
 
         // Panes
         case "pane.list":
@@ -3007,6 +3009,7 @@ class TerminalController {
             "surface.read_text",
             "surface.clear_history",
             "surface.trigger_flash",
+            "surface.set_title",
             "pane.list",
             "pane.focus",
             "pane.surfaces",
@@ -7264,6 +7267,48 @@ class TerminalController {
 
             ws.triggerFocusFlash(panelId: surfaceId)
             result = .ok(["workspace_id": ws.id.uuidString, "workspace_ref": v2Ref(kind: .workspace, uuid: ws.id), "surface_id": surfaceId.uuidString, "surface_ref": v2Ref(kind: .surface, uuid: surfaceId), "window_id": v2OrNull(v2ResolveWindowId(tabManager: tabManager)?.uuidString), "window_ref": v2Ref(kind: .window, uuid: v2ResolveWindowId(tabManager: tabManager))])
+        }
+        return result
+    }
+
+    private func v2SurfaceSetTitle(params: [String: Any]) -> V2CallResult {
+        guard let tabManager = v2ResolveTabManager(params: params) else {
+            return .err(code: "unavailable", message: "TabManager not available", data: nil)
+        }
+        guard let titleRaw = v2String(params, "title") else {
+            return .err(code: "invalid_params", message: "Missing or invalid title", data: nil)
+        }
+        let title = titleRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            return .err(code: "invalid_params", message: "Missing or invalid title", data: nil)
+        }
+
+        var result: V2CallResult = .err(code: "internal_error", message: "Failed to set title", data: nil)
+        v2MainSync {
+            guard let ws = v2ResolveWorkspace(params: params, tabManager: tabManager) else {
+                result = .err(code: "not_found", message: "Workspace not found", data: nil)
+                return
+            }
+            let surfaceId = v2UUID(params, "surface_id") ?? ws.focusedPanelId
+            guard let surfaceId else {
+                result = .err(code: "not_found", message: "No focused surface", data: nil)
+                return
+            }
+            guard ws.panels[surfaceId] != nil else {
+                result = .err(code: "not_found", message: "Surface not found", data: ["surface_id": surfaceId.uuidString])
+                return
+            }
+            ws.updatePanelTitle(panelId: surfaceId, title: title)
+            let windowId = v2ResolveWindowId(tabManager: tabManager)
+            result = .ok([
+                "workspace_id": ws.id.uuidString,
+                "workspace_ref": v2Ref(kind: .workspace, uuid: ws.id),
+                "surface_id": surfaceId.uuidString,
+                "surface_ref": v2Ref(kind: .surface, uuid: surfaceId),
+                "window_id": v2OrNull(windowId?.uuidString),
+                "window_ref": v2Ref(kind: .window, uuid: windowId),
+                "title": title,
+            ])
         }
         return result
     }

@@ -16353,6 +16353,13 @@ struct CMUXCLI {
             .replacingOccurrences(of: "|", with: "¦")
     }
 
+    private func agentPromptTitle(from input: ClaudeHookParsedInput, maxLength: Int) -> String? {
+        guard let raw = feedPromptText(from: input.rawObject) ?? input.rawFallback else { return nil }
+        let title = normalizedSingleLine(raw)
+        guard !title.isEmpty else { return nil }
+        return truncate(title, maxLength: maxLength)
+    }
+
     private func notificationPayload(title: String, subtitle: String, body: String) -> String {
         "\(sanitizeNotificationField(title))|\(sanitizeNotificationField(subtitle))|\(sanitizeNotificationField(body))"
     }
@@ -17685,6 +17692,17 @@ export default function cmuxPiSessionExtension(pi: ExtensionAPI) {
                 "set_status \(def.statusKey) Running --icon=bolt.fill --color=#4C8DFF --tab=\(workspaceId)\(socketPanelOption(surfaceId))",
                 client: client
             )
+            // CASPER: Codex doesn't emit OSC title escapes; push the prompt as a soft title.
+            // Gated to "prompt-submit" (not "shell-exec", which also maps to .promptSubmit)
+            // and scoped to Codex so OSC-emitting agents aren't regressed by a racing write.
+            if subcommand == "prompt-submit", def.name == "codex",
+               let promptTitle = agentPromptTitle(from: input, maxLength: 120) {
+                _ = try? client.sendV2(method: "surface.set_title", params: [
+                    "workspace_id": workspaceId,
+                    "surface_id": surfaceId,
+                    "title": promptTitle,
+                ])
+            }
             if def.name == "codex", !sessionId.isEmpty {
                 let leasePath = createCodexMonitorLease(
                     sessionId: sessionId,
