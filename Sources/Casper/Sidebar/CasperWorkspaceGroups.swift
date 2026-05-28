@@ -277,13 +277,18 @@ enum CasperSidebarPanelEntryBuilder {
         for workspace in workspaces {
             let isWorkspaceSelected = workspace.id == selectedWorkspaceId
             let focusedPanelId = workspace.focusedPanelId
-            let isMultiPanel = workspace.panels.count > 1
             // Visual order from bonsplit (left-to-right pane walk, tabs in
             // tab-strip order within each pane). Falls back to UUID sort for
             // panels not yet tracked by bonsplit — see
-            // `Workspace.sidebarOrderedPanelIds()`.
-            let orderedPanelIds = workspace.sidebarOrderedPanelIds()
+            // `Workspace.sidebarOrderedPanelIds()`. Non-terminal panels
+            // (browser, markdown, file preview) are filtered out: the sidebar
+            // is a terminal session list, so the "· N" suffix counts only
+            // terminal panels and stays sequential.
+            let orderedPanelIds = workspace.sidebarOrderedPanelIds().filter { panelId in
+                workspace.panels[panelId]?.panelType == .terminal
+            }
             let panelCount = orderedPanelIds.count
+            let isMultiPanel = panelCount > 1
             for (index, panelId) in orderedPanelIds.enumerated() {
                 let rawTitle: String = {
                     if let custom = workspace.panelCustomTitles[panelId]?
