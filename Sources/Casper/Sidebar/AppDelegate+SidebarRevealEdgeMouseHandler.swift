@@ -6,6 +6,11 @@ extension AppDelegate {
     @discardableResult
     func handleSidebarRevealLeadingEdgeMouseDown(window: NSWindow, event: NSEvent) -> Bool {
         guard event.type == .leftMouseDown else { return false }
+        // Shift+click must reach the terminal surface for text selection —
+        // see SidebarRevealStripMetrics.shouldBypassRevealIntercept.
+        guard !SidebarRevealStripMetrics.shouldBypassRevealIntercept(modifierFlags: event.modifierFlags) else {
+            return false
+        }
         let location = event.locationInWindow
         guard location.x >= 0, location.x < SidebarRevealStripMetrics.width else {
             return false
@@ -25,6 +30,9 @@ extension AppDelegate {
     @discardableResult
     func handleSidebarRevealTrailingEdgeMouseDown(window: NSWindow, event: NSEvent) -> Bool {
         guard event.type == .leftMouseDown else { return false }
+        guard !SidebarRevealStripMetrics.shouldBypassRevealIntercept(modifierFlags: event.modifierFlags) else {
+            return false
+        }
         let location = event.locationInWindow
         let trailingX = window.frame.width
         guard location.x > trailingX - SidebarRevealStripMetrics.width,

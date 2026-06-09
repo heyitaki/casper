@@ -33,6 +33,15 @@ enum SidebarRevealStripMetrics {
         sidebarVisible ? 0 : width
     }
 
+    /// Shift+click must bypass the reveal-strip mouse-down intercept entirely:
+    /// ghostty's convention for selecting text while a TUI captures the mouse
+    /// is shift+drag, and a selection starting in the leftmost terminal column
+    /// lands inside the reveal band. Shared by both edge handlers in
+    /// `AppDelegate+SidebarRevealEdgeMouseHandler.swift`.
+    static func shouldBypassRevealIntercept(modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        modifierFlags.contains(.shift)
+    }
+
     /// Shared sidebar-hidden detector for `WindowTerminalHostView` and
     /// `WindowBrowserHostView` hit-tests: if a hosted view is flush to either
     /// edge of `bounds`, treat clicks in the matching reveal band as

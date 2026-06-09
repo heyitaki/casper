@@ -2436,6 +2436,110 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         )
     }
 
+    func testSidebarRevealInterceptBypassesShiftClicksForTerminalSelection() {
+        // CASPER: shift+drag is ghostty's text-selection path while a TUI
+        // (Claude Code, vim) captures the mouse; a selection starting in the
+        // leftmost terminal column lands inside the reveal band, so the
+        // edge intercept must let shifted clicks through.
+        XCTAssertTrue(
+            SidebarRevealStripMetrics.shouldBypassRevealIntercept(modifierFlags: [.shift]),
+            "Shift+click must bypass the reveal-strip intercept"
+        )
+        XCTAssertTrue(
+            SidebarRevealStripMetrics.shouldBypassRevealIntercept(modifierFlags: [.shift, .option]),
+            "Shifted chords must also bypass — selection modes can add modifiers"
+        )
+        XCTAssertFalse(
+            SidebarRevealStripMetrics.shouldBypassRevealIntercept(modifierFlags: []),
+            "Plain clicks keep the reveal/resize affordance"
+        )
+        XCTAssertFalse(
+            SidebarRevealStripMetrics.shouldBypassRevealIntercept(modifierFlags: [.command]),
+            "Cmd+click is not a selection gesture; the strip keeps it"
+        )
+    }
+
+    // CASPER: `.equatable()` on CasperSidebarPanelRow is load-bearing against
+    // the CA-commit-stall foreground freeze — but it silently drops UI
+    // updates if a visible input is ever added without extending `==`. This
+    // locks the contract: every visible input participates in equality;
+    // closures are excluded.
+    private func makeCasperSidebarPanelRow(
+        displayTitle: String = "row",
+        isWorkspaceSelected: Bool = false,
+        isPanelFocused: Bool = false,
+        isPinned: Bool = false,
+        activity: CasperWorkspaceActivity = CasperWorkspaceActivity(state: .none, lastActivityAt: nil),
+        workspaceShortcutDigit: Int? = 1,
+        workspaceShortcutModifierSymbol: String = "⌘",
+        showsModifierShortcutHints: Bool = false,
+        alwaysShowShortcutHints: Bool = false,
+        shortcutHintXOffset: Double = 0,
+        shortcutHintYOffset: Double = 0,
+        onSelect: @escaping () -> Void = {},
+        onClose: @escaping () -> Void = {}
+    ) -> CasperSidebarPanelRow {
+        let key = CasperSidebarPanelKey(
+            workspaceId: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            panelId: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        )
+        let entry = CasperSidebarPanelEntry(
+            key: key,
+            displayTitle: displayTitle,
+            rawTitle: displayTitle,
+            groupKey: "/repo",
+            isWorkspaceSelected: isWorkspaceSelected,
+            isPanelFocused: isPanelFocused,
+            isPinned: isPinned,
+            activity: activity,
+            withinWorkspaceOrder: 0
+        )
+        return CasperSidebarPanelRow(
+            entry: entry,
+            workspaceShortcutDigit: workspaceShortcutDigit,
+            workspaceShortcutModifierSymbol: workspaceShortcutModifierSymbol,
+            showsModifierShortcutHints: showsModifierShortcutHints,
+            alwaysShowShortcutHints: alwaysShowShortcutHints,
+            shortcutHintXOffset: shortcutHintXOffset,
+            shortcutHintYOffset: shortcutHintYOffset,
+            onSelect: onSelect,
+            onClose: onClose
+        )
+    }
+
+    func testCasperSidebarPanelRowEqualityTracksEveryVisibleInput() {
+        let base = makeCasperSidebarPanelRow()
+        XCTAssertEqual(base, makeCasperSidebarPanelRow(), "Identical snapshots must compare equal")
+        XCTAssertEqual(
+            base,
+            makeCasperSidebarPanelRow(onSelect: { _ = 1 }, onClose: { _ = 2 }),
+            "Closures are excluded from == — rows with identical snapshots skip re-eval"
+        )
+
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(displayTitle: "changed"))
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(isWorkspaceSelected: true))
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(isPanelFocused: true))
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(isPinned: true))
+        XCTAssertNotEqual(
+            base,
+            makeCasperSidebarPanelRow(
+                activity: CasperWorkspaceActivity(state: .done, lastActivityAt: Date(timeIntervalSince1970: 1))
+            ),
+            "Activity changes must re-render the trailing indicator"
+        )
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(workspaceShortcutDigit: 2))
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(workspaceShortcutDigit: nil))
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(workspaceShortcutModifierSymbol: "⌃"))
+        XCTAssertNotEqual(
+            base,
+            makeCasperSidebarPanelRow(showsModifierShortcutHints: true),
+            "Cmd-hold hint visibility must invalidate the row or pills never appear"
+        )
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(alwaysShowShortcutHints: true))
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(shortcutHintXOffset: 4))
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(shortcutHintYOffset: 4))
+    }
+
     func testNotificationsPopoverVisibilityIsScopedByWindow() {
         let state = NotificationsPopoverVisibilityState.shared
         state.resetForTesting()
