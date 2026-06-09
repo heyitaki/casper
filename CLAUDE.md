@@ -1,5 +1,13 @@
 # cmux agent notes
 
+## Casper vs cmux
+
+**Casper** is the name of our fork (`heyitaki/cmux`) of upstream **cmux** (`manaflow-ai/cmux`). Casper's goal is to add features that improve UX/DX and improve performance, while keeping changes isolated from upstream code so periodic `git merge upstream/main` syncs stay simple. In practice:
+
+- Casper-only code lives under `Sources/Casper/` as additive new files; inline edits to upstream files are minimized, gated, and marked with `// CASPER:` comments.
+- The per-patch register is `docs/casper-fork.md`; the merge discipline is "Upstream merge strategy (Casper fork)" below.
+- When weighing an implementation, prefer the variant with the smaller upstream-file footprint, even at some cost in elegance — merge friction is the constraint that compounds.
+
 ## Initial setup
 
 Run the setup script to initialize submodules and build GhosttyKit:
