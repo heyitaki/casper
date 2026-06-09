@@ -251,6 +251,16 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete if upstream cmux ships its own ranked Find-sidebar pipeline (e.g. Zoekt/trigram index) that supersedes this post-hoc grouping.
 
+### First-mouse gate scoped to true app-activation clicks
+
+- Files (upstream files modified):
+  - `Sources/App/CmuxMainWindow.swift` (`shouldCaptureInactiveFirstMouse` routes through new `FirstMouseGatePolicy.shouldCapture`, which additionally requires `NSApp.keyWindow == nil`)
+  - `Sources/Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift` (DEBUG `sidebar.click.context` forensics log on every sidebar-band leftMouseDown, recording pre-dispatch key/active state)
+- Summary:
+  - Upstream's #3856 first-mouse gate (`FirstMouseGatedHostingOverlay` covering the whole sidebar) swallowed clicks whenever the main window wasn't key. When an in-app panel held key (notifications popover, command palette, two-phase activation restore), that turned the sidebar into a click dead zone until the main window regained key — observed in the field as "temporarily unable to switch sessions by clicking (plain/shift/cmd)". `NSApp.keyWindow == nil` discriminates true app-activation clicks (gate them, per #3856 intent) from in-app key borrowing (pass through).
+- Deletion condition:
+  - Delete if upstream scopes the gate to app-activation clicks (or removes the overlay).
+
 ### Debug-log gating for daily-driver DEBUG builds
 
 - Files (upstream files modified):

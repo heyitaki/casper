@@ -6,6 +6,22 @@ extension AppDelegate {
     @discardableResult
     func handleSidebarRevealLeadingEdgeMouseDown(window: NSWindow, event: NSEvent) -> Bool {
         guard event.type == .leftMouseDown else { return false }
+        #if DEBUG
+        // CASPER: sidebar-click forensics. Dead sidebar clicks were reported
+        // where mouseDown reached the sidebar's hosting view but no row
+        // action fired; this records the pre-dispatch key/active state so
+        // the next occurrence discriminates first-mouse/activation clicks
+        // (window not yet key → SwiftUI Button won't fire) from a genuine
+        // gesture failure. This runs before normal dispatch, so isKeyWindow
+        // still reflects the pre-click state. Bounded to the sidebar band.
+        if event.locationInWindow.x < 320 {
+            cmuxDebugLog(
+                "sidebar.click.context x=\(Int(event.locationInWindow.x)) y=\(Int(event.locationInWindow.y)) " +
+                "key=\(window.isKeyWindow ? 1 : 0) main=\(window.isMainWindow ? 1 : 0) " +
+                "appActive=\(NSApp.isActive ? 1 : 0) clicks=\(event.clickCount)"
+            )
+        }
+        #endif
         // Shift+click must reach the terminal surface for text selection —
         // see SidebarRevealStripMetrics.shouldBypassRevealIntercept.
         guard !SidebarRevealStripMetrics.shouldBypassRevealIntercept(modifierFlags: event.modifierFlags) else {

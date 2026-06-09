@@ -2436,6 +2436,48 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         )
     }
 
+    func testFirstMouseGateOnlyCapturesTrueAppActivationClicks() {
+        // CASPER: regression coverage for the "sidebar stops responding to
+        // clicks" dead zone — when an in-app panel (notifications popover,
+        // command palette) held key, the gate swallowed every sidebar click
+        // until the main window regained key status.
+        XCTAssertTrue(
+            FirstMouseGatePolicy.shouldCapture(
+                windowIsKey: false, appHasKeyWindow: false,
+                paneFirstClickFocusEnabled: false, containsPoint: true
+            ),
+            "True app-activation click (no key window anywhere) is gated"
+        )
+        XCTAssertFalse(
+            FirstMouseGatePolicy.shouldCapture(
+                windowIsKey: false, appHasKeyWindow: true,
+                paneFirstClickFocusEnabled: false, containsPoint: true
+            ),
+            "An in-app panel holding key must NOT turn the sidebar into a dead zone"
+        )
+        XCTAssertFalse(
+            FirstMouseGatePolicy.shouldCapture(
+                windowIsKey: true, appHasKeyWindow: true,
+                paneFirstClickFocusEnabled: false, containsPoint: true
+            ),
+            "Key window clicks always pass through"
+        )
+        XCTAssertFalse(
+            FirstMouseGatePolicy.shouldCapture(
+                windowIsKey: false, appHasKeyWindow: false,
+                paneFirstClickFocusEnabled: true, containsPoint: true
+            ),
+            "focusPaneOnFirstClick=true disables the gate entirely (#3856)"
+        )
+        XCTAssertFalse(
+            FirstMouseGatePolicy.shouldCapture(
+                windowIsKey: false, appHasKeyWindow: false,
+                paneFirstClickFocusEnabled: false, containsPoint: false
+            ),
+            "Points outside the overlay never gate"
+        )
+    }
+
     func testSidebarRevealInterceptBypassesShiftClicksForTerminalSelection() {
         // CASPER: shift+drag is ghostty's text-selection path while a TUI
         // (Claude Code, vim) captures the mouse; a selection starting in the

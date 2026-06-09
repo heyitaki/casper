@@ -45,9 +45,37 @@ class FirstMouseGatedHostingView<Content: View>: NSHostingView<Content> {
 
     func shouldCaptureInactiveFirstMouse(at point: NSPoint) -> Bool {
         let localPoint = superview.map { convert(point, from: $0) } ?? point
-        return window?.isKeyWindow != true &&
-            !PaneFirstClickFocusSettings.isEnabled() &&
-            bounds.contains(localPoint)
+        return FirstMouseGatePolicy.shouldCapture(
+            windowIsKey: window?.isKeyWindow == true,
+            appHasKeyWindow: NSApp.keyWindow != nil,
+            paneFirstClickFocusEnabled: PaneFirstClickFocusSettings.isEnabled(),
+            containsPoint: bounds.contains(localPoint)
+        )
+    }
+}
+
+/// Decision for the first-mouse gate (#3856): swallow the click that
+/// activates the app so it doesn't also focus a pane / fire a sidebar row.
+enum FirstMouseGatePolicy {
+    static func shouldCapture(
+        windowIsKey: Bool,
+        appHasKeyWindow: Bool,
+        paneFirstClickFocusEnabled: Bool,
+        containsPoint: Bool
+    ) -> Bool {
+        // CASPER: gate only true app-activation clicks. When ANOTHER window of
+        // this app holds key (notifications popover, command palette, the
+        // two-phase activation restore), the old `!windowIsKey` predicate
+        // swallowed EVERY sidebar click until the main window regained key —
+        // a "sidebar stops responding to clicks" dead zone. `appHasKeyWindow`
+        // distinguishes the two: NSApp.keyWindow is nil while the app is
+        // inactive (the case this gate exists for) and non-nil when an
+        // in-app panel merely borrowed key status. Delete if upstream scopes
+        // the gate to app-activation clicks itself.
+        !windowIsKey &&
+            !appHasKeyWindow &&
+            !paneFirstClickFocusEnabled &&
+            containsPoint
     }
 }
 
