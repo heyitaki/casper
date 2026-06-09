@@ -320,7 +320,8 @@ enum CasperSidebarPanelEntryBuilder {
                     ? CasperAgentActivity.panelActivity(
                         for: workspace,
                         panelId: panelId,
-                        notificationStore: notificationStore
+                        notificationStore: notificationStore,
+                        terminalPanelCount: panelCount
                     )
                     : activityByWorkspaceId[workspace.id]
                         ?? CasperWorkspaceActivity(state: .none, lastActivityAt: nil)

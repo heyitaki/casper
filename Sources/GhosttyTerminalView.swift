@@ -5506,17 +5506,32 @@ final class TerminalSurface: Identifiable, ObservableObject {
     func forceRefresh(reason: String = "unspecified") {
         // Keystroke hot path: do not add release-build allocations before the guard.
         #if DEBUG
-        let hasSurface = surface != nil
-        let viewState: String
-        if let view = attachedView {
-            let inWindow = view.window != nil
-            let bounds = view.bounds
-            let metalOK = (view.layer as? CAMetalLayer) != nil
-            viewState = "inWindow=\(inWindow) bounds=\(bounds) metalOK=\(metalOK) hasSurface=\(hasSurface)"
+        // CASPER: skip logging healthy keystroke-driven refreshes — they fired
+        // once per keypress, dominating the debug log (millions of lines) and
+        // paying string formatting on the typing hot path. Anomalous states
+        // (detached view / missing surface / zero bounds) and non-typing
+        // reasons still log so surface-attach diagnostics keep working.
+        let debugHealthy: Bool
+        if surface != nil, let debugView = attachedView {
+            debugHealthy = debugView.window != nil
+                && debugView.bounds.width > 0
+                && debugView.bounds.height > 0
         } else {
-            viewState = "NO_ATTACHED_VIEW hasSurface=\(hasSurface)"
+            debugHealthy = false
         }
-        cmuxDebugLog("forceRefresh: \(id) reason=\(reason) \(viewState)")
+        if !debugHealthy || !reason.hasPrefix("keyDown") {
+            let hasSurface = surface != nil
+            let viewState: String
+            if let view = attachedView {
+                let inWindow = view.window != nil
+                let bounds = view.bounds
+                let metalOK = (view.layer as? CAMetalLayer) != nil
+                viewState = "inWindow=\(inWindow) bounds=\(bounds) metalOK=\(metalOK) hasSurface=\(hasSurface)"
+            } else {
+                viewState = "NO_ATTACHED_VIEW hasSurface=\(hasSurface)"
+            }
+            cmuxDebugLog("forceRefresh: \(id) reason=\(reason) \(viewState)")
+        }
         #endif
         guard let view = attachedView,
               let surface,

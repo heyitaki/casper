@@ -505,7 +505,14 @@ final class WindowTerminalHostView: NSView {
         let hasRelevantTypes = DragOverlayRoutingPolicy.hasBonsplitTabTransfer(pasteboardTypes)
             || DragOverlayRoutingPolicy.hasSidebarTabReorder(pasteboardTypes)
             || DragOverlayRoutingPolicy.hasFileURL(pasteboardTypes)
-        guard passThrough || hasRelevantTypes else { return }
+        // CASPER: stale drag-pasteboard types persist after the last drag
+        // ends, so types alone must not satisfy this guard — it logged on
+        // every mouseMoved/cursorUpdate between drags. Require an in-flight
+        // drag event before consulting the pasteboard.
+        let isDragEvent = eventType == .leftMouseDragged
+            || eventType == .rightMouseDragged
+            || eventType == .otherMouseDragged
+        guard passThrough || (isDragEvent && hasRelevantTypes) else { return }
 
         let targetClass = hitView.map { NSStringFromClass(type(of: $0)) } ?? "nil"
         let signature = [
@@ -1247,7 +1254,11 @@ final class WindowTerminalPortal: NSObject {
             hostedView.frame = .zero
             hostedView.bounds = .zero
             CATransaction.commit()
-            hostedView.isHidden = true
+            // hideAndDetach (not bare isHidden) so a re-bound view that was
+            // already in the hierarchy doesn't stay attached while hidden —
+            // an attached CAMetalLayer still participates in
+            // CA::Transaction::commit and defeats the detach optimization.
+            hideAndDetach(hostedView)
         }
         // Keep inner scroll/surface geometry in sync with the seeded outer frame
         // before the hosted view enters a window.

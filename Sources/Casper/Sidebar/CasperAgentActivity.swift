@@ -72,14 +72,22 @@ enum CasperAgentActivity {
     /// maps to `panelId` via `workspace.agentPIDKeysByPanelId`. Panels with
     /// no attributed agent entries fall through to `.done` / `.none` via the
     /// JSONL and notification paths (same as workspace-level).
+    ///
+    /// `terminalPanelCount` must be the TERMINAL-only panel count the caller
+    /// derived for its multi-panel decision (browser/markdown panels are not
+    /// sidebar rows) — using `workspace.panels.count` here silently disagreed
+    /// with the sidebar's filtered count for 1-terminal + N-browser
+    /// workspaces, which would misroute to the multi-panel branch and drop
+    /// the workspace-level fallback.
     static func panelActivity(
         for workspace: Workspace,
         panelId: UUID,
-        notificationStore: TerminalNotificationStore
+        notificationStore: TerminalNotificationStore,
+        terminalPanelCount: Int
     ) -> CasperWorkspaceActivity {
         let panelStatusKeys = workspace.agentPIDKeysByPanelId[panelId] ?? []
         if panelStatusKeys.isEmpty {
-            if workspace.panels.count <= 1 {
+            if terminalPanelCount <= 1 {
                 return classifyActivity(
                     agentEntries: allAgentEntries(in: workspace),
                     workspace: workspace,
@@ -217,10 +225,39 @@ enum CasperAgentActivity {
         return claudeSnapshotJSONLPaths(for: workspace).sorted()
     }
 
-    static func claudeJSONLPaths(forPanel panelId: UUID, in workspace: Workspace) -> [String] {
+    static func claudeJSONLPaths(
+        forPanel panelId: UUID,
+        in workspace: Workspace,
+        now: Date = Date()
+    ) -> [String] {
+        // Memoized like the workspace variant above — this runs from
+        // SwiftUI body for every panel of every multi-panel workspace on
+        // each sidebar re-eval, and the uncached path paid a hook-map
+        // kickRefresh plus a fresh sorted() allocation per call.
+        let key = CasperClaudeJSONLPathsCache.Key(
+            hookVersion: CasperClaudeSessionMap.shared.mapVersion,
+            snapshotsHash: claudePanelSnapshotSignature(forPanel: panelId, in: workspace)
+        )
+        if let cached = CasperClaudeJSONLPathsCache.lookupPanel(panelId: panelId, key: key, now: now) {
+            return cached
+        }
         let hookPaths = CasperClaudeSessionMap.shared.jsonlPaths(forPanelID: panelId)
-        if !hookPaths.isEmpty { return hookPaths.sorted() }
-        return claudeSnapshotJSONLPaths(forPanel: panelId, in: workspace).sorted()
+        let result = hookPaths.isEmpty
+            ? claudeSnapshotJSONLPaths(forPanel: panelId, in: workspace).sorted()
+            : hookPaths.sorted()
+        CasperClaudeJSONLPathsCache.storePanel(panelId: panelId, key: key, value: result, now: now)
+        return result
+    }
+
+    /// Panel analogue of `claudeSnapshotSignature` — content hash of the one
+    /// snapshot this panel can attribute to, for cache keying.
+    private static func claudePanelSnapshotSignature(forPanel panelId: UUID, in workspace: Workspace) -> Int {
+        var hasher = Hasher()
+        if let snapshot = workspace.restoredAgentSnapshotsByPanelId[panelId], snapshot.kind == .claude {
+            hasher.combine(snapshot.sessionId)
+            hasher.combine(snapshot.workingDirectory ?? "")
+        }
+        return hasher.finalize()
     }
 
     private static func claudeSnapshotJSONLPaths(forPanel panelId: UUID, in workspace: Workspace) -> [String] {
@@ -523,18 +560,48 @@ enum CasperClaudeJSONLPathsCache {
     private static let maxEntries = 256
 
     static func lookup(workspaceId: UUID, key: Key, now: Date) -> [String]? {
-        guard let entry = entries[workspaceId],
+        lookupEntry(in: entries, id: workspaceId, key: key, now: now)
+    }
+
+    static func store(workspaceId: UUID, key: Key, value: [String], now: Date) {
+        storeEntry(in: &entries, id: workspaceId, key: key, value: value, now: now)
+    }
+
+    // Panel-keyed entries live in their own dict so workspace and panel
+    // UUID namespaces can't collide (same discipline as the activity
+    // store's split in-flight sets).
+    private static var panelEntries: [UUID: Entry] = [:]
+
+    static func lookupPanel(panelId: UUID, key: Key, now: Date) -> [String]? {
+        lookupEntry(in: panelEntries, id: panelId, key: key, now: now)
+    }
+
+    static func storePanel(panelId: UUID, key: Key, value: [String], now: Date) {
+        storeEntry(in: &panelEntries, id: panelId, key: key, value: value, now: now)
+    }
+
+    private static func lookupEntry(in dict: [UUID: Entry], id: UUID, key: Key, now: Date) -> [String]? {
+        guard let entry = dict[id],
               entry.key == key,
               now.timeIntervalSince(entry.computedAt) < ttl
         else { return nil }
         return entry.value
     }
 
-    static func store(workspaceId: UUID, key: Key, value: [String], now: Date) {
-        if entries.count >= maxEntries, entries[workspaceId] == nil {
-            entries = entries.filter { now.timeIntervalSince($0.value.computedAt) < ttl }
+    private static func storeEntry(in dict: inout [UUID: Entry], id: UUID, key: Key, value: [String], now: Date) {
+        if dict.count >= maxEntries, dict[id] == nil {
+            dict = dict.filter { now.timeIntervalSince($0.value.computedAt) < ttl }
+            if dict.count >= maxEntries {
+                // Everything is fresh (only plausible under pathological row
+                // churn) — evict the oldest half so the cap actually bounds
+                // the dict instead of growing one entry per new id.
+                let oldestFirst = dict.sorted { $0.value.computedAt < $1.value.computedAt }
+                for (evictId, _) in oldestFirst.prefix(maxEntries / 2) {
+                    dict.removeValue(forKey: evictId)
+                }
+            }
         }
-        entries[workspaceId] = Entry(key: key, value: value, computedAt: now)
+        dict[id] = Entry(key: key, value: value, computedAt: now)
     }
 }
 
@@ -562,6 +629,7 @@ final class CasperClaudeActivityStore: ObservableObject {
         qos: .utility
     )
     private var inFlightWorkspaces: Set<UUID> = []
+    private var inFlightPanels: Set<UUID> = []
     private var diskSaveScheduled = false
 
     /// Disk cache so the sidebar can paint times the instant Casper opens —
@@ -683,9 +751,14 @@ final class CasperClaudeActivityStore: ObservableObject {
             toRefresh[id] = paths
         }
         var panelsToRefresh: [UUID: [String]] = [:]
+        // Separate in-flight namespace from workspaces: sharing one set meant
+        // a (theoretical) workspace/panel UUID coincidence silently dropped
+        // the panel's refresh, and structurally invited bugs if the key
+        // spaces ever overlap (e.g. a future refactor keying single-panel
+        // workspaces by panel ID).
         for (id, paths) in panelSessions {
-            if inFlightWorkspaces.contains(id) { continue }
-            inFlightWorkspaces.insert(id)
+            if inFlightPanels.contains(id) { continue }
+            inFlightPanels.insert(id)
             panelsToRefresh[id] = paths
         }
         #if DEBUG
@@ -716,7 +789,7 @@ final class CasperClaudeActivityStore: ObservableObject {
                 // store doesn't permanently wedge these IDs.
                 if let strong = self {
                     for id in toRefresh.keys { strong.inFlightWorkspaces.remove(id) }
-                    for id in panelsToRefresh.keys { strong.inFlightWorkspaces.remove(id) }
+                    for id in panelsToRefresh.keys { strong.inFlightPanels.remove(id) }
                 }
                 guard let self else { return }
                 var wsSnapshot = self.latestActivityByWorkspace

@@ -332,7 +332,11 @@ extension FileDropOverlayView {
         let isDragEvent = eventType == .leftMouseDragged
             || eventType == .rightMouseDragged
             || eventType == .otherMouseDragged
-        guard shouldCapture || isDragEvent || hasRelevantDragTypes(pasteboardTypes) else { return }
+        // CASPER: the drag pasteboard retains the last drag's types after the
+        // drag ends, so lingering types alone must not satisfy this guard —
+        // it made every keystroke/mouse-move pay a live hitTest walk + log
+        // write. Require an actual capture/drag context.
+        guard shouldCapture || (isDragEvent && hasRelevantDragTypes(pasteboardTypes)) else { return }
 
         let signature = "\(shouldCapture ? 1 : 0)|\(debugEventName(eventType))|\(debugPasteboardTypes(pasteboardTypes))"
         guard lastHitTestLogSignature != signature else { return }

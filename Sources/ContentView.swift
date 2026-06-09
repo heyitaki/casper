@@ -9878,10 +9878,14 @@ struct VerticalTabsSidebar: View {
                                     }
                                 }
                             )
-                            // CASPER: `.equatable()` TEMPORARILY REMOVED to debug
-                            // sidebar click-through failure. Re-enable once root
-                            // cause is confirmed. See CasperSidebarPanelRow ==(_:_:).
-                            // .equatable()
+                            // CASPER: row skips body re-eval unless its snapshot
+                            // changes — load-bearing against the CA-commit-stall
+                            // foreground freeze (see CasperSidebarPanelRow ==).
+                            // Was temporarily removed to debug a sidebar
+                            // click-through report; live-log forensics showed
+                            // clicks reach onSelect fine (ws.switch trigger=focus),
+                            // so the removal only reintroduced the freeze.
+                            .equatable()
                             // Anchor-owning row claims the workspace UUID as
                             // its SwiftUI explicit identity so
                             // `ScrollViewProxy.scrollTo(selectedWorkspaceId)`
