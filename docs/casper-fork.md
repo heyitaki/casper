@@ -251,6 +251,17 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete if upstream cmux ships its own ranked Find-sidebar pipeline (e.g. Zoekt/trigram index) that supersedes this post-hoc grouping.
 
+### Debug-log gating for daily-driver DEBUG builds
+
+- Files (upstream files modified):
+  - `Sources/FileDropOverlayViewHitTesting.swift` (`logHitTestDecision` guard requires an active capture/drag, not just lingering drag-pasteboard types)
+  - `Sources/TerminalWindowPortal.swift` (`logDragRouteDecision` same stale-pasteboard guard fix)
+  - `Sources/GhosttyTerminalView.swift` (`forceRefresh` skips logging healthy keystroke-driven refreshes; anomalous states and non-typing reasons still log)
+- Summary:
+  - The pinned Casper app is a DEBUG build used as a daily driver. The drag-routing debug logs gated on "drag pasteboard has relevant types" — but `NSPasteboard(.drag)` retains the last drag's types indefinitely, so after one file drag every keystroke/mouse-move paid a live `hitTest` + 6-level view-hierarchy walk + log write. `forceRefresh` additionally logged one line per keypress, growing `/tmp/cmux-debug-casper.log` into the millions of lines. All three sites keep their diagnostic value for actual drags / anomalous surface states.
+- Deletion condition:
+  - Delete if upstream rewrites the drag-overlay debug instrumentation or adds equivalent gating.
+
 ## Merge conflict notes
 
 These upstream files are touched by fork patches and tend to drift upstream. Re-check each one when running `git merge upstream/main`:
@@ -275,6 +286,8 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
   - Touched by patch 6 (shared `RipgrepLocator`). Keep one locator instance; do not let either site reintroduce its own fallback list.
 - `Sources/Panels/FilePreviewPanel.swift`, `Sources/FileExplorerView.swift`
   - Touched by patch 5 (.ts text-file fast-path, Finder-row icon substitution).
+- `Sources/FileDropOverlayViewHitTesting.swift`
+  - Touched by the debug-log gating patch (`logHitTestDecision` stale-pasteboard guard).
 - `GhosttyTabs.xcodeproj/project.pbxproj`
   - Touched by patches 3 (new PanelCloseTabContextMenu.swift entry, removed legacy files) and 6 (ripgrep PBXShellScriptBuildPhase + Copy CLI). Conflicts here are mechanical but always require manual resolution.
 - `Resources/Localizable.xcstrings`

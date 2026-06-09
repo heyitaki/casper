@@ -167,7 +167,10 @@ final class InactivePaneFirstClickFocusTests: XCTestCase {
             lastSidebarSelectionIndex: Binding(
                 get: { lastSidebarSelectionIndex },
                 set: { lastSidebarSelectionIndex = $0 }
-            )
+            ),
+            // CASPER: fullscreen intent drives the reveal-strip/header
+            // alignment; tests exercise the windowed layout.
+            windowFullScreenIntent: false
         )
         .environmentObject(tabManager)
         .environmentObject(TerminalNotificationStore.shared)
