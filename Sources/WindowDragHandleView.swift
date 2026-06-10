@@ -820,6 +820,30 @@ enum MinimalModeSidebarTitlebarControlsMetrics {
             + buttonArea
             + hostWidthTrailingReserve
     }
+
+    // CASPER: collapsed host width omits hostWidthTrailingReserve so the host
+    // frame exactly covers the rendered buttons with no trailing slack. Used by
+    // HiddenTitlebarSidebarControlsView when an outer HStack+Spacer positions
+    // the host at the sidebar's right edge — the proxy's left-relative rect math
+    // (buttonXRanges) then maps clicks correctly without needing an iconAlignment
+    // flip. TitlebarControlsView uses fixedSize() so hint pills still render
+    // beyond the frame boundary without being clipped. Delete if the trailing-
+    // reserve approach is restored or the right-align overlay is removed.
+    static func computedHostWidthCollapsed(config: TitlebarControlsStyleConfig) -> CGFloat {
+        let slots = MinimalModeSidebarControlActionSlot.visibleSlots
+        #if DEBUG
+        let reloadShift = TitlebarControlsLayoutMetrics.casperReloadButtonShift(config: config)
+        #else
+        let reloadShift: CGFloat = 0
+        #endif
+        let n = CGFloat(slots.count)
+        let gapCount = max(0, n - 1)
+        let buttonArea = n * config.buttonSize + gapCount * config.spacing
+        return TitlebarControlsHitRegions.outerLeadingPadding
+            + config.groupPadding.leading
+            + reloadShift
+            + buttonArea
+    }
     static let hostHeight: CGFloat = 28
     static let singleButtonHostWidth: CGFloat = hostHeight
 

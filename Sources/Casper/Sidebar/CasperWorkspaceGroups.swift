@@ -543,6 +543,48 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
     }
 }
 
+/// Standalone group header for the flat-plan LazyVStack branded sidebar.
+/// Unlike `CasperWorkspaceGroupSection`, this view renders only the header row
+/// and manages its own hover state (no section-wide hover covering the rows
+/// below, since those are separate ForEach siblings in the flat plan).
+/// The `+` button appears on header-self-hover instead of section-wide hover —
+/// a minor UX tradeoff accepted to preserve LazyVStack virtualization.
+///
+/// CASPER: delete with the compact-sidebar patch if upstream adds repo-grouped
+/// panel rows with a flat LazyVStack rendering model.
+struct CasperSidebarGroupHeaderRow: View {
+    let group: CasperWorkspaceGroup
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+    let onAddWorkspace: () -> Void
+
+    @State private var isHovering: Bool = false
+    @State private var isHoveringAddButton: Bool = false
+
+    private var showsAddButton: Bool { isHovering || isHoveringAddButton }
+
+    var body: some View {
+        CasperWorkspaceGroupHeader(
+            displayName: group.displayName,
+            isCollapsed: isCollapsed,
+            showsAddWorkspaceButton: showsAddButton,
+            onToggle: onToggle,
+            onAddWorkspace: onAddWorkspace,
+            onAddButtonHoverChange: { newValue in
+                guard isHoveringAddButton != newValue else { return }
+                isHoveringAddButton = newValue
+            }
+        )
+        .equatable()
+        .overlay {
+            CasperHoverTracker { hovering in
+                guard isHovering != hovering else { return }
+                isHovering = hovering
+            }
+        }
+    }
+}
+
 // MARK: - Panel row view
 
 /// Compact one-line row for a single panel inside a workspace. Rendered by

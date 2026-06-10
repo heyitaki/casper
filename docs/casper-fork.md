@@ -93,17 +93,18 @@ Patches retired by this merge are listed under "Retired fork patches" at the bot
 - Deletion condition:
   - Delete if upstream's main-window drag configuration provably covers minimal-mode bonsplit tab drags (verify by dragging a tab in a minimal-mode Casper build with the call removed).
 
-### 7) Compact one-line sidebar workspace row + session-first ordering
+### 7) Compact one-line sidebar workspace row + session-first ordering + repo-path grouping
 
-- Files (added): `Sources/Casper/Sidebar/CasperCompactWorkspaceRow.swift`, `CasperAgentActivity.swift`, `CasperSidebarActivityRefresher.swift`, `CasperSidebarSearchField.swift`
+- Files (added): `Sources/Casper/Sidebar/CasperCompactWorkspaceRow.swift`, `CasperAgentActivity.swift`, `CasperSidebarActivityRefresher.swift`, `CasperSidebarSearchField.swift`, `CasperWorkspaceGroups.swift`, `CasperSidebarRenderPlan.swift`
 - Files (upstream files modified):
-  - `Sources/ContentView.swift` — `TabItemView` gains `casperActivity` (and it participates in the `Equatable` union alongside upstream's `workspaceGroupMenuSnapshot`/`isBeingDragged`/`topDropIndicatorVisible`); `isCasperCompact` gate strips the activity glyph, unbolds the title, hides sub-rows, hover close button, right-pinned `CasperWorkspaceActivityIndicator`; `workspaceRows` pre-sorts tabs with `CasperAgentActivity.compareActivityDesc` and applies the workspace search filter before feeding upstream's `SidebarWorkspaceRenderItem.renderItems`; JSONL activity `.task` poll loop; workspace search bar + reserved-height inset.
+  - `Sources/ContentView.swift` — `VerticalTabsSidebar` gains `workspaceGroupCollapseStore` (ObservedObject); `TabItemView` gains `casperActivity` (participates in the `Equatable` union); `isCasperCompact` gate in `TabItemView` body strips the activity glyph, unbolds the title, hides sub-rows; `casperWorkspaceRowsModel` pre-sorts tabs by `CasperAgentActivity.compareActivityDesc`, applies the workspace search filter (non-branded) or skips it (branded, panel-level filter applied instead), and builds the `CasperBrandedPlan` (flat render plan via `CasperSidebarRenderPlan.build`); `workspaceRows` forks on `model.brandedPlan`: branded path uses `brandedWorkspaceRows` (repo-group headers + `CasperSidebarPanelRow` in a LazyVStack ForEach); non-branded path uses upstream's `SidebarWorkspaceRenderItem.renderItems`; JSONL activity `.task` poll loop; workspace search bar + reserved-height inset.
 - Summary:
-  - In branded Casper builds each workspace renders as a single line ordered by most-recent agent activity ("session-first" view). The 2026-06 merge rebuilt this on upstream's `LazyVStack` + `@Observable SidebarDragState` + render-item pipeline; upstream's first-class workspace groups replace the old Casper repo-path grouping, and the old `frozenPresentation` freeze was replaced by upstream's `onContextMenuAppear/Disappear` mechanism (unread-count freeze during context menu was dropped with it).
-  - Activity model: hook-driven `Workspace.statusEntries` (now upstream's direct `@Published`; the fork's `WorkspaceSidebarMetadataStore` sub-store was retired in the 2026-06 merge) + Claude JSONL transcript recency, attributed strictly per-session (hook records / restored snapshot sessionIds; never aggregated per-cwd).
-  - The snapshot-boundary rule still applies: rows receive value snapshots; activity reads happen above the row boundary.
+  - In branded Casper builds, the sidebar is panel-keyed: each terminal panel gets its own row, sorted by most-recent agent activity within repo-path groups (chevron + folder-icon headers). Workspace groups use `CasperWorkspaceGroupResolver` (`.git` root detection) not upstream's user-defined WorkspaceGroups. `CasperSidebarRenderPlan.build` produces a flat `[CasperSidebarRenderItem]` suitable for `LazyVStack`; `CasperSidebarGroupHeaderRow` is a standalone header view with self-hover for the `+` button (replacing `CasperWorkspaceGroupSection` which wraps rows in a VStack).
+  - Shift-click in the branded path ranges over `displayedWorkspaceIds` (the activity-sorted, post-collapse workspace order) rather than `tabManager.tabs` order; `lastSidebarSelectionIndex` stays in the `tabManager.tabs` index space for compatibility with drag machinery and the non-branded path.
+  - Collapse state persisted in `CasperWorkspaceGroupCollapseStore` (UserDefaults). Headers hidden when there is only one group.
+  - Activity model: hook-driven `Workspace.statusEntries` + Claude JSONL transcript recency, attributed strictly per-session. The snapshot-boundary rule still applies: rows receive value snapshots; activity reads happen above the row boundary.
 - Deletion condition:
-  - Delete if upstream ships a compact sidebar mode with inline last-activity.
+  - Delete if upstream ships a compact sidebar mode with inline last-activity and per-panel rows grouped by project/repo.
 
 ### 8) Restore-time agent workspace warmup (parallel)
 
@@ -169,7 +170,7 @@ Obviated by the 2026-06-09 upstream merge (~1,830 commits):
 
 - **File preview `.ts` routing** — upstream `knownTextResolutionBeforeMedia` (sniffs MPEG-TS byte patterns) supersedes the fork's text-extension fast path. Only the `isExplicitTextFile` shim remains for Finder-row icons.
 - **Fish shell integration (`vendor_conf.d/cmux-shell-integration.fish`)** — upstream shipped `Resources/shell-integration/fish/config.fish` with per-surface CLI shims + a `claude` fish function (functions beat PATH; no re-prepend trick needed). The wrapper itself was renamed `cmux-claude-wrapper` upstream.
-- **Workspace sidebar grouping by repo path (`CasperWorkspaceGroupResolver` render path)** — upstream first-class workspace groups (user-defined, drag-constrained, group-aware notification bump) replace it. `CasperWorkspaceGroups.swift` remains only as a dependency of legacy helpers; delete fully once nothing references it.
+- **Workspace sidebar grouping by repo path (old `CasperWorkspaceGroupSection`-wrapped-VStack render path)** — the 2026-06 merge temporarily dropped per-panel rows and repo-path grouping in favor of upstream's user-defined WorkspaceGroups. The feature was restored in patch #7 above using a flat `CasperSidebarRenderPlan` + `LazyVStack` approach. `CasperWorkspaceGroupResolver`, `CasperWorkspaceGroups.swift`, and the new `CasperSidebarRenderPlan.swift` are all active fork files.
 - **`CasperBoundedAsyncWorkPool` git-probe driver in TabManager** — upstream's `WorkspaceGitMetadataProbeLimiter` actor + directory-coalesced snapshot requests supersede it. The pool type remains for the warmup coordinator.
 - **Cheap/heavy session-autosave fingerprint split** — upstream's `ProcessDetectedResumeIndexes` has no cheap path; dropped.
 - **`WorkspaceSidebarMetadataStore` sub-store** — upstream's per-item snapshot architecture + event-driven `SharedLiveAgentIndex` address the original re-render concern; Workspace reverted to upstream's direct `@Published` layout.

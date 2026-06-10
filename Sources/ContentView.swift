@@ -10818,6 +10818,8 @@ struct VerticalTabsSidebar: View {
     // intermittent. Throttled at 80ms inside the refresher. Delete with the
     // activity-state patch.
     @StateObject private var sidebarActivityRefresher = CasperSidebarActivityRefresher()
+    // CASPER: collapse state for workspace groups; delete if upstream adds workspace grouping.
+    @ObservedObject private var workspaceGroupCollapseStore = CasperWorkspaceGroupCollapseStore.shared
     // CASPER: workspace title search; delete if upstream adds workspace search.
     @State private var workspaceSearchQuery: String = ""
     // Internal visibility required by debug.sidebar.simulate_drag.
@@ -11011,12 +11013,14 @@ struct VerticalTabsSidebar: View {
     // this much vertical space inside the scroll area so the first row clears it.
     // Delete with the workspace search bar if upstream lands its own.
     private let workspaceSearchBarFieldHeight: CGFloat = 24
-    private let workspaceSearchBarTopGap: CGFloat = 8
+    // CASPER: no gap between button row and search bar; search bar sits flush
+    // under the titlebar strip. Delete with the workspace search bar patch.
+    private let workspaceSearchBarTopGap: CGFloat = 0
     // Tuned so the first workspace row sits ~2pt below the search field's
     // frame bottom (hidden by SidebarTopScrim). Adjusting field height
     // here flows through to scrollTopInset via the computed reserved height.
     private var workspaceSearchBarReservedHeight: CGFloat {
-        workspaceSearchBarTopGap + workspaceSearchBarFieldHeight + 4
+        workspaceSearchBarFieldHeight + 4
     }
 
     private var sidebarWorkspaceListExtraTopOffset: CGFloat {
@@ -11702,37 +11706,46 @@ struct VerticalTabsSidebar: View {
                     .frame(height: sidebarTitlebarInteractionHeight)
                     .background(TitlebarDoubleClickMonitorView())
             }
-            .overlay(alignment: .topLeading) {
+            .overlay(alignment: .top) {
                 if isMinimalMode {
-                    HiddenTitlebarSidebarControlsView(
-                        notificationStore: notificationStore,
-                        onToggleSidebar: onToggleSidebar,
-                        onToggleNotifications: { anchorView in
-                            AppDelegate.shared?.toggleNotificationsPopover(
-                                animated: true,
-                                anchorView: anchorView
-                            )
-                        },
-                        onNewTab: onNewTab,
-                        onFocusHistoryBack: {
-                            if !tabManager.navigateBack() {
-                                NSSound.beep()
+                    // CASPER: trailing-aligned HStack mirrors workspaceScrollArea so
+                    // the button cluster hugs the sidebar's right edge in both sidebar
+                    // modes. Delete if upstream adopts equivalent alignment.
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        HiddenTitlebarSidebarControlsView(
+                            notificationStore: notificationStore,
+                            onToggleSidebar: onToggleSidebar,
+                            onToggleNotifications: { anchorView in
+                                AppDelegate.shared?.toggleNotificationsPopover(
+                                    animated: true,
+                                    anchorView: anchorView
+                                )
+                            },
+                            onNewTab: onNewTab,
+                            onFocusHistoryBack: {
+                                if !tabManager.navigateBack() {
+                                    NSSound.beep()
+                                }
+                            },
+                            onFocusHistoryForward: {
+                                if !tabManager.navigateForward() {
+                                    NSSound.beep()
+                                }
                             }
-                        },
-                        onFocusHistoryForward: {
-                            if !tabManager.navigateForward() {
-                                NSSound.beep()
-                            }
-                        }
-                    )
-                    .padding(
-                        .leading,
-                        CGFloat(titlebarDebugChromeSnapshot.leftControlsLeadingInset)
-                    )
-                    .padding(
-                        .top,
-                        minimalModeSidebarTitlebarControlsTopPadding
-                    )
+                        )
+                        .padding(
+                            .leading,
+                            CGFloat(titlebarDebugChromeSnapshot.leftControlsLeadingInset)
+                        )
+                        .padding(
+                            .top,
+                            minimalModeSidebarTitlebarControlsTopPadding
+                        )
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.trailing, 4)
+                    .padding(.top, 2)
                 }
             }
             .background(Color.clear)
@@ -12700,17 +12713,46 @@ struct VerticalTabsSidebar: View {
         let claudeWorkspaceSessions: [UUID: [String]]
         let claudePanelSessions: [UUID: [String]]
         let claudeWorkspaceSessionsTaskID: CasperClaudeSessionsTaskID
+        // CASPER: branded-path plan. Non-nil only when CasperBuildEnvironment.isBranded.
+        // Contains the flat render items (headers + panel rows) and the ordered
+        // list of visible workspace IDs used for shift-click range selection.
+        // Delete with the compact-sidebar patch if upstream adds repo-grouped panel rows.
+        let brandedPlan: CasperBrandedPlan?
+    }
+
+    // CASPER: precomputed plan fields for the branded sidebar render path.
+    // Separated from CasperWorkspaceRowsModel to make the non-branded path a
+    // cheap nil check. Delete with the compact-sidebar patch.
+    private struct CasperBrandedPlan {
+        /// Flat render items (group headers + panel rows) in display order.
+        let items: [CasperSidebarRenderItem]
+        /// Workspace IDs visible in the plan after collapsing, in display order.
+        /// Used by the panel-row shift-click handler to resolve ranges over the
+        /// activity-sorted, repo-grouped order instead of tabManager.tabs order.
+        let displayedWorkspaceIds: [UUID]
+        /// Shortcut digit per workspace (anchor-owning row gets the badge).
+        let workspaceShortcutDigitById: [UUID: Int?]
     }
 
     private func casperWorkspaceRowsModel(renderContext: WorkspaceListRenderContext) -> CasperWorkspaceRowsModel {
-        // CASPER: activity sort + search filter applied before the upstream
-        // render-item pipeline. Pinned-first, then most-recent activity first,
-        // .none workspaces sink. Stable sort preserves tabManager order on ties.
-        // Delete with the activity-state patch when upstream adds agent state.
-        let filteredTabs = CasperWorkspaceTitleFilter.filter(
-            renderContext.tabs,
-            query: workspaceSearchQuery
-        )
+        // CASPER: activity sort applied before the render pipeline. Pinned-first,
+        // then most-recent activity first, .none sinks. Stable sort preserves
+        // tabManager order on ties. Delete with the activity-state patch.
+        //
+        // Workspace-level search filter applies only in the non-branded path (the
+        // branded path filters at the per-panel level via CasperSidebarPanelEntryBuilder.filter
+        // so a query that matches a panel title but not the workspace title still shows).
+        let filteredTabs: [Workspace]
+        if CasperBuildEnvironment.isBranded {
+            // No workspace-level filter in branded mode; panel-level filtering
+            // happens later in the branded plan block below.
+            filteredTabs = renderContext.tabs
+        } else {
+            filteredTabs = CasperWorkspaceTitleFilter.filter(
+                renderContext.tabs,
+                query: workspaceSearchQuery
+            )
+        }
         // Precompute activity once; comparator becomes a pure dict lookup so
         // it doesn't run filesystem I/O O(N log N) times per render.
         let activityByID: [UUID: CasperWorkspaceActivity] = Dictionary(
@@ -12806,12 +12848,59 @@ struct VerticalTabsSidebar: View {
             workspaceGroupMenuSnapshot: renderContext.workspaceGroupMenuSnapshot
         )
 
+        // CASPER: branded path — build per-panel entries, apply panel-level search
+        // filter, group by repo, and assemble the flat render plan with collapse
+        // state. Delete with the compact-sidebar patch if upstream adds panel rows.
+        let brandedPlan: CasperBrandedPlan?
+        if CasperBuildEnvironment.isBranded {
+            let rawPanelEntries = CasperSidebarPanelEntryBuilder.entries(
+                from: sortedTabs,
+                selectedWorkspaceId: tabManager.selectedTabId,
+                activityByWorkspaceId: activityByID,
+                notificationStore: notificationStore
+            )
+            let filteredPanelEntries = CasperSidebarPanelEntryBuilder.filter(
+                rawPanelEntries,
+                query: workspaceSearchQuery
+            )
+            let groups = CasperWorkspaceGroupResolver.groups(from: filteredPanelEntries)
+            let collapsedKeys = workspaceGroupCollapseStore.collapsedKeys
+            let (planItems, displayedWorkspaceIds) = CasperSidebarRenderPlan.build(
+                groups: groups,
+                collapsedKeys: collapsedKeys,
+                showSingleGroupHeader: groups.count > 1
+            )
+            // Shortcut digit — keyed to the ORIGINAL tabManager.tabs position (same
+            // source the ⌘N handler uses) so the badge digit matches the shortcut.
+            var workspaceShortcutDigitById: [UUID: Int?] = [:]
+            var seenWorkspaceIds: Set<UUID> = []
+            for entry in filteredPanelEntries {
+                let workspaceId = entry.key.workspaceId
+                guard seenWorkspaceIds.insert(workspaceId).inserted else { continue }
+                let tabIdx = renderContext.tabIndexById[workspaceId]
+                workspaceShortcutDigitById[workspaceId] = tabIdx.flatMap {
+                    WorkspaceShortcutMapper.digitForWorkspace(
+                        at: $0,
+                        workspaceCount: renderContext.workspaceCount
+                    )
+                }
+            }
+            brandedPlan = CasperBrandedPlan(
+                items: planItems,
+                displayedWorkspaceIds: displayedWorkspaceIds,
+                workspaceShortcutDigitById: workspaceShortcutDigitById
+            )
+        } else {
+            brandedPlan = nil
+        }
+
         return CasperWorkspaceRowsModel(
             renderContext: casperRenderContext,
             activityByID: activityByID,
             claudeWorkspaceSessions: claudeWorkspaceSessions,
             claudePanelSessions: claudePanelSessions,
-            claudeWorkspaceSessionsTaskID: claudeWorkspaceSessionsTaskID
+            claudeWorkspaceSessionsTaskID: claudeWorkspaceSessionsTaskID,
+            brandedPlan: brandedPlan
         )
     }
 
@@ -12820,6 +12909,175 @@ struct VerticalTabsSidebar: View {
         // CASPER: accepts precomputed model so the caller (workspaceScrollArea)
         // can share the same instance with the scroll handlers. Delete with the
         // activity-state patch.
+        //
+        // Branded path: ForEach over the flat CasperSidebarRenderPlan (repo group
+        // headers + per-panel rows). Non-branded path: upstream renderItems pipeline.
+        if let plan = model.brandedPlan {
+            brandedWorkspaceRows(plan: plan, model: model)
+        } else {
+            nonBrandedWorkspaceRows(model: model)
+        }
+    }
+
+    // CASPER: branded sidebar — renders repo-grouped panel rows via the flat
+    // CasperSidebarRenderPlan. Delete with the compact-sidebar patch.
+    @ViewBuilder
+    private func brandedWorkspaceRows(plan: CasperBrandedPlan, model: CasperWorkspaceRowsModel) -> some View {
+        let casperRenderContext = model.renderContext
+        let displayedWorkspaceIds = plan.displayedWorkspaceIds
+        let liveShowsModifierShortcutHints = modifierKeyMonitor.isModifierPressed
+        let alwaysShowShortcutHints = casperRenderContext.tabItemSettings.alwaysShowShortcutHints
+        let withinGroupSpacing: CGFloat = 1
+        let rows = LazyVStack(spacing: withinGroupSpacing) {
+            ForEach(plan.items, id: \.id) { item in
+                switch item {
+                case .repoGroupHeader(let group, let isCollapsed):
+                    let collapseStore = workspaceGroupCollapseStore
+                    // CASPER: standalone header row for the flat-plan LazyVStack path.
+                    // CasperWorkspaceGroupSection is not used here because it wraps
+                    // both header and rows in a VStack — incompatible with a flat ForEach.
+                    // CasperSidebarGroupHeaderRow owns its own hover state instead.
+                    CasperSidebarGroupHeaderRow(
+                        group: group,
+                        isCollapsed: isCollapsed,
+                        onToggle: { collapseStore.toggle(group.key) },
+                        onAddWorkspace: { [weak tabManager] in
+                            guard let tabManager else { return }
+                            let workingDirectory = group.key.isEmpty ? nil : group.key
+                            _ = tabManager.addWorkspace(workingDirectory: workingDirectory)
+                        }
+                    )
+
+                case .panelRow(let entry, let ownsWorkspaceAnchor):
+                    let workspaceId = entry.key.workspaceId
+                    let shortcutDigit = ownsWorkspaceAnchor
+                        ? plan.workspaceShortcutDigitById[workspaceId] ?? nil
+                        : nil
+                    CasperSidebarPanelRow(
+                        entry: entry,
+                        workspaceShortcutDigit: shortcutDigit,
+                        workspaceShortcutModifierSymbol: casperRenderContext.workspaceNumberShortcut.numberedDigitHintPrefix,
+                        showsModifierShortcutHints: liveShowsModifierShortcutHints,
+                        alwaysShowShortcutHints: alwaysShowShortcutHints,
+                        shortcutHintXOffset: casperRenderContext.tabItemSettings.sidebarShortcutHintXOffset,
+                        shortcutHintYOffset: casperRenderContext.tabItemSettings.sidebarShortcutHintYOffset,
+                        onSelect: { [weak tabManager] in
+                            guard let tabManager,
+                                  let workspace = tabManager.tabs.first(where: { $0.id == workspaceId })
+                            else { return }
+                            // Shift-click: select workspaces between anchor and clicked
+                            // position in the *displayed* order, skipping headers and
+                            // collapsed members. lastSidebarSelectionIndex stays in the
+                            // tabManager.tabs index space so it stays compatible with the
+                            // non-branded path and drag machinery.
+                            let modifiers = NSEvent.modifierFlags
+                            let isShift = modifiers.contains(.shift)
+                            let isCommand = modifiers.contains(.command)
+                            if isShift, let anchorIdx = lastSidebarSelectionIndex {
+                                let anchorId: UUID?
+                                if tabManager.tabs.indices.contains(anchorIdx) {
+                                    anchorId = tabManager.tabs[anchorIdx].id
+                                } else {
+                                    anchorId = nil
+                                }
+                                if let anchorId,
+                                   let anchorPos = displayedWorkspaceIds.firstIndex(of: anchorId),
+                                   let clickedPos = displayedWorkspaceIds.firstIndex(of: workspaceId) {
+                                    let lo = min(anchorPos, clickedPos)
+                                    let hi = max(anchorPos, clickedPos)
+                                    let rangeIds = displayedWorkspaceIds[lo...hi]
+                                    if isCommand {
+                                        selectedTabIds.formUnion(rangeIds)
+                                    } else {
+                                        selectedTabIds = Set(rangeIds)
+                                    }
+                                    // Anchor stays at the original anchor on shift-click
+                                    // (same policy as TabItemView.updateSelection).
+                                    tabManager.selectTab(workspace)
+                                    selection = .tabs
+                                    return
+                                }
+                            }
+                            if isCommand {
+                                if selectedTabIds.contains(workspaceId) {
+                                    selectedTabIds.remove(workspaceId)
+                                } else {
+                                    selectedTabIds.insert(workspaceId)
+                                }
+                            } else {
+                                selectedTabIds = [workspaceId]
+                            }
+                            lastSidebarSelectionIndex = tabManager.tabs.firstIndex { $0.id == workspaceId }
+                            tabManager.focusTab(workspace.id, surfaceId: entry.key.panelId)
+                            if workspace.panels.count > 1 {
+                                workspace.triggerFocusFlash(panelId: entry.key.panelId)
+                            }
+                            selection = .tabs
+                        },
+                        onClose: { [weak tabManager] in
+                            guard let tabManager,
+                                  let workspace = tabManager.tabs.first(where: { $0.id == workspaceId })
+                            else { return }
+                            if workspace.panels.count <= 1 {
+                                _ = tabManager.closeWorkspaceFromSidebarCloseButton(workspace)
+                            } else {
+                                _ = workspace.closePanel(entry.key.panelId)
+                            }
+                        }
+                    )
+                    .equatable()
+                    // Anchor-owning row claims the workspace UUID so
+                    // ScrollViewProxy.scrollTo(selectedWorkspaceId) resolves
+                    // (see flushPendingSelectedWorkspaceScroll). Non-anchor panel rows
+                    // keep their panel UUID identity so each row is distinct in SwiftUI.
+                    .id(ownsWorkspaceAnchor ? workspaceId : entry.id)
+                    // CASPER: workspace-level frame anchor for bonsplit drop-target collection.
+                    // Only the anchor-owning row emits the anchor so the outer
+                    // overlayPreferenceValue reader collects exactly one rect per workspace.
+                    .anchorPreference(
+                        key: SidebarWorkspaceRowFramePreferenceKey.self,
+                        value: .bounds
+                    ) { anchor in
+                        ownsWorkspaceAnchor ? [workspaceId: anchor] : [:]
+                    }
+                }
+            }
+        }
+        .padding(.vertical, SidebarWorkspaceListMetrics.rowVerticalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // CASPER: JSONL activity poll; initial + 20s re-scan. Delete with activity-state patch.
+        .task(id: model.claudeWorkspaceSessionsTaskID) {
+            let workspaceSessions = model.claudeWorkspaceSessions
+            let panelSessions = model.claudePanelSessions
+            while !Task.isCancelled {
+                #if DEBUG
+                cmuxDebugLog("casper.claudeActivity.refresh.trigger count=\(workspaceSessions.count)")
+                #endif
+                CasperClaudeActivityStore.shared.refresh(
+                    workspaceSessions: workspaceSessions,
+                    panelSessions: panelSessions
+                )
+                try? await Task.sleep(for: .seconds(20))
+            }
+        }
+
+        rowsWithGatedDropTargetReader(
+            rows: rows,
+            renderContext: casperRenderContext,
+            shouldCollect: SidebarDropPlanner.shouldCollectWorkspaceDropTargets(
+                draggedTabId: dragState.draggedTabId,
+                isBonsplitWorkspaceDropActive: isBonsplitWorkspaceDropTargetCollectionActive
+            )
+        )
+        .overlay {
+            bonsplitWorkspaceDropOverlay()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    // Non-branded path — upstream renderItems pipeline unchanged.
+    @ViewBuilder
+    private func nonBrandedWorkspaceRows(model: CasperWorkspaceRowsModel) -> some View {
         let casperRenderContext = model.renderContext
         let activityByID = model.activityByID
         let renderItems = SidebarWorkspaceRenderItem.renderItems(

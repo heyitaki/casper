@@ -1443,7 +1443,18 @@ struct HiddenTitlebarSidebarControlsView: View {
         // CASPER: iconAlignment drives alignment of the sidebar-top controls
         // in windowed minimal mode. Upstream always uses .leading; delete if
         // upstream adds its own alignment option.
-        let hostWidth: CGFloat = MinimalModeSidebarTitlebarControlsMetrics.computedHostWidth(config: style.config)
+        //
+        // CASPER: in Casper branded builds the outer HStack+Spacer in
+        // workspaceScrollArea positions the host at the sidebar's trailing edge.
+        // We collapse the host to exactly the content width (no trailing reserve)
+        // so the proxy's left-relative buttonXRanges remain valid — if the host
+        // were wider than the buttons, left-relative rect math would map clicks
+        // to the wrong horizontal positions. TitlebarControlsView uses fixedSize()
+        // so hint pills still render beyond the collapsed boundary unclipped.
+        // Delete and restore computedHostWidth when right-align overlay is removed.
+        let hostWidth: CGFloat = CasperBuildEnvironment.isBranded
+            ? MinimalModeSidebarTitlebarControlsMetrics.computedHostWidthCollapsed(config: style.config)
+            : MinimalModeSidebarTitlebarControlsMetrics.computedHostWidth(config: style.config)
         let frameAlignment = Alignment(horizontal: iconAlignment, vertical: .center)
 
         ZStack(alignment: frameAlignment) {
