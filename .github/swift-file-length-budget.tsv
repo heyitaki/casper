@@ -4,11 +4,11 @@
 32601	CLI/cmux.swift
 22096	Sources/TerminalController.swift
 19917	Sources/Workspace.swift
-19795	Sources/ContentView.swift
+19815	Sources/ContentView.swift
 17920	Sources/AppDelegate.swift
 16503	Sources/GhosttyTerminalView.swift
 13594	Sources/Panels/BrowserPanel.swift
-12022	cmuxTests/AppDelegateShortcutRoutingTests.swift
+12029	cmuxTests/AppDelegateShortcutRoutingTests.swift
 9984	Sources/TabManager.swift
 8494	cmuxTests/CLINotifyProcessIntegrationRegressionTests.swift
 7737	Sources/Panels/BrowserPanelView.swift
@@ -185,4 +185,4 @@
 502	Sources/Settings/ConfigSource.swift
 1149	Sources/Casper/Search/CasperFindResultsView.swift
 984	Sources/Casper/Sidebar/CasperAgentActivity.swift
-878	Sources/Casper/Sidebar/CasperWorkspaceGroups.swift
+972	Sources/Casper/Sidebar/CasperWorkspaceGroups.swift

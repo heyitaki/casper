@@ -23,13 +23,17 @@ import Foundation
 enum CasperSidebarRenderItem {
     /// Collapsible repo-group header. `isCollapsed` is precomputed from the
     /// collapse store so the ForEach body stays a pure value render.
-    case repoGroupHeader(CasperWorkspaceGroup, isCollapsed: Bool)
+    /// `isFirstInPlan` is true only for the very first header in the flat
+    /// items list — used by the renderer to suppress the between-group top
+    /// padding on the first group (matches the old CasperWorkspaceGroupSection
+    /// `.padding(.top, offset == 0 ? 0 : betweenGroupSpacing)` pattern).
+    case repoGroupHeader(CasperWorkspaceGroup, isCollapsed: Bool, isFirstInPlan: Bool)
     /// A single panel row inside an expanded group.
     case panelRow(CasperSidebarPanelEntry, ownsWorkspaceAnchor: Bool)
 
     var id: String {
         switch self {
-        case .repoGroupHeader(let group, _):
+        case .repoGroupHeader(let group, _, _):
             // Group keys can be empty (the "Other" bucket) — prefix to keep
             // ids distinct from panel ids (which use UUID strings).
             return "repoGroup.\(group.key)"
@@ -77,13 +81,18 @@ enum CasperSidebarRenderPlan {
         var firstEntryIdByWorkspace: [UUID: UUID] = [:]
 
         let renderHeader = showSingleGroupHeader || groups.count > 1
+        // Track whether any header has been emitted yet so the first group
+        // header can suppress its top between-group padding.
+        var firstHeaderEmitted = false
 
         for group in groups {
             let isCollapsed = !group.displayName.isEmpty
                 && collapsedKeys.contains(group.key)
 
             if renderHeader && !group.displayName.isEmpty {
-                items.append(.repoGroupHeader(group, isCollapsed: isCollapsed))
+                let isFirst = !firstHeaderEmitted
+                firstHeaderEmitted = true
+                items.append(.repoGroupHeader(group, isCollapsed: isCollapsed, isFirstInPlan: isFirst))
             }
 
             guard !isCollapsed else { continue }

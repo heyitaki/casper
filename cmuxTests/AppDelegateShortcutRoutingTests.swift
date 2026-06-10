@@ -2945,6 +2945,7 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         alwaysShowShortcutHints: Bool = false,
         shortcutHintXOffset: Double = 0,
         shortcutHintYOffset: Double = 0,
+        isInMultiSelection: Bool = false,
         onSelect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {}
     ) -> CasperSidebarPanelRow {
@@ -2971,6 +2972,7 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             alwaysShowShortcutHints: alwaysShowShortcutHints,
             shortcutHintXOffset: shortcutHintXOffset,
             shortcutHintYOffset: shortcutHintYOffset,
+            isInMultiSelection: isInMultiSelection,
             onSelect: onSelect,
             onClose: onClose
         )
@@ -3007,6 +3009,11 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         XCTAssertNotEqual(base, makeCasperSidebarPanelRow(alwaysShowShortcutHints: true))
         XCTAssertNotEqual(base, makeCasperSidebarPanelRow(shortcutHintXOffset: 4))
         XCTAssertNotEqual(base, makeCasperSidebarPanelRow(shortcutHintYOffset: 4))
+        XCTAssertNotEqual(
+            base,
+            makeCasperSidebarPanelRow(isInMultiSelection: true),
+            "Shift-click range membership must re-render the row background"
+        )
     }
 
     func testNotificationsPopoverVisibilityIsScopedByWindow() {

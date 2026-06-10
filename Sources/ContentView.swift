@@ -11013,14 +11013,15 @@ struct VerticalTabsSidebar: View {
     // this much vertical space inside the scroll area so the first row clears it.
     // Delete with the workspace search bar if upstream lands its own.
     private let workspaceSearchBarFieldHeight: CGFloat = 24
-    // CASPER: no gap between button row and search bar; search bar sits flush
-    // under the titlebar strip. Delete with the workspace search bar patch.
-    private let workspaceSearchBarTopGap: CGFloat = 0
-    // Tuned so the first workspace row sits ~2pt below the search field's
-    // frame bottom (hidden by SidebarTopScrim). Adjusting field height
-    // here flows through to scrollTopInset via the computed reserved height.
+    // CASPER: small breathing gap between the titlebar button row and the
+    // search bar. Delete with the workspace search bar patch.
+    private let workspaceSearchBarTopGap: CGFloat = 4
+    // Total vertical space the search bar occupies inside the scroll area:
+    // gap above the field + field height + ~2pt clearance below the field
+    // (hidden by SidebarTopScrim). Re-derived whenever workspaceSearchBarTopGap
+    // or workspaceSearchBarFieldHeight changes so the constants stay coherent.
     private var workspaceSearchBarReservedHeight: CGFloat {
-        workspaceSearchBarFieldHeight + 4
+        workspaceSearchBarTopGap + workspaceSearchBarFieldHeight + 4
     }
 
     private var sidebarWorkspaceListExtraTopOffset: CGFloat {
@@ -12928,10 +12929,13 @@ struct VerticalTabsSidebar: View {
         let liveShowsModifierShortcutHints = modifierKeyMonitor.isModifierPressed
         let alwaysShowShortcutHints = casperRenderContext.tabItemSettings.alwaysShowShortcutHints
         let withinGroupSpacing: CGFloat = 1
+        // Breathing room between repo groups — matches the old
+        // CasperWorkspaceGroupSection `.padding(.top, offset == 0 ? 0 : betweenGroupSpacing)`.
+        let betweenGroupSpacing: CGFloat = 14
         let rows = LazyVStack(spacing: withinGroupSpacing) {
             ForEach(plan.items, id: \.id) { item in
                 switch item {
-                case .repoGroupHeader(let group, let isCollapsed):
+                case .repoGroupHeader(let group, let isCollapsed, let isFirstInPlan):
                     let collapseStore = workspaceGroupCollapseStore
                     // CASPER: standalone header row for the flat-plan LazyVStack path.
                     // CasperWorkspaceGroupSection is not used here because it wraps
@@ -12947,6 +12951,9 @@ struct VerticalTabsSidebar: View {
                             _ = tabManager.addWorkspace(workingDirectory: workingDirectory)
                         }
                     )
+                    // Suppress top padding for the first group; add between-group
+                    // breathing room for subsequent groups.
+                    .padding(.top, isFirstInPlan ? 0 : betweenGroupSpacing)
 
                 case .panelRow(let entry, let ownsWorkspaceAnchor):
                     let workspaceId = entry.key.workspaceId
@@ -12961,6 +12968,8 @@ struct VerticalTabsSidebar: View {
                         alwaysShowShortcutHints: alwaysShowShortcutHints,
                         shortcutHintXOffset: casperRenderContext.tabItemSettings.sidebarShortcutHintXOffset,
                         shortcutHintYOffset: casperRenderContext.tabItemSettings.sidebarShortcutHintYOffset,
+                        // CASPER: multi-selection range membership for accent background.
+                        isInMultiSelection: selectedTabIds.contains(workspaceId),
                         onSelect: { [weak tabManager] in
                             guard let tabManager,
                                   let workspace = tabManager.tabs.first(where: { $0.id == workspaceId })
@@ -12991,9 +13000,20 @@ struct VerticalTabsSidebar: View {
                                     } else {
                                         selectedTabIds = Set(rangeIds)
                                     }
-                                    // Anchor stays at the original anchor on shift-click
-                                    // (same policy as TabItemView.updateSelection).
-                                    tabManager.selectTab(workspace)
+                                    // Focus the clicked workspace + panel so the row
+                                    // shows as selected and panel focus is primed for
+                                    // the next focus restoration — mirrors plain-click
+                                    // but without resetting the shift anchor.
+                                    // `focusTab` (not `selectTab`) is used so the panel
+                                    // ID is forwarded to `lastFocusedPanelByTab` before
+                                    // `selectedTabId.didSet`'s async restore reads it.
+                                    tabManager.focusTab(workspace.id, surfaceId: entry.key.panelId)
+                                    if workspace.panels.count > 1 {
+                                        workspace.triggerFocusFlash(panelId: entry.key.panelId)
+                                    }
+                                    // Anchor (lastSidebarSelectionIndex) stays at the
+                                    // original anchor — same as upstream
+                                    // TabItemView.updateSelection shift-click policy.
                                     selection = .tabs
                                     return
                                 }

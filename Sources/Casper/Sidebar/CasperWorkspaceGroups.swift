@@ -195,7 +195,14 @@ enum CasperWorkspaceGroupResolver {
     }
 
     /// Group panel entries by repo, preserving first-appearance order so the
-    /// caller's sort remains the source of truth for ordering.
+    /// caller's sort remains the source of truth for ordering. Within each
+    /// group bucket, workspace blocks are re-sorted to guarantee `.none`-activity
+    /// workspaces sink to the bottom regardless of any upstream ordering
+    /// imprecision; panel sub-rows within a workspace keep their stable
+    /// bonsplit order.
+    ///
+    /// CASPER: delete if upstream adds first-class repo-grouped rows with
+    /// built-in activity sorting.
     static func groups(from entries: [CasperSidebarPanelEntry]) -> [CasperWorkspaceGroup] {
         var order: [String] = []
         var buckets: [String: [CasperSidebarPanelEntry]] = [:]
@@ -213,9 +220,76 @@ enum CasperWorkspaceGroupResolver {
             CasperWorkspaceGroup(
                 key: key,
                 displayName: names[key, default: ""],
-                entries: buckets[key] ?? []
+                entries: sortedWithinGroup(buckets[key] ?? [])
             )
         }
+    }
+
+    /// Stable sort of a single group bucket's entries that keeps all panel
+    /// sub-rows from the same workspace contiguous and in their original
+    /// bonsplit order, while ordering workspace blocks by activity recency
+    /// with `.none`-activity blocks last.
+    ///
+    /// Input is already in activity-sorted workspace order from the caller's
+    /// `sortedTabs` pipeline; this pass is a safety net for edge cases where
+    /// individual panel activities differ from workspace-level sort keys.
+    private static func sortedWithinGroup(
+        _ entries: [CasperSidebarPanelEntry]
+    ) -> [CasperSidebarPanelEntry] {
+        guard entries.count > 1 else { return entries }
+        // Collect workspace blocks in first-appearance order, and for each
+        // block record the "best" (most recent) panel activity as the sort key.
+        var wsOrder: [UUID] = []
+        var wsBlocks: [UUID: [CasperSidebarPanelEntry]] = [:]
+        for entry in entries {
+            let wid = entry.key.workspaceId
+            if wsBlocks[wid] == nil {
+                wsOrder.append(wid)
+                wsBlocks[wid] = [entry]
+            } else {
+                wsBlocks[wid]?.append(entry)
+            }
+        }
+        guard wsOrder.count > 1 else { return entries }
+        // Sort workspace IDs: pinned-first, then non-.none before .none,
+        // then by most-recent lastActivityAt descending, then by original
+        // block position for ties (stable relative order).
+        let sortedWsOrder = wsOrder.enumerated().sorted { lhsElem, rhsElem in
+            let lhsId = lhsElem.element
+            let rhsId = rhsElem.element
+            let lhsEntries = wsBlocks[lhsId]!
+            let rhsEntries = wsBlocks[rhsId]!
+            let lhsPinned = lhsEntries.first?.isPinned ?? false
+            let rhsPinned = rhsEntries.first?.isPinned ?? false
+            if lhsPinned != rhsPinned { return lhsPinned && !rhsPinned }
+            // Best activity across all panels in the block.
+            let lhsBest = lhsEntries.map(\.activity).max {
+                Self.activityLess($0, $1)
+            }
+            let rhsBest = rhsEntries.map(\.activity).max {
+                Self.activityLess($0, $1)
+            }
+            let lhsNone = (lhsBest?.state ?? .none) == .none
+            let rhsNone = (rhsBest?.state ?? .none) == .none
+            if lhsNone != rhsNone { return rhsNone }
+            let lhsTime = lhsBest?.lastActivityAt ?? .distantPast
+            let rhsTime = rhsBest?.lastActivityAt ?? .distantPast
+            if lhsTime != rhsTime { return lhsTime > rhsTime }
+            return lhsElem.offset < rhsElem.offset
+        }.map(\.element)
+        return sortedWsOrder.flatMap { wsBlocks[$0]! }
+    }
+
+    /// Returns true when lhs activity is "less than" (lower priority than) rhs
+    /// — used to find the best (max) panel activity within a workspace block.
+    private static func activityLess(
+        _ lhs: CasperWorkspaceActivity,
+        _ rhs: CasperWorkspaceActivity
+    ) -> Bool {
+        if lhs.state != rhs.state { return lhs.state < rhs.state }
+        let lhsTime = lhs.lastActivityAt ?? .distantPast
+        let rhsTime = rhs.lastActivityAt ?? .distantPast
+        return lhsTime < rhsTime
     }
 
     /// First index in `workspaces` that is unpinned and shares `bumped`'s group.
@@ -611,6 +685,7 @@ struct CasperSidebarPanelRow: View, Equatable {
     // skip closure-driven invalidation.
     nonisolated static func == (lhs: CasperSidebarPanelRow, rhs: CasperSidebarPanelRow) -> Bool {
         lhs.entry == rhs.entry &&
+        lhs.isInMultiSelection == rhs.isInMultiSelection &&
         lhs.workspaceShortcutDigit == rhs.workspaceShortcutDigit &&
         lhs.workspaceShortcutModifierSymbol == rhs.workspaceShortcutModifierSymbol &&
         lhs.showsModifierShortcutHints == rhs.showsModifierShortcutHints &&
@@ -640,6 +715,12 @@ struct CasperSidebarPanelRow: View, Equatable {
     /// the same slider; defaults to 0 in production.
     let shortcutHintXOffset: Double
     let shortcutHintYOffset: Double
+    /// True when this row's workspace is part of a Shift-click or Cmd-click
+    /// multi-selection range. Drives the accent-tinted background that mirrors
+    /// the non-branded `TabItemView.isMultiSelected` treatment.
+    /// Excluded from the snapshot-boundary rule — it's a plain Bool snapshot
+    /// derived from `selectedTabIds` in the parent, not a store reference.
+    let isInMultiSelection: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -652,6 +733,13 @@ struct CasperSidebarPanelRow: View, Equatable {
 
     private var selectedBackground: Color {
         Color(nsColor: sidebarSelectedWorkspaceBackgroundNSColor(for: colorScheme))
+    }
+
+    /// Accent-tinted background for rows in the multi-selection range that are
+    /// not the primary focused row. Mirrors `sidebarWorkspaceRowBackgroundStyle`'s
+    /// `.solidFill` / `.leftRail` isMultiSelected branch at 25% opacity.
+    private var multiSelectionBackground: Color {
+        Color(nsColor: cmuxAccentNSColor(for: colorScheme)).opacity(0.25)
     }
 
     private var workspaceShortcutLabel: String? {
@@ -743,7 +831,13 @@ struct CasperSidebarPanelRow: View, Equatable {
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(selected ? selectedBackground : Color.clear)
+                    .fill(
+                        selected
+                            ? selectedBackground
+                            : isInMultiSelection
+                                ? multiSelectionBackground
+                                : Color.clear
+                    )
             )
             .padding(.horizontal, 6)
             .contentShape(Rectangle())
