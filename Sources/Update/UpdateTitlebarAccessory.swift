@@ -113,6 +113,30 @@ struct TitlebarControlsStyleConfig {
     let buttonBackground: Bool
     let buttonCornerRadius: CGFloat
     let hoverBackground: Bool
+
+    // CASPER: the minimal-mode left-sidebar cluster (refresh + new tab) renders a
+    // tighter icon set than the default chrome controls so it matches upstream's
+    // small top-left sidebar icons. Stock builds get the config unchanged. The
+    // whole left cluster (render + host width + hit regions + gap drag + proxy)
+    // derives from this single helper so layout/hit math can't drift. Delete if
+    // Casper adopts the stock cluster sizing.
+    var casperMinimalCluster: TitlebarControlsStyleConfig {
+        guard CasperBuildEnvironment.isBranded else { return self }
+        let clusterIconSize: CGFloat = 11
+        let clusterButtonSize: CGFloat = 16
+        return TitlebarControlsStyleConfig(
+            spacing: spacing,
+            iconSize: clusterIconSize,
+            buttonSize: clusterButtonSize,
+            badgeSize: badgeSize,
+            badgeOffset: badgeOffset,
+            groupBackground: groupBackground,
+            groupPadding: groupPadding,
+            buttonBackground: buttonBackground,
+            buttonCornerRadius: buttonCornerRadius,
+            hoverBackground: hoverBackground
+        )
+    }
 }
 
 enum TitlebarControlsVisualMetrics {
@@ -872,6 +896,12 @@ struct TitlebarControlsView: View {
     let onFocusHistoryBack: () -> Void
     let onFocusHistoryForward: () -> Void
     let visibilityMode: TitlebarControlsVisibilityMode
+    // CASPER: when set, overrides the AppStorage-derived style config. The
+    // minimal-mode left-sidebar cluster passes a shrunk config so its icons are
+    // smaller than the standard titlebar controls; all other call sites leave
+    // this nil and keep the user's titlebarControlsStyle. Delete if Casper drops
+    // the smaller-cluster patch.
+    var configOverride: TitlebarControlsStyleConfig? = nil
     /// Slots to render, in order. Defaults to all three (sidebar toggle,
     @ObservedObject private var popoverVisibilityState = NotificationsPopoverVisibilityState.shared
     @AppStorage("titlebarControlsStyle") private var styleRawValue = TitlebarControlsStyle.classic.rawValue
@@ -913,7 +943,10 @@ struct TitlebarControlsView: View {
         let _ = shortcutRefreshTick
         let _ = appearanceRefreshTick
         let style = TitlebarControlsStyle(rawValue: styleRawValue) ?? .classic
-        let config = style.config
+        // CASPER: configOverride lets the minimal-mode left cluster shrink its
+        // icons independently of the shared standard-titlebar controls. nil at
+        // every other call site. Delete with the smaller-cluster patch.
+        let config = configOverride ?? style.config
         let contentSize = TitlebarControlsLayoutMetrics.contentSize(
             config: config,
             titlebarShortcutHintXOffset: titlebarShortcutHintXOffset
@@ -1452,9 +1485,14 @@ struct HiddenTitlebarSidebarControlsView: View {
         // to the wrong horizontal positions. TitlebarControlsView uses fixedSize()
         // so hint pills still render beyond the collapsed boundary unclipped.
         // Delete and restore computedHostWidth when right-align overlay is removed.
+        // CASPER: the whole left cluster (render + host width + gap drag + proxy +
+        // hit region) derives from this one shrunk config so the smaller icons stay
+        // coherent with the click targets. No-op in stock builds. Delete with the
+        // smaller-cluster patch.
+        let clusterConfig = style.config.casperMinimalCluster
         let hostWidth: CGFloat = CasperBuildEnvironment.isBranded
-            ? MinimalModeSidebarTitlebarControlsMetrics.computedHostWidthCollapsed(config: style.config)
-            : MinimalModeSidebarTitlebarControlsMetrics.computedHostWidth(config: style.config)
+            ? MinimalModeSidebarTitlebarControlsMetrics.computedHostWidthCollapsed(config: clusterConfig)
+            : MinimalModeSidebarTitlebarControlsMetrics.computedHostWidth(config: clusterConfig)
         let frameAlignment = Alignment(horizontal: iconAlignment, vertical: .center)
 
         ZStack(alignment: frameAlignment) {
@@ -1497,7 +1535,8 @@ struct HiddenTitlebarSidebarControlsView: View {
                 onNewTab: onNewTab,
                 onFocusHistoryBack: onFocusHistoryBack,
                 onFocusHistoryForward: onFocusHistoryForward,
-                visibilityMode: .alwaysVisible
+                visibilityMode: .alwaysVisible,
+                configOverride: clusterConfig
             )
             .frame(
                 width: hostWidth,
@@ -1509,14 +1548,14 @@ struct HiddenTitlebarSidebarControlsView: View {
             .accessibilityHidden(true)
             .animation(.easeInOut(duration: 0.14), value: shouldPinControls)
 
-            TitlebarControlsGapDragView(config: style.config)
+            TitlebarControlsGapDragView(config: clusterConfig)
                 .frame(
                     width: hostWidth,
                     height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight
                 )
 
             MinimalModeSidebarControlActionProxyView(
-                config: style.config,
+                config: clusterConfig,
                 requiresRevealedState: true
             ) { slot, anchorView, _ in
                 switch slot {
@@ -1557,7 +1596,7 @@ struct HiddenTitlebarSidebarControlsView: View {
             height: MinimalModeSidebarTitlebarControlsMetrics.hostHeight,
             alignment: frameAlignment
         )
-        .background(MinimalModeTitlebarButtonHitRegionView(config: style.config))
+        .background(MinimalModeTitlebarButtonHitRegionView(config: clusterConfig))
         .onReceive(MinimalModeSidebarChromeHoverState.shared.$hoveredWindowNumber) { hoveredWindowNumber in
             isHoveringWindowChrome = hostWindowNumber == hoveredWindowNumber
             #if DEBUG
