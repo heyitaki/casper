@@ -7082,6 +7082,11 @@ struct ClosedBrowserPanelRestoreSnapshot {
     let fallbackSplitOrientation: SplitOrientation?
     let fallbackSplitInsertFirst: Bool
     let fallbackAnchorPaneId: UUID?
+    // CASPER: full panel snapshot so "reopen last closed" restores any panel
+    // type (terminal/file-preview/markdown), not just browsers. Terminals
+    // auto-resume their agent on restore. nil for legacy browser-only captures.
+    // Delete if upstream generalizes closed-panel restore.
+    let panelSnapshot: SessionPanelSnapshot?
 }
 
 /// Sidebar-only metadata extracted onto its own ObservableObject so the
@@ -11018,9 +11023,16 @@ final class Workspace: Identifiable, ObservableObject {
         let anchorPaneId: UUID?
     }
 
+    // CASPER: generalized from browser-only to capture ANY panel type so the
+    // "reopen last closed" stack can restore terminals / file-preview / markdown
+    // panels into their original pane + tab position (best-effort). Browser
+    // capture is unchanged (url/profileID still set); `panelSnapshot` is now set
+    // for every type and drives the generalized restore. Captured in
+    // `shouldCloseTab` (panel still alive) and forwarded on `didCloseTab`.
+    // Delete if upstream generalizes closed-panel restore.
     private func stageClosedBrowserRestoreSnapshotIfNeeded(for tab: Bonsplit.Tab, inPane pane: PaneID) {
         guard let panelId = panelIdFromSurfaceId(tab.id),
-              let browserPanel = browserPanel(for: panelId),
+              panels[panelId] != nil,
               let tabIndex = bonsplitController.tabs(inPane: pane).firstIndex(where: { $0.id == tab.id }) else {
             pendingClosedBrowserRestoreSnapshots.removeValue(forKey: tab.id)
             return
@@ -11030,19 +11042,44 @@ final class Workspace: Identifiable, ObservableObject {
             forPaneId: pane.id.uuidString,
             in: bonsplitController.treeSnapshot()
         )
-        let resolvedURL = browserPanel.currentURL
-            ?? browserPanel.preferredURLStringForOmnibar().flatMap(URL.init(string:))
+        let browser = browserPanel(for: panelId)
+        let resolvedURL = browser?.currentURL
+            ?? browser?.preferredURLStringForOmnibar().flatMap(URL.init(string:))
+        // CASPER: this runs on the main thread for EVERY tab close (incl. bulk
+        // "close other tabs"). Only pay the agent-index disk read + scrollback
+        // VT-export when the panel actually has an agent worth resuming; plain
+        // terminal / browser closes stay cheap. The whole-workspace capture in
+        // `closeWorkspace` keeps full scrollback fidelity separately.
+        let hasAgent = !(agentPIDKeysByPanelId[panelId]?.isEmpty ?? true)
+            || restoredAgentSnapshotsByPanelId[panelId] != nil
+        let restorableAgent = hasAgent
+            ? RestorableAgentSessionIndex.load().snapshot(workspaceId: id, panelId: panelId)
+            : nil
+        let panelSnapshot = sessionPanelSnapshot(
+            panelId: panelId,
+            includeScrollback: hasAgent,
+            restorableAgent: restorableAgent
+        )
 
         pendingClosedBrowserRestoreSnapshots[tab.id] = ClosedBrowserPanelRestoreSnapshot(
             workspaceId: id,
             url: resolvedURL,
-            profileID: browserPanel.profileID,
+            profileID: browser?.profileID,
             originalPaneId: pane.id,
             originalTabIndex: tabIndex,
             fallbackSplitOrientation: fallbackPlan?.orientation,
             fallbackSplitInsertFirst: fallbackPlan?.insertFirst ?? false,
-            fallbackAnchorPaneId: fallbackPlan?.anchorPaneId
+            fallbackAnchorPaneId: fallbackPlan?.anchorPaneId,
+            panelSnapshot: panelSnapshot
         )
+    }
+
+    // CASPER: internal seam so TabManager's reopen-last-closed flow can recreate
+    // any panel type into a pane (`createPanel(from:inPane:)` is private to this
+    // file). Returns the new panel id. Delete with the reopen-last-closed
+    // feature if upstream generalizes closed-panel restore.
+    func casperRestoreClosedPanel(from snapshot: SessionPanelSnapshot, inPane paneId: PaneID) -> UUID? {
+        createPanel(from: snapshot, inPane: paneId)
     }
 
     private func clearStagedClosedBrowserRestoreSnapshot(for tabId: TabID) {

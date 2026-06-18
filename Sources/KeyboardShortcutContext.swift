@@ -53,6 +53,10 @@ extension KeyboardShortcutSettings.Action {
             return .rightSidebarFocus
         case .renameTab, .renameWorkspace:
             return .nonBrowserPanel
+        // CASPER: session nav fires for terminal / left-sidebar focus only, not
+        // when a browser panel or the right sidebar holds focus.
+        case .nextSession, .prevSession, .nextSessionWorkspace, .prevSessionWorkspace:
+            return .nonBrowserPanel
         case .browserBack, .browserForward, .browserReload, .toggleBrowserDeveloperTools, .showBrowserJavaScriptConsole,
              .browserZoomIn, .browserZoomOut, .browserZoomReset:
             return .browserPanel
@@ -76,6 +80,20 @@ extension AppDelegate {
 
     func shortcutEventBrowserPanel(_ event: NSEvent) -> BrowserPanel? {
         shortcutEventFocusContext(event).browserPanel
+    }
+
+    /// CASPER: true when the event targets an AppKit text field/view being
+    /// edited (rename field, sidebar search, browser omnibar field editor,
+    /// markdown editor). Lets ⌘↑/↓ keep its move-to-document-start/end meaning
+    /// in text inputs instead of triggering session navigation. A focused
+    /// Ghostty terminal surface is not a text view, so this returns false there.
+    func casperEventEditsTextInput(_ event: NSEvent) -> Bool {
+        let window = shortcutResolvedEventWindow(event) ?? NSApp.keyWindow ?? NSApp.mainWindow
+        guard let responder = window?.firstResponder else { return false }
+        if let textView = responder as? NSTextView {
+            return textView.isFieldEditor || textView.isEditable
+        }
+        return responder is NSTextField
     }
 
     func shortcutEventFocusContext(_ event: NSEvent) -> ShortcutEventFocusContext {

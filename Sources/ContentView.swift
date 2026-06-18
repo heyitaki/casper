@@ -7363,7 +7363,8 @@ struct ContentView: View {
             window.toggleFullScreen(nil)
         }
         registry.register(commandId: "palette.reopenClosedBrowserTab") {
-            _ = tabManager.reopenMostRecentlyClosedBrowserPanel()
+            // CASPER: reopen last closed thing (any panel/workspace).
+            _ = tabManager.casperReopenLastClosedItem()
         }
         registry.register(commandId: "palette.toggleSidebar") {
             sidebarState.toggle()
@@ -9417,6 +9418,12 @@ struct VerticalTabsSidebar: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityHidden(true)
         }
+        // CASPER: publish the search query so the keyboard navigator filters the
+        // same rows the sidebar shows (the query persists after click-away).
+        .onAppear { CasperSidebarSearchQueryStore.shared.query = workspaceSearchQuery }
+        .onChange(of: workspaceSearchQuery) { newValue in
+            CasperSidebarSearchQueryStore.shared.query = newValue
+        }
         .accessibilityIdentifier("Sidebar")
         .ignoresSafeArea()
         .overlay(alignment: .trailing) {
@@ -9648,6 +9655,71 @@ struct VerticalTabsSidebar: View {
         .accessibilityIdentifier("SidebarWorkspaceSearchField")
     }
 
+    // CASPER: build the right-click context-menu action bundle for a compact
+    // sidebar session row. Resolves the row's working directory and binds each
+    // action to the row's workspace/panel so the row stays a pure value+closure
+    // consumer (snapshot-boundary rule). Rename routes through the one shared
+    // rename path: focus the row's panel, then post the rename-tab request.
+    // Delete with the context menu if upstream adds first-class per-session row
+    // actions.
+    private func casperSidebarRowActions(
+        for entry: CasperSidebarPanelEntry,
+        workspaceLookup: [UUID: Workspace]
+    ) -> CasperSidebarRowActions {
+        let workspaceId = entry.key.workspaceId
+        let panelId = entry.key.panelId
+        let cwd = casperSessionWorkingDirectory(
+            workspaceId: workspaceId,
+            panelId: panelId,
+            workspaceLookup: workspaceLookup
+        )
+        let hasCwd = !(cwd?.isEmpty ?? true)
+        return CasperSidebarRowActions(
+            hasWorkingDirectory: hasCwd,
+            onRename: { [weak tabManager] in
+                tabManager?.focusTab(workspaceId, surfaceId: panelId)
+                AppDelegate.shared?.requestCommandPaletteRenameTab(source: "casper.sidebar.contextMenu")
+            },
+            onRevealInFinder: {
+                guard let cwd, !cwd.isEmpty else { return }
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: cwd)])
+            },
+            onOpenWorkingDirectory: {
+                guard let cwd, !cwd.isEmpty else { return }
+                NSWorkspace.shared.open(URL(fileURLWithPath: cwd))
+            },
+            onCopyPath: {
+                guard let cwd, !cwd.isEmpty else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(cwd, forType: .string)
+            },
+            onTogglePin: { [weak tabManager] in
+                tabManager?.togglePin(tabId: workspaceId)
+            },
+            onDuplicate: { [weak tabManager] in
+                guard let tabManager, let cwd, !cwd.isEmpty else { return }
+                _ = tabManager.addWorkspace(workingDirectory: cwd)
+            }
+        )
+    }
+
+    /// Working directory for a session row: the panel's own reported cwd,
+    /// falling back to the workspace's current directory.
+    private func casperSessionWorkingDirectory(
+        workspaceId: UUID,
+        panelId: UUID,
+        workspaceLookup: [UUID: Workspace]
+    ) -> String? {
+        guard let workspace = workspaceLookup[workspaceId] else {
+            return nil
+        }
+        let panelDir = workspace.panelDirectories[panelId]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !panelDir.isEmpty { return panelDir }
+        let cwd = workspace.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cwd.isEmpty ? nil : cwd
+    }
+
     private func workspaceRows(renderContext: WorkspaceListRenderContext) -> some View {
         // Workspaces are bounded, so prefer a non-lazy stack here.
         // LazyVStack + drag-state invalidations can recurse through layout.
@@ -9703,11 +9775,13 @@ struct VerticalTabsSidebar: View {
         }.map(\.element)
         // CASPER: compact sidebar is panel-keyed; non-compact stays workspace-keyed.
         // Delete the non-compact branch if upstream adopts per-panel rows.
-        // `workspacesById` is only read by the non-compact branch — skip the
-        // dictionary allocation entirely in compact mode (the shipping path).
-        let workspacesById: [UUID: Workspace] = isCasperCompactSidebar
-            ? [:]
-            : Dictionary(uniqueKeysWithValues: sortedTabs.map { ($0.id, $0) })
+        // Built once per eval and used by both the non-compact row branch and the
+        // compact path's per-row context-menu cwd lookup — cheaper than the
+        // O(rows × tabs) `tabs.first(where:)` scans the cwd resolver would
+        // otherwise do on every status-publish re-eval.
+        let workspacesById: [UUID: Workspace] = Dictionary(
+            uniqueKeysWithValues: sortedTabs.map { ($0.id, $0) }
+        )
         let rawPanelEntries: [CasperSidebarPanelEntry] = isCasperCompactSidebar
             ? CasperSidebarPanelEntryBuilder.entries(
                 from: sortedTabs,
@@ -9826,6 +9900,7 @@ struct VerticalTabsSidebar: View {
                                     )
                                 }
                                 : nil
+                            let rowActions = casperSidebarRowActions(for: entry, workspaceLookup: workspacesById)
                             CasperSidebarPanelRow(
                                 entry: entry,
                                 workspaceShortcutDigit: workspaceShortcutDigit,
@@ -9876,7 +9951,8 @@ struct VerticalTabsSidebar: View {
                                     } else {
                                         _ = workspace.closePanel(entry.key.panelId)
                                     }
-                                }
+                                },
+                                actions: rowActions
                             )
                             // CASPER: row skips body re-eval unless its snapshot
                             // changes — load-bearing against the CA-commit-stall

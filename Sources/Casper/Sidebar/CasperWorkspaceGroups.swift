@@ -194,26 +194,44 @@ enum CasperWorkspaceGroupResolver {
         return result
     }
 
-    /// Group panel entries by repo, preserving first-appearance order so the
-    /// caller's sort remains the source of truth for ordering.
+    /// Group panel entries by repo, then order rows *within* each group
+    /// strictly by recency.
+    ///
+    /// CASPER (item 4): group order is first-appearance of each key in the
+    /// pre-sorted input (so the group holding the most-recent session sorts
+    /// first), but rows inside a group are re-sorted by per-entry activity so a
+    /// workspace's split-panels are NOT forced adjacent — every session row
+    /// sits at its own reverse-chronological position. The bucket's original
+    /// input index is the stable tiebreak, keeping ties from jittering on every
+    /// status update. Delete the within-group sort if upstream adds first-class
+    /// per-session ordering.
     static func groups(from entries: [CasperSidebarPanelEntry]) -> [CasperWorkspaceGroup] {
         var order: [String] = []
-        var buckets: [String: [CasperSidebarPanelEntry]] = [:]
-        for entry in entries {
+        var buckets: [String: [(index: Int, entry: CasperSidebarPanelEntry)]] = [:]
+        for (index, entry) in entries.enumerated() {
             let key = entry.groupKey
             if buckets[key] == nil {
                 order.append(key)
-                buckets[key] = [entry]
+                buckets[key] = [(index, entry)]
             } else {
-                buckets[key]?.append(entry)
+                buckets[key]?.append((index, entry))
             }
         }
         let names = disambiguatedDisplayNames(forKeys: order)
         return order.map { key in
-            CasperWorkspaceGroup(
+            let sorted = (buckets[key] ?? []).sorted { lhs, rhs in
+                if CasperAgentActivity.compareEntryActivityDesc(lhs: lhs.entry, rhs: rhs.entry) {
+                    return true
+                }
+                if CasperAgentActivity.compareEntryActivityDesc(lhs: rhs.entry, rhs: lhs.entry) {
+                    return false
+                }
+                return lhs.index < rhs.index
+            }
+            return CasperWorkspaceGroup(
                 key: key,
                 displayName: names[key, default: ""],
-                entries: buckets[key] ?? []
+                entries: sorted.map(\.entry)
             )
         }
     }
@@ -543,6 +561,25 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
     }
 }
 
+// MARK: - Row context-menu actions
+
+/// CASPER: closure bundle for a session row's right-click context menu. Built
+/// per-entry in ContentView (where `TabManager` + rename/command-palette flows
+/// are in scope) and handed to the row as immutable value+closures, preserving
+/// the snapshot-boundary rule (rows never reach into a store). Closures are
+/// excluded from `CasperSidebarPanelRow ==`. Delete with the context menu if
+/// upstream adds first-class per-session row actions.
+struct CasperSidebarRowActions {
+    /// Gates the cwd-dependent items (reveal / open / copy / duplicate).
+    let hasWorkingDirectory: Bool
+    let onRename: () -> Void
+    let onRevealInFinder: () -> Void
+    let onOpenWorkingDirectory: () -> Void
+    let onCopyPath: () -> Void
+    let onTogglePin: () -> Void
+    let onDuplicate: () -> Void
+}
+
 // MARK: - Panel row view
 
 /// Compact one-line row for a single panel inside a workspace. Rendered by
@@ -600,6 +637,8 @@ struct CasperSidebarPanelRow: View, Equatable {
     let shortcutHintYOffset: Double
     let onSelect: () -> Void
     let onClose: () -> Void
+    /// Right-click context-menu action bundle. Closures only — excluded from ==.
+    let actions: CasperSidebarRowActions
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHoveringRow: Bool = false
@@ -716,6 +755,74 @@ struct CasperSidebarPanelRow: View, Equatable {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(entry.displayTitle)
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+        // CASPER: right-click (two-finger) context menu for the session row.
+        .contextMenu { contextMenuItems }
+    }
+
+    @ViewBuilder
+    private var contextMenuItems: some View {
+        Button {
+            actions.onRename()
+        } label: {
+            Label(
+                String(localized: "sidebar.session.menu.rename", defaultValue: "Rename…"),
+                systemImage: "pencil"
+            )
+        }
+        Button {
+            actions.onTogglePin()
+        } label: {
+            Label(
+                entry.isPinned
+                    ? String(localized: "sidebar.session.menu.unpin", defaultValue: "Unpin Workspace")
+                    : String(localized: "sidebar.session.menu.pin", defaultValue: "Pin Workspace"),
+                systemImage: entry.isPinned ? "pin.slash" : "pin"
+            )
+        }
+        if actions.hasWorkingDirectory {
+            Divider()
+            Button {
+                actions.onDuplicate()
+            } label: {
+                Label(
+                    String(localized: "sidebar.session.menu.duplicate", defaultValue: "Duplicate Session"),
+                    systemImage: "plus.square.on.square"
+                )
+            }
+            Button {
+                actions.onOpenWorkingDirectory()
+            } label: {
+                Label(
+                    String(localized: "sidebar.session.menu.openWorkingDirectory", defaultValue: "Open Working Directory"),
+                    systemImage: "folder"
+                )
+            }
+            Button {
+                actions.onRevealInFinder()
+            } label: {
+                Label(
+                    String(localized: "sidebar.session.menu.revealInFinder", defaultValue: "Reveal in Finder"),
+                    systemImage: "magnifyingglass"
+                )
+            }
+            Button {
+                actions.onCopyPath()
+            } label: {
+                Label(
+                    String(localized: "sidebar.session.menu.copyPath", defaultValue: "Copy Path"),
+                    systemImage: "doc.on.clipboard"
+                )
+            }
+        }
+        Divider()
+        Button(role: .destructive) {
+            onClose()
+        } label: {
+            Label(
+                String(localized: "sidebar.session.menu.close", defaultValue: "Close Session"),
+                systemImage: "xmark"
+            )
+        }
     }
 }
 

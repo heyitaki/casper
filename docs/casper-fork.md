@@ -272,9 +272,39 @@ Casper-only files now live under `Sources/Casper/Sidebar/` (`SidebarRevealStrip.
 - Deletion condition:
   - Delete if upstream rewrites the drag-overlay debug instrumentation or adds equivalent gating.
 
+### Sidebar session navigation, context menu, ordering + reopen-last-closed
+
+Four related sidebar/session features.
+
+- Casper-only files:
+  - `Sources/Casper/Sidebar/CasperSidebarNavigator.swift` (new) — rebuilds the displayed sidebar order and moves focus for ⌘↑/↓ (next/prev session) and ⌘⇧↑/↓ (next/prev workspace).
+  - `Sources/Casper/Sidebar/CasperWorkspaceGroups.swift` — `groups(from:)` now sorts rows *within* each folder group strictly by per-session recency (de-clump: a workspace's split-panels are no longer forced adjacent); added `CasperSidebarRowActions` bundle + the row `.contextMenu` (Rename / Pin / Duplicate / Open cwd / Reveal / Copy path / Close).
+  - `Sources/Casper/Sidebar/CasperAgentActivity.swift` — added `compareEntryActivityDesc` (entry-level recency comparator).
+- Upstream files modified (all `// CASPER:`-marked):
+  - `Sources/KeyboardShortcutSettings.swift` — 4 new actions (`nextSession`/`prevSession`/`nextSessionWorkspace`/`prevSessionWorkspace`, default ⌘↑/↓ + ⌘⇧↑/↓); generalized the `reopenClosedBrowserPanel` label to "Reopen Closed Session".
+  - `Sources/KeyboardShortcutContext.swift` — `.nonBrowserPanel` context for the 4 nav actions; `casperEventEditsTextInput(_:)` guard so ⌘↑/↓ stays text-nav in editing fields.
+  - `Sources/AppDelegate.swift` — 4 nav dispatch arms (guarded by the text-input check) → `CasperSidebarNavigator`; rerouted ⌘⇧T to `casperReopenLastClosedItem()`.
+  - `Sources/ContentView.swift` — `VerticalTabsSidebar` builds `CasperSidebarRowActions` per row (`casperSidebarRowActions`/`casperSessionWorkingDirectory`), hoisted `let rowActions` to keep the row initializer type-checkable; rerouted the command-palette reopen to `casperReopenLastClosedItem()`.
+  - `Sources/cmuxApp.swift` — File-menu "Reopen Closed Session" button → `casperReopenLastClosedItem()`.
+  - `Sources/Workspace.swift` — added `panelSnapshot` to `ClosedBrowserPanelRestoreSnapshot`; generalized `stageClosedBrowserRestoreSnapshotIfNeeded` to capture ANY panel type (terminal/file-preview/markdown/browser); added internal seam `casperRestoreClosedPanel(from:inPane:)`.
+  - `Sources/TabManager.swift` — unified `casperRecentlyClosedItems` stack + `CasperClosedItem` enum; `casperReopenLastClosedItem()` and helpers (panel 3-tier-best-effort restore via `createPanel`; whole-workspace restore via `sessionSnapshot`/`restoreSessionSnapshot` at original index, agents auto-resume); `closeWorkspace` capture hook before `teardownAllPanels()`; `wireClosedBrowserTracking` routes closes into the unified stack.
+  - `GhosttyTabs.xcodeproj/project.pbxproj` — new `CasperSidebarNavigator.swift` build entry.
+  - `Resources/Localizable.xcstrings` — new shortcut + context-menu strings (en/ja); updated reopen label.
+  - `web/data/cmux-shortcuts.ts`, `web/data/cmux.schema.json` — the 4 new shortcut actions added to the public shortcuts reference + the `cmux.json` schema enum (shortcut policy requires both).
+- Notes:
+  - ⌘↑/↓ and ⌘⇧↑/↓ intentionally shadow Ghostty's jump-to-prompt inside a focused terminal (cmux's local monitor intercepts first). The text-input guard preserves ⌘↑/↓ as move-to-start/end inside editing fields.
+  - The legacy browser-only path (`recentlyClosedBrowsers`, `reopenMostRecentlyClosedBrowserPanel`) is no longer reached by ⌘⇧T but left in place to minimize upstream churn; `reopenClosedBrowserPanel(_:in:)` is still used for the browser sub-case of the unified reopen.
+- Deletion condition:
+  - Delete if upstream adds first-class sidebar row keyboard nav, per-session row ordering/context menus, and a unified reopen-closed (panel + workspace) stack.
+
 ## Merge conflict notes
 
 These upstream files are touched by fork patches and tend to drift upstream. Re-check each one when running `git merge upstream/main`:
+
+- `Sources/Workspace.swift`
+  - Touched by the reopen-last-closed patch (`ClosedBrowserPanelRestoreSnapshot.panelSnapshot` field, generalized `stageClosedBrowserRestoreSnapshotIfNeeded`, `casperRestoreClosedPanel` seam). Re-validate the close-staging path if upstream reworks browser-panel close capture.
+- `Sources/KeyboardShortcutSettings.swift`, `Sources/KeyboardShortcutContext.swift`
+  - Touched by the session-nav patch (4 new actions + `.nonBrowserPanel` context + `casperEventEditsTextInput`). If upstream adds arrow-key actions, re-check default-shortcut collisions.
 
 - `Sources/ContentView.swift`
   - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), the workspace grouping patch (`workspaceRows` now wraps rows in a per-group `ForEach`), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.

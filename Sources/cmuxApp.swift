@@ -541,8 +541,9 @@ struct cmuxApp: App {
                     }
                 }
 
-                splitCommandButton(title: String(localized: "menu.file.reopenClosedBrowserPanel", defaultValue: "Reopen Closed Browser Panel"), shortcut: menuShortcut(for: .reopenClosedBrowserPanel)) {
-                    _ = activeTabManager.reopenMostRecentlyClosedBrowserPanel()
+                splitCommandButton(title: String(localized: "menu.file.reopenClosedBrowserPanel", defaultValue: "Reopen Closed Session"), shortcut: menuShortcut(for: .reopenClosedBrowserPanel)) {
+                    // CASPER: reopen last closed thing (any panel/workspace).
+                    _ = activeTabManager.casperReopenLastClosedItem()
                 }
             }
 

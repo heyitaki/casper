@@ -92,6 +92,14 @@ enum KeyboardShortcutSettings {
         case selectSurfaceByNumber
         case nextSidebarTab
         case prevSidebarTab
+        // CASPER: vertical session navigation in the compact sidebar. Next/prev
+        // session steps one row in the displayed sidebar order; the workspace
+        // variants jump to the first row of the next/prev workspace. Delete if
+        // upstream adds sidebar row navigation.
+        case nextSession
+        case prevSession
+        case nextSessionWorkspace
+        case prevSessionWorkspace
         case selectWorkspaceByNumber
         case renameTab
         case renameWorkspace
@@ -171,6 +179,10 @@ enum KeyboardShortcutSettings {
             case .selectSurfaceByNumber: return String(localized: "shortcut.selectSurfaceByNumber.label", defaultValue: "Select Surface 1…9")
             case .nextSidebarTab: return String(localized: "shortcut.nextWorkspace.label", defaultValue: "Next Workspace")
             case .prevSidebarTab: return String(localized: "shortcut.previousWorkspace.label", defaultValue: "Previous Workspace")
+            case .nextSession: return String(localized: "shortcut.nextSession.label", defaultValue: "Next Session")
+            case .prevSession: return String(localized: "shortcut.prevSession.label", defaultValue: "Previous Session")
+            case .nextSessionWorkspace: return String(localized: "shortcut.nextSessionWorkspace.label", defaultValue: "Next Session Workspace")
+            case .prevSessionWorkspace: return String(localized: "shortcut.prevSessionWorkspace.label", defaultValue: "Previous Session Workspace")
             case .selectWorkspaceByNumber: return String(localized: "shortcut.selectWorkspaceByNumber.label", defaultValue: "Select Workspace 1…9")
             case .renameTab: return String(localized: "shortcut.renameTab.label", defaultValue: "Rename Tab")
             case .renameWorkspace: return String(localized: "shortcut.renameWorkspace.label", defaultValue: "Rename Workspace")
@@ -178,7 +190,7 @@ enum KeyboardShortcutSettings {
             case .closeTab: return String(localized: "menu.file.closeTab", defaultValue: "Close Tab")
             case .closeOtherTabsInPane: return String(localized: "menu.file.closeOtherTabs", defaultValue: "Close Other Tabs in Pane")
             case .closeWorkspace: return String(localized: "shortcut.closeWorkspace.label", defaultValue: "Close Workspace")
-            case .reopenClosedBrowserPanel: return String(localized: "menu.file.reopenClosedBrowserPanel", defaultValue: "Reopen Closed Browser Panel")
+            case .reopenClosedBrowserPanel: return String(localized: "menu.file.reopenClosedBrowserPanel", defaultValue: "Reopen Closed Session")
             case .newSurface: return String(localized: "shortcut.newSurface.label", defaultValue: "New Surface")
             case .toggleTerminalCopyMode: return String(localized: "shortcut.toggleTerminalCopyMode.label", defaultValue: "Toggle Terminal Copy Mode")
             case .focusLeft: return String(localized: "shortcut.focusPaneLeft.label", defaultValue: "Focus Pane Left")
@@ -288,6 +300,17 @@ enum KeyboardShortcutSettings {
                 return StoredShortcut(key: "]", command: true, shift: false, option: false, control: true)
             case .prevSidebarTab:
                 return StoredShortcut(key: "[", command: true, shift: false, option: false, control: true)
+            // CASPER: ⌘↑/↓ next/prev session, ⌘⇧↑/↓ next/prev workspace. These
+            // shadow Ghostty's jump-to-prompt (⌘↑/↓) and resize/jump (⌘⇧↑/↓) in
+            // a focused terminal — cmux's local monitor intercepts first.
+            case .nextSession:
+                return StoredShortcut(key: "↓", command: true, shift: false, option: false, control: false)
+            case .prevSession:
+                return StoredShortcut(key: "↑", command: true, shift: false, option: false, control: false)
+            case .nextSessionWorkspace:
+                return StoredShortcut(key: "↓", command: true, shift: true, option: false, control: false)
+            case .prevSessionWorkspace:
+                return StoredShortcut(key: "↑", command: true, shift: true, option: false, control: false)
             case .renameTab:
                 return StoredShortcut(key: "r", command: true, shift: false, option: false, control: false)
             case .renameWorkspace:

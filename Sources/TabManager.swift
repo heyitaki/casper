@@ -583,6 +583,15 @@ struct RecentlyClosedBrowserStack {
     }
 }
 
+// CASPER: a single entry in the unified "reopen last closed" stack (⌘⇧T). A
+// `.panel` is one panel (any type) removed from a workspace that's still open;
+// a `.workspace` is a whole tab that was closed. Delete if upstream adds a
+// unified reopen-closed stack.
+enum CasperClosedItem {
+    case panel(ClosedBrowserPanelRestoreSnapshot)
+    case workspace(snapshot: SessionWorkspaceSnapshot, insertionIndex: Int)
+}
+
 #if DEBUG
 // Sample the actual IOSurface-backed terminal layer at vsync cadence so UI tests can reliably
 // catch a single compositor-frame blank flash and any transient compositor scaling (stretched text).
@@ -1010,6 +1019,13 @@ class TabManager: ObservableObject {
     private var pendingPanelTitleUpdates: [PanelTitleUpdateKey: String] = [:]
     private let panelTitleUpdateCoalescer = NotificationBurstCoalescer(delay: 1.0 / 30.0)
     private var recentlyClosedBrowsers = RecentlyClosedBrowserStack(capacity: 20)
+    // CASPER: unified "reopen last closed" stack (⌘⇧T). Holds whichever thing
+    // was closed most recently — a single panel (any type) removed from a
+    // surviving workspace, or a whole workspace (full split layout + agent
+    // auto-resume). Supersedes the browser-only path for ⌘⇧T. Delete if
+    // upstream adds a unified reopen-closed stack.
+    private var casperRecentlyClosedItems: [CasperClosedItem] = []
+    private let casperRecentlyClosedItemsCapacity = 20
     private let initialWorkspaceGitProbeQueue = DispatchQueue(
         label: "com.cmux.initial-workspace-git-probe",
         qos: .utility
@@ -1912,7 +1928,10 @@ class TabManager: ObservableObject {
 
     func wireClosedBrowserTracking(for workspace: Workspace) {
         workspace.onClosedBrowserPanel = { [weak self] snapshot in
-            self?.recentlyClosedBrowsers.push(snapshot)
+            // CASPER: route closed panels (any type) into the unified
+            // reopen-last-closed stack instead of the browser-only stack.
+            // Delete if upstream unifies reopen-closed.
+            self?.casperPushClosedItem(.panel(snapshot))
         }
     }
 
@@ -4223,6 +4242,14 @@ class TabManager: ObservableObject {
         sidebarSelectedWorkspaceIds.remove(workspace.id)
 
         AppDelegate.shared?.notificationStore?.clearNotifications(forTabId: workspace.id)
+        // CASPER: capture the full workspace (split layout + panels + agent
+        // resume descriptors) BEFORE teardown so ⌘⇧T can restore it at its
+        // original tab index. `teardownAllPanels()` bypasses the bonsplit close
+        // delegate, so this does not double-capture the panels. Delete with the
+        // reopen-last-closed feature.
+        if let closingIndex = tabs.firstIndex(where: { $0.id == workspace.id }) {
+            casperRecordClosedWorkspace(workspace, insertionIndex: closingIndex)
+        }
         workspace.teardownAllPanels()
         workspace.teardownRemoteConnection()
         unwireClosedBrowserTracking(for: workspace)
@@ -6048,6 +6075,144 @@ class TabManager: ObservableObject {
         )?.id
     }
 
+    // MARK: - CASPER: reopen last closed thing (⌘⇧T)
+
+    /// Push a closed thing onto the unified reopen stack, trimming to capacity.
+    func casperPushClosedItem(_ item: CasperClosedItem) {
+        casperRecentlyClosedItems.append(item)
+        let overflow = casperRecentlyClosedItems.count - casperRecentlyClosedItemsCapacity
+        if overflow > 0 {
+            casperRecentlyClosedItems.removeFirst(overflow)
+        }
+    }
+
+    /// Snapshot a workspace's full state just before teardown so ⌘⇧T can restore
+    /// it. Must be called BEFORE `teardownAllPanels()` (which frees the panels).
+    func casperRecordClosedWorkspace(_ workspace: Workspace, insertionIndex: Int) {
+        let snapshot = workspace.sessionSnapshot(
+            includeScrollback: true,
+            restorableAgentIndex: RestorableAgentSessionIndex.load()
+        )
+        casperPushClosedItem(.workspace(snapshot: snapshot, insertionIndex: insertionIndex))
+    }
+
+    /// ⌘⇧T entry point: reopen whatever was closed most recently — a single
+    /// panel (any type) into its workspace best-effort, or a whole workspace
+    /// with its full layout + agent auto-resume. Pops past entries that can no
+    /// longer be restored.
+    @discardableResult
+    func casperReopenLastClosedItem() -> Bool {
+        while let item = casperRecentlyClosedItems.popLast() {
+            switch item {
+            case .panel(let snapshot):
+                if casperReopenClosedPanel(snapshot) { return true }
+            case .workspace(let snapshot, let insertionIndex):
+                if casperReopenClosedWorkspace(snapshot, insertionIndex: insertionIndex) { return true }
+            }
+        }
+        return false
+    }
+
+    private func casperReopenClosedPanel(_ snapshot: ClosedBrowserPanelRestoreSnapshot) -> Bool {
+        // Browser panels keep the tuned browser restore (3-tier placement +
+        // focus enforcement). Legacy captures (nil panelSnapshot) are browsers.
+        if snapshot.panelSnapshot == nil || snapshot.panelSnapshot?.type == .browser {
+            guard BrowserAvailabilitySettings.isEnabled() else { return false }
+            guard let targetWorkspace = tabs.first(where: { $0.id == snapshot.workspaceId })
+                ?? selectedWorkspace ?? tabs.first else { return false }
+            let preReopenFocusedPanelId = focusedPanelId(for: targetWorkspace.id)
+            if selectedTabId != targetWorkspace.id { selectedTabId = targetWorkspace.id }
+            guard let reopenedPanelId = reopenClosedBrowserPanel(snapshot, in: targetWorkspace) else {
+                return false
+            }
+            enforceReopenedBrowserFocus(
+                tabId: targetWorkspace.id,
+                reopenedPanelId: reopenedPanelId,
+                preReopenFocusedPanelId: preReopenFocusedPanelId
+            )
+            return true
+        }
+
+        // Non-browser panel: restore into the original pane/position best-effort.
+        guard let panelSnapshot = snapshot.panelSnapshot else { return false }
+        guard let workspace = tabs.first(where: { $0.id == snapshot.workspaceId })
+            ?? selectedWorkspace ?? tabs.first else { return false }
+        let preReopenFocusedPanelId = focusedPanelId(for: workspace.id)
+        if selectedTabId != workspace.id { selectedTabId = workspace.id }
+        guard let reopenedPanelId = casperRestoreClosedPanelIntoWorkspace(
+            panelSnapshot,
+            snapshot: snapshot,
+            in: workspace
+        ) else {
+            return false
+        }
+        // Reuse the browser focus-enforcement (panel-type agnostic) so the
+        // restored panel reliably takes focus over late focus callbacks.
+        enforceReopenedBrowserFocus(
+            tabId: workspace.id,
+            reopenedPanelId: reopenedPanelId,
+            preReopenFocusedPanelId: preReopenFocusedPanelId
+        )
+        return true
+    }
+
+    private func casperRestoreClosedPanelIntoWorkspace(
+        _ panelSnapshot: SessionPanelSnapshot,
+        snapshot: ClosedBrowserPanelRestoreSnapshot,
+        in workspace: Workspace
+    ) -> UUID? {
+        let allPanes = workspace.bonsplitController.allPaneIds
+        // Tier 1: original pane still exists → restore there at the original tab
+        // index (exact layout/position).
+        if let originalPane = allPanes.first(where: { $0.id == snapshot.originalPaneId }),
+           let newPanelId = workspace.casperRestoreClosedPanel(from: panelSnapshot, inPane: originalPane) {
+            let tabCount = workspace.bonsplitController.tabs(inPane: originalPane).count
+            let targetIndex = min(max(snapshot.originalTabIndex, 0), max(0, tabCount - 1))
+            _ = workspace.reorderSurface(panelId: newPanelId, toIndex: targetIndex)
+            return newPanelId
+        }
+        // Tier 2 (best-effort): original pane is gone (layout changed) → restore
+        // into the workspace's focused pane.
+        guard let focusedPane = workspace.bonsplitController.focusedPaneId ?? allPanes.first else {
+            return nil
+        }
+        return workspace.casperRestoreClosedPanel(from: panelSnapshot, inPane: focusedPane)
+    }
+
+    private func casperReopenClosedWorkspace(
+        _ snapshot: SessionWorkspaceSnapshot,
+        insertionIndex: Int
+    ) -> Bool {
+        let ordinal = Self.nextPortOrdinal
+        Self.nextPortOrdinal += 1
+        let workspace = Workspace(
+            title: snapshot.processTitle,
+            workingDirectory: snapshot.currentDirectory,
+            portOrdinal: ordinal
+        )
+        workspace.owningTabManager = self
+        workspace.restoreSessionSnapshot(snapshot)
+        wireClosedBrowserTracking(for: workspace)
+        let index = max(0, min(insertionIndex, tabs.count))
+        tabs.insert(workspace, at: index)
+        selectedTabId = workspace.id
+        // CASPER: mirror the full session-restore tail so the reopened workspace
+        // gets its git branch/dirty badge populated immediately (not only after
+        // the ~60s background poll) and focus/socket listeners see the switch.
+        for terminalPanel in workspace.panels.values.compactMap({ $0 as? TerminalPanel }) {
+            scheduleInitialWorkspaceGitMetadataRefreshIfPossible(
+                workspaceId: workspace.id,
+                panelId: terminalPanel.id
+            )
+        }
+        NotificationCenter.default.post(
+            name: .ghosttyDidFocusTab,
+            object: nil,
+            userInfo: [GhosttyNotificationKey.tabId: workspace.id]
+        )
+        return true
+    }
+
     /// Flash the currently focused panel so the user can visually confirm focus.
     func triggerFocusFlash() {
         guard let tab = selectedWorkspace,
@@ -7478,6 +7643,7 @@ extension TabManager {
         isWorkspaceCycleHot = false
         selectionSideEffectsGeneration &+= 1
         recentlyClosedBrowsers = RecentlyClosedBrowserStack(capacity: 20)
+        casperRecentlyClosedItems.removeAll() // CASPER: reopen-last-closed reset on session restore.
 
         // Build the new workspace list locally to avoid intermediate @Published
         // emissions (empty tabs, nil selectedTabId) that can leave SwiftUI's

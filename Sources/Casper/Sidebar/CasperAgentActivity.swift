@@ -342,6 +342,28 @@ enum CasperAgentActivity {
         return lhsTime > rhsTime
     }
 
+    /// Entry-level analogue of `compareActivityDesc` used to order individual
+    /// session rows *within* a folder group, so a workspace's split-panels are
+    /// no longer forced adjacent — every row sits at its own recency. Returns
+    /// true when `lhs` should sort before `rhs`. `false` for ties (the caller
+    /// applies a stable index tiebreak). Mirrors the workspace comparator:
+    /// pinned-first, then `.none` activity sinks to the bottom, then most
+    /// recent `lastActivityAt` wins.
+    static func compareEntryActivityDesc(
+        lhs: CasperSidebarPanelEntry,
+        rhs: CasperSidebarPanelEntry
+    ) -> Bool {
+        if lhs.isPinned != rhs.isPinned {
+            return lhs.isPinned && !rhs.isPinned
+        }
+        if (lhs.activity.state == .none) != (rhs.activity.state == .none) {
+            return rhs.activity.state == .none
+        }
+        let lhsTime = lhs.activity.lastActivityAt ?? .distantPast
+        let rhsTime = rhs.activity.lastActivityAt ?? .distantPast
+        return lhsTime > rhsTime
+    }
+
     private static func isWorkingValue(_ entry: SidebarStatusEntry) -> Bool {
         let normalized = entry.value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if normalized.isEmpty { return false }

@@ -300,6 +300,7 @@
 		CA5840020000000000000001 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840020000000000000002 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift */; };
 		CA5840030000000000000001 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */; };
 		CA5840160000000000000001 /* Casper/Sidebar/CasperWorkspaceGroups.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840160000000000000002 /* Casper/Sidebar/CasperWorkspaceGroups.swift */; };
+		CA5840160000000000000003 /* Casper/Sidebar/CasperSidebarNavigator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840160000000000000004 /* Casper/Sidebar/CasperSidebarNavigator.swift */; };
 		CA5840170000000000000001 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840170000000000000002 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift */; };
 		CA5840180000000000000001 /* Casper/Sidebar/CasperAgentActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840180000000000000002 /* Casper/Sidebar/CasperAgentActivity.swift */; };
 		CA5840200000000000000001 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840200000000000000002 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift */; };
@@ -821,6 +822,7 @@
 		CA5840020000000000000002 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift"; sourceTree = "<group>"; };
 		CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift"; sourceTree = "<group>"; };
 		CA5840160000000000000002 /* Casper/Sidebar/CasperWorkspaceGroups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperWorkspaceGroups.swift; sourceTree = "<group>"; };
+		CA5840160000000000000004 /* Casper/Sidebar/CasperSidebarNavigator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperSidebarNavigator.swift; sourceTree = "<group>"; };
 		CA5840170000000000000002 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperCompactWorkspaceRow.swift; sourceTree = "<group>"; };
 		CA5840180000000000000002 /* Casper/Sidebar/CasperAgentActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperAgentActivity.swift; sourceTree = "<group>"; };
 		CA5840200000000000000002 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperSidebarActivityRefresher.swift; sourceTree = "<group>"; };
@@ -1183,6 +1185,7 @@
 				CA5840020000000000000002 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift */,
 				CA5840030000000000000002 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift */,
 				CA5840160000000000000002 /* Casper/Sidebar/CasperWorkspaceGroups.swift */,
+				CA5840160000000000000004 /* Casper/Sidebar/CasperSidebarNavigator.swift */,
 				CA5840170000000000000002 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift */,
 				CA5840180000000000000002 /* Casper/Sidebar/CasperAgentActivity.swift */,
 				CA5840200000000000000002 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift */,
@@ -1881,6 +1884,7 @@
 				CA5840020000000000000001 /* Casper/Sidebar/AppDelegate+SidebarRevealEdgeMouseHandler.swift in Sources */,
 				CA5840030000000000000001 /* Casper/Sidebar/WindowHostView+SidebarRevealPassThrough.swift in Sources */,
 				CA5840160000000000000001 /* Casper/Sidebar/CasperWorkspaceGroups.swift in Sources */,
+				CA5840160000000000000003 /* Casper/Sidebar/CasperSidebarNavigator.swift in Sources */,
 				CA5840170000000000000001 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift in Sources */,
 				CA5840180000000000000001 /* Casper/Sidebar/CasperAgentActivity.swift in Sources */,
 				CA5840200000000000000001 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift in Sources */,

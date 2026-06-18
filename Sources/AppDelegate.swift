@@ -11462,6 +11462,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return true
         }
 
+        // CASPER: ⌘↑/↓ next/prev session, ⌘⇧↑/↓ next/prev workspace. Skipped
+        // while an AppKit text field/view is being edited (rename field, sidebar
+        // search, omnibar, markdown editor) so ⌘↑/↓ keeps its move-to-start/end
+        // meaning there. In a focused terminal the first responder is a Ghostty
+        // surface (not a text view), so session nav wins over jump-to-prompt.
+        if !casperEventEditsTextInput(event) {
+            if matchConfiguredShortcut(event: event, action: .nextSession) {
+                if CasperSidebarNavigator.handleShortcut(direction: .next, granularity: .session) {
+                    return true
+                }
+            }
+            if matchConfiguredShortcut(event: event, action: .prevSession) {
+                if CasperSidebarNavigator.handleShortcut(direction: .previous, granularity: .session) {
+                    return true
+                }
+            }
+            if matchConfiguredShortcut(event: event, action: .nextSessionWorkspace) {
+                if CasperSidebarNavigator.handleShortcut(direction: .next, granularity: .workspace) {
+                    return true
+                }
+            }
+            if matchConfiguredShortcut(event: event, action: .prevSessionWorkspace) {
+                if CasperSidebarNavigator.handleShortcut(direction: .previous, granularity: .workspace) {
+                    return true
+                }
+            }
+        }
+
         if matchConfiguredShortcut(event: event, action: .renameWorkspace) {
             return requestRenameWorkspaceViaCommandPalette(
                 preferredWindow: commandPaletteTargetWindow ?? event.window ?? NSApp.keyWindow ?? NSApp.mainWindow
@@ -11843,7 +11871,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         if matchConfiguredShortcut(event: event, action: .reopenClosedBrowserPanel) {
-            _ = tabManager?.reopenMostRecentlyClosedBrowserPanel()
+            // CASPER: reopen last closed thing (panel of any type or whole
+            // workspace), not just browser panels. Delete if upstream unifies.
+            _ = tabManager?.casperReopenLastClosedItem()
             return true
         }
 
