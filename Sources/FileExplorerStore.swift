@@ -214,9 +214,17 @@ final class FileExplorerNode: Identifiable {
     let name: String
     let path: String
     let isDirectory: Bool
-    var children: [FileExplorerNode]?
+    var children: [FileExplorerNode]? {
+        didSet { _sortedChildren = nil }
+    }
     var isLoading: Bool = false
     var error: String?
+
+    /// Memoized result of `sortedChildren`. `NSOutlineView` queries
+    /// `numberOfChildrenOfItem`/`child(_:ofItem:)` repeatedly during every
+    /// reload, and re-sorting the children on each call showed up as a
+    /// measurable main-thread cost. Invalidated whenever `children` is reassigned.
+    private var _sortedChildren: [FileExplorerNode]?
 
     init(name: String, path: String, isDirectory: Bool) {
         self.id = path
@@ -228,10 +236,14 @@ final class FileExplorerNode: Identifiable {
     var isExpandable: Bool { isDirectory }
 
     var sortedChildren: [FileExplorerNode]? {
-        children?.sorted { a, b in
+        if let cached = _sortedChildren { return cached }
+        guard let children else { return nil }
+        let sorted = children.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
             return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
         }
+        _sortedChildren = sorted
+        return sorted
     }
 }
 

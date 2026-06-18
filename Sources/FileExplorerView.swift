@@ -77,6 +77,12 @@ struct FileExplorerPanelView: NSViewRepresentable {
         weak var containerView: FileExplorerContainerView?
         weak var outlineView: NSOutlineView?
         private var lastRootNodeCount: Int = -1
+        /// Per-directory signature of the most recently materialized child set,
+        /// keyed by node path. Lets `refreshLoadedNodes` skip the expensive
+        /// `reloadItem(_:reloadChildren:)` for directories whose children did not
+        /// actually change (e.g. a git-status-only store update). Cleared on full
+        /// `reloadData()`.
+        private var lastChildrenSignatureByPath: [String: Int] = [:]
         private var observationCancellable: AnyCancellable?
         private var styleObserver: Any?
         private var isUpdatingOutlineProgrammatically = false
@@ -96,6 +102,9 @@ struct FileExplorerPanelView: NSViewRepresentable {
             ) { [weak self] _ in
                 guard let self, let outlineView = self.outlineView else { return }
                 let style = FileExplorerStyle.current
+                // Icons bake the prior style's size/weight; drop them so cells
+                // re-render at the new style.
+                FileExplorerIconCache.invalidate()
                 self.withProgrammaticOutlineUpdate {
                     outlineView.indentationPerLevel = style.indentation
                     outlineView.noteHeightOfRows(withIndexesChanged: IndexSet(0..<outlineView.numberOfRows))
@@ -138,6 +147,7 @@ struct FileExplorerPanelView: NSViewRepresentable {
                 if newCount != lastRootNodeCount {
                     lastRootNodeCount = newCount
                     let expandedPaths = store.expandedPaths
+                    lastChildrenSignatureByPath.removeAll(keepingCapacity: true)
                     outlineView.reloadData()
                     restoreExpansionState(expandedPaths, in: outlineView)
                 } else {
@@ -164,17 +174,63 @@ struct FileExplorerPanelView: NSViewRepresentable {
                     let shouldBeExpanded = store.expandedPaths.contains(node.path)
 
                     if shouldBeExpanded && !isCurrentlyExpanded && node.children != nil {
-                        outlineView.reloadItem(node, reloadChildren: true)
+                        reloadChildren(of: node, in: outlineView)
                         outlineView.expandItem(node)
                     } else if !shouldBeExpanded && isCurrentlyExpanded {
                         outlineView.collapseItem(node)
                     } else if node.children != nil {
-                        outlineView.reloadItem(node, reloadChildren: true)
-                        if shouldBeExpanded {
+                        // Only rebuild this directory's subtree when its child set
+                        // actually changed. This previously reloaded every expanded
+                        // directory on every store change (each git-status probe
+                        // included), rebuilding all visible cells — the dominant
+                        // main-thread hang. Decoration-only changes (git status,
+                        // colors) are reapplied by refreshVisibleDecorations below
+                        // without rebuilding the subtree.
+                        if lastChildrenSignatureByPath[node.path] != childrenSignature(of: node) {
+                            reloadChildren(of: node, in: outlineView)
+                        }
+                        if shouldBeExpanded && !isCurrentlyExpanded {
                             outlineView.expandItem(node)
                         }
                     }
                 }
+            }
+            refreshMaterializedDecorations(in: outlineView)
+        }
+
+        private func reloadChildren(of node: FileExplorerNode, in outlineView: NSOutlineView) {
+            lastChildrenSignatureByPath[node.path] = childrenSignature(of: node)
+            outlineView.reloadItem(node, reloadChildren: true)
+        }
+
+        /// Cheap structural fingerprint of a directory's immediate children.
+        /// Captures the identity, order, kind, and loading state of each child,
+        /// which is everything `reloadItem(_:reloadChildren:)` would repaint.
+        private func childrenSignature(of node: FileExplorerNode) -> Int {
+            guard let children = node.children else { return 0 }
+            var hasher = Hasher()
+            hasher.combine(children.count)
+            for child in children {
+                hasher.combine(child.path)
+                hasher.combine(child.isDirectory)
+                hasher.combine(child.isLoading)
+            }
+            return hasher.finalize()
+        }
+
+        /// Reapply per-row decorations (icon tint, name color, git status, error
+        /// state) to every materialized cell without rebuilding any subtree.
+        /// `makeIfNecessary: false` returns nil for rows that aren't realized, so
+        /// this only touches cells AppKit currently holds (visible rows plus the
+        /// scroll overscan buffer) — covering decoration-only changes, e.g. a
+        /// failed reload setting `node.error` on a row just off the visible rect,
+        /// that `childrenSignature` intentionally doesn't treat as structural.
+        private func refreshMaterializedDecorations(in outlineView: NSOutlineView) {
+            for row in 0..<outlineView.numberOfRows {
+                guard let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? FileExplorerCellView,
+                      let node = outlineView.item(atRow: row) as? FileExplorerNode
+                else { continue }
+                cell.configure(with: node, gitStatus: store.gitStatusByPath[node.path])
             }
         }
 
@@ -2117,6 +2173,76 @@ final class FileExplorerHeaderView: NSView {
     }
 }
 
+// MARK: - Icon cache
+
+/// Process-wide cache of file-row icons. `FileExplorerCellView.configure` runs
+/// for every visible cell on every outline reload, and allocating a fresh
+/// `NSImage(systemSymbolName:)` / `NSWorkspace.icon` plus a symbol configuration
+/// per cell was the dominant main-thread cost under frequent reloads (hundreds
+/// of `NSImage` allocations per reload when the git-status probe drove updates).
+/// The produced images are immutable and the per-style tint is applied on the
+/// image *view* (`contentTintColor`), so a single shared instance per
+/// (style, kind) is safe to reuse across cells. Access is main-thread only
+/// (callers assert), so no locking is required.
+private enum FileExplorerIconCache {
+    private static var cache: [String: NSImage] = [:]
+
+    /// `fileExtension` is the original-case path extension (used for the Finder
+    /// file-type icon); `isText` collapses all text files to one shared icon.
+    static func icon(
+        style: FileExplorerStyle,
+        isDirectory: Bool,
+        fileExtension: String,
+        isText: Bool
+    ) -> NSImage? {
+        let key: String
+        if style == .finder {
+            key = isDirectory ? "finder:dir" : (isText ? "finder:_text" : "finder:\(fileExtension)")
+        } else {
+            key = "\(style.rawValue):\(isDirectory ? "dir" : "file")"
+        }
+        if let cached = cache[key] { return cached }
+        let image = makeIcon(style: style, isDirectory: isDirectory, fileExtension: fileExtension, isText: isText)
+        if let image { cache[key] = image }
+        return image
+    }
+
+    /// Drop all cached icons. Invoked on a style change so icons re-render at
+    /// the new style's size/weight rather than serving the prior style's bake.
+    static func invalidate() {
+        cache.removeAll(keepingCapacity: true)
+    }
+
+    private static func makeIcon(
+        style: FileExplorerStyle,
+        isDirectory: Bool,
+        fileExtension: String,
+        isText: Bool
+    ) -> NSImage? {
+        if style == .finder {
+            let source: NSImage
+            if isDirectory {
+                source = NSWorkspace.shared.icon(for: .folder)
+            } else if isText {
+                source = NSWorkspace.shared.icon(for: .plainText)
+            } else {
+                source = NSWorkspace.shared.icon(forFileType: fileExtension)
+            }
+            // Copy before resizing: NSWorkspace returns shared instances and
+            // mutating `.size` on them would corrupt other consumers' icons. If
+            // the copy somehow fails, return the shared image untouched rather
+            // than resizing it in place.
+            guard let copy = source.copy() as? NSImage else { return source }
+            copy.size = NSSize(width: style.iconSize, height: style.iconSize)
+            return copy
+        }
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: style.iconSize, weight: style.iconWeight)
+        let symbolName = isDirectory ? "folder.fill" : "doc"
+        return NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(symbolConfig)
+    }
+}
+
 // MARK: - Cell View
 
 final class FileExplorerCellView: NSTableCellView {
@@ -2207,39 +2333,31 @@ final class FileExplorerCellView: NSTableCellView {
         iconToTextConstraint.constant = style.iconToTextSpacing
 
         if style == .finder {
-            if node.isDirectory {
-                let folderIcon = NSWorkspace.shared.icon(for: .folder)
-                folderIcon.size = NSSize(width: style.iconSize, height: style.iconSize)
-                iconView.image = folderIcon
-                iconView.contentTintColor = nil
-            } else {
-                // Some source-code extensions (e.g. .ts → public.mpeg-2-transport-stream)
-                // resolve to a media UTI in NSWorkspace. When our preview resolver knows
-                // the file is text, fall back to the generic plain-text icon so the
-                // sidebar doesn't show a misleading video/audio thumbnail.
-                let nameNS = node.name as NSString
-                let ext = nameNS.pathExtension.lowercased()
-                let fileIcon: NSImage
-                if FilePreviewKindResolver.isExplicitTextFile(filename: node.name.lowercased(), ext: ext) {
-                    fileIcon = NSWorkspace.shared.icon(for: .plainText)
-                } else {
-                    fileIcon = NSWorkspace.shared.icon(forFileType: nameNS.pathExtension)
-                }
-                fileIcon.size = NSSize(width: style.iconSize, height: style.iconSize)
-                iconView.image = fileIcon
-                iconView.contentTintColor = nil
-            }
+            // Some source-code extensions (e.g. .ts → public.mpeg-2-transport-stream)
+            // resolve to a media UTI in NSWorkspace. When our preview resolver knows
+            // the file is text, fall back to the generic plain-text icon so the
+            // sidebar doesn't show a misleading video/audio thumbnail.
+            let nameNS = node.name as NSString
+            let isText = !node.isDirectory
+                && FilePreviewKindResolver.isExplicitTextFile(
+                    filename: node.name.lowercased(),
+                    ext: nameNS.pathExtension.lowercased()
+                )
+            iconView.image = FileExplorerIconCache.icon(
+                style: style,
+                isDirectory: node.isDirectory,
+                fileExtension: nameNS.pathExtension,
+                isText: isText
+            )
+            iconView.contentTintColor = nil
         } else {
-            let symbolConfig = NSImage.SymbolConfiguration(pointSize: style.iconSize, weight: style.iconWeight)
-            if node.isDirectory {
-                iconView.image = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: nil)?
-                    .withSymbolConfiguration(symbolConfig)
-                iconView.contentTintColor = style.folderIconTint
-            } else {
-                iconView.image = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)?
-                    .withSymbolConfiguration(symbolConfig)
-                iconView.contentTintColor = style.fileIconTint
-            }
+            iconView.image = FileExplorerIconCache.icon(
+                style: style,
+                isDirectory: node.isDirectory,
+                fileExtension: "",
+                isText: false
+            )
+            iconView.contentTintColor = node.isDirectory ? style.folderIconTint : style.fileIconTint
         }
 
         if node.isLoading {
