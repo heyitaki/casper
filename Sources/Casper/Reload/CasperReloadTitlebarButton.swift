@@ -38,6 +38,9 @@ struct CasperReloadContext {
 
 struct CasperReloadTitlebarButton: View {
     let config: TitlebarControlsStyleConfig
+    /// Tint forwarded from the surrounding controls group (upstream's
+    /// TitlebarControlButton requires it).
+    let foregroundColor: Color
     /// True once the user clicks reload. Stays true until reload.sh's terminal
     /// `pkill` takes this process down (the new app launches fresh with the
     /// state reset to false). The 3-minute fallback below only reactivates the
@@ -55,6 +58,7 @@ struct CasperReloadTitlebarButton: View {
         if Self.isRendered, let ctx = CasperReloadContext.current {
             TitlebarControlButton(
                 config: config,
+                foregroundColor: foregroundColor,
                 accessibilityIdentifier: "titlebarControl.casperReload",
                 accessibilityLabel: "Reload \(ctx.displayName)",
                 action: {

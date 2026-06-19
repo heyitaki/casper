@@ -61,63 +61,108 @@ enum CasperWorkspaceTitleFilter {
 }
 
 /// Trailing accessory for the Casper compact sidebar row. Renders one of:
-/// - working    : blue animated ellipsis
+/// - working    : blue animated 3-dot ellipsis (one dot lit at a time)
 /// - needsInput : blue relative-time text
 /// - done       : secondary-colored relative-time text
 /// - none       : nothing (zero-size)
 ///
-/// Polled every 30s by `TimelineView` so the relative-time text stays fresh
-/// without subscribing to `Workspace.objectWillChange` from inside a row body
-/// (which would violate the workspace-list snapshot-boundary rule). 30s is
-/// enough granularity for the "5m"/"2h" text — finer ticks would just wake
-/// SwiftUI to recompute identical strings.
+/// Two `TimelineView` schedules, both anchored to a shared per-type epoch so
+/// every row's ticks align to the same wall-clock instants and SwiftUI can
+/// batch them into one layout pass:
+/// - relative-time text: 30s — granularity for "5m"/"2h".
+/// - working dots:       `workingTickInterval` — manual phase animation.
+///
+/// The working state used to drive `.symbolEffect(.variableColor.iterative,
+/// options: .repeating)`, which installs a continuously-running `CAAnimation`
+/// per row. With N simultaneously-working workspaces that was N independent
+/// continuous render-server animation loops, pressuring CA::Transaction::commit
+/// on the main thread and producing the foreground-only freeze (cleared by
+/// backgrounding, because macOS pauses CA composition there). The replacement
+/// is a discrete TimelineView tick at `workingTickInterval` with no underlying
+/// CAAnimation — each row produces one SwiftUI update per tick instead of a
+/// continuous animation. The shared epoch is intended to let SwiftUI batch
+/// concurrent TimelineViews into a single layout pass per tick.
 struct CasperWorkspaceActivityIndicator: View {
     let activityProvider: () -> CasperWorkspaceActivity
-    let workingFont: Font
     let timeFont: Font
     /// Color used for the relative-time text in `.done` state. `.needsInput`
     /// renders blue unless `selectedColor` is non-nil.
     let doneColor: Color
-    /// When non-nil, overrides both `.done` and `.needsInput` text colors —
-    /// used so the time text picks up the selected-row foreground (white on
-    /// the blue selection chip) instead of the unreadable blue-on-blue.
+    /// When non-nil, overrides the `.working` dots color and both `.done`
+    /// and `.needsInput` text colors — used so the indicator picks up the
+    /// selected-row foreground (white on the blue selection chip) instead of
+    /// the unreadable blue-on-blue.
     let selectedColor: Color?
 
-    /// Shared anchor for the 30-second tick across every row. Without this,
-    /// each row's `.periodic(from: .now, by: 30)` starts its clock at row
-    /// mount time, so 30 unsynchronized clocks fire ~1 tick/sec into main —
-    /// each one a separate SwiftUI layout pass. Anchoring to one type-load
-    /// timestamp aligns every row's ticks to the same wall-clock moments
-    /// (load + N×30s), letting SwiftUI batch them into a single layout pass
-    /// every 30s regardless of how many rows are visible.
-    private static let timelineEpoch: Date = Date()
+    /// Shared anchor for the 30-second relative-time tick across every row.
+    /// Without this, each row's `.periodic(from: .now, by: 30)` starts its
+    /// clock at row mount time, so 30 unsynchronized clocks fire ~1 tick/sec
+    /// into main. Anchoring to one type-load timestamp aligns every row's
+    /// ticks to the same wall-clock moments, letting SwiftUI batch them.
+    fileprivate static let timelineEpoch: Date = Date()
+
+    /// Shared anchor + period for the working-state 3-dot animation. Same
+    /// batching argument as `timelineEpoch`: every working row's TimelineView
+    /// ticks at the same wall-clock instants, so SwiftUI runs one layout
+    /// pass per tick regardless of how many rows are .working.
+    fileprivate static let workingTickInterval: TimeInterval = 0.45
 
     var body: some View {
-        TimelineView(.periodic(from: Self.timelineEpoch, by: 30)) { context in
-            let activity = activityProvider()
-            switch activity.state {
-            case .working:
-                Image(systemName: "ellipsis")
-                    .font(workingFont)
-                    .foregroundColor(.blue)
-                    .symbolEffect(.variableColor.iterative, options: .repeating)
-                    .lineLimit(1)
-            case .needsInput, .done:
-                if let date = activity.lastActivityAt {
+        let activity = activityProvider()
+        switch activity.state {
+        case .working:
+            CasperWorkingDotsIndicator(color: selectedColor ?? .blue)
+        case .needsInput, .done:
+            if let date = activity.lastActivityAt {
+                TimelineView(.periodic(from: Self.timelineEpoch, by: 30)) { context in
                     Text(CasperRelativeTime.shortString(since: date, now: context.date))
                         .font(timeFont)
                         .foregroundColor(textColor(for: activity.state))
                         .lineLimit(1)
                         .monospacedDigit()
                 }
-            case .none:
-                EmptyView()
             }
+        case .none:
+            EmptyView()
         }
     }
 
     private func textColor(for state: CasperWorkspaceActivityState) -> Color {
         if let selectedColor { return selectedColor }
         return state == .needsInput ? .blue : doneColor
+    }
+}
+
+/// Three-dot working indicator. Lights one dot at a time, cycling left→right,
+/// mimicking SF Symbols' `.variableColor.iterative` look without installing a
+/// per-row continuous `CAAnimation`. See `CasperWorkspaceActivityIndicator`
+/// header for the foreground-freeze backstory.
+private struct CasperWorkingDotsIndicator: View {
+    let color: Color
+
+    private static let dotSize: CGFloat = 3
+    private static let dotSpacing: CGFloat = 1.5
+    private static let dimOpacity: Double = 0.32
+
+    var body: some View {
+        TimelineView(
+            .periodic(
+                from: CasperWorkspaceActivityIndicator.timelineEpoch,
+                by: CasperWorkspaceActivityIndicator.workingTickInterval
+            )
+        ) { context in
+            let elapsed = context.date.timeIntervalSince(
+                CasperWorkspaceActivityIndicator.timelineEpoch
+            )
+            let phase = Int(elapsed / CasperWorkspaceActivityIndicator.workingTickInterval) % 3
+            HStack(spacing: Self.dotSpacing) {
+                ForEach(0..<3, id: \.self) { idx in
+                    Circle()
+                        .fill(color)
+                        .opacity(idx == phase ? 1.0 : Self.dimOpacity)
+                        .frame(width: Self.dotSize, height: Self.dotSize)
+                }
+            }
+        }
     }
 }
