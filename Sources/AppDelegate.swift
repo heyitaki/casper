@@ -1601,6 +1601,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationWillResignActive(_ notification: Notification) {
         guard !isTerminatingApp else { return }
         clearConfiguredShortcutChordState()
+        // CASPER: leaving the app drops ⌘1…9 group-selected mode so a ⌘W after
+        // returning closes the focused session, not the whole group.
+        tabManager?.casperGroupSelectionActive = false
         _ = saveSessionSnapshot(includeScrollback: false)
     }
 
@@ -4952,7 +4955,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard sourceWorkspace.panels.isEmpty else { return }
         guard sourceManager.tabs.contains(where: { $0.id == sourceWorkspace.id }) else { return }
 
-        if sourceManager.tabs.count > 1 {
+        // CASPER: a cross-window panel drag that empties the only workspace
+        // leaves the source window empty (matches the other close paths) instead
+        // of closing it. `closeWorkspace` allows an empty tab list in Casper.
+        if sourceManager.tabs.count > 1 || sourceManager.casperAllowsEmptyWindow {
             sourceManager.closeWorkspace(sourceWorkspace)
         } else {
             _ = closeMainWindow(windowId: sourceWindowId)
@@ -11172,6 +11178,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return false
         }
 
+        // CASPER: ⌘1…9 group-selected mode is consumed by the next ⌘W (close the
+        // whole group). Any OTHER keystroke means the user moved on to a session,
+        // so leave the mode and let ⌘W close the focused session again. Only
+        // ⌘1…9 (enters/re-enters the mode) and ⌘W (consumes it, handled below)
+        // preserve it — this catches in-terminal command keys like ⌘C/⌘V/⌘F that
+        // a plain non-Command check would miss. Selection changes clear the flag
+        // separately via `selectedTabId.didSet`. Delete with group selection.
+        if CasperBuildEnvironment.isBranded,
+           tabManager?.casperGroupSelectionActive == true {
+            let maintainsGroupMode = matchConfiguredShortcut(event: event, action: .closeTab)
+                || numberedConfiguredShortcutDigit(event: event, action: .selectWorkspaceByNumber) != nil
+            if !maintainsGroupMode {
+                tabManager?.casperGroupSelectionActive = false
+            }
+        }
+
         // When the notifications popover is open, Escape should dismiss it immediately.
         if flags.isEmpty, event.keyCode == 53, titlebarAccessoryController.dismissNotificationsPopoverIfShown() {
             return true
@@ -11526,6 +11548,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // The Close Tab shortcut must close the focused panel even if first-responder
         // momentarily lags on a browser NSTextView during split focus transitions.
         if matchConfiguredShortcut(event: event, action: .closeTab) {
+            // CASPER: in ⌘1…9 group-selected mode, ⌘W closes the whole active
+            // group (batched, ⌘⇧T-reopenable). The mode clears the moment the
+            // user touches a session, after which ⌘W closes the focused panel
+            // again. Delete with the group-selection feature.
+            if CasperBuildEnvironment.isBranded,
+               tabManager?.casperGroupSelectionActive == true,
+               CasperSidebarNavigator.closeActiveGroup() {
+                return true
+            }
             let targetWindow = resolvedShortcutEventWindow(event) ?? NSApp.keyWindow ?? NSApp.mainWindow
             let routedManager = preferredMainWindowContextForShortcutRouting(event: event)?.tabManager ?? tabManager
             // Browser popup windows primarily intercept the configured Close Tab shortcut
@@ -11587,6 +11618,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Always consume the event when the digit matches to prevent Ghostty's
         // goto_tab fallback from creating a new window when the index is out of bounds.
         if let digit = numberedConfiguredShortcutDigit(event: event, action: .selectWorkspaceByNumber) {
+            // CASPER: in the branded compact sidebar, ⌘1…9 selects a workspace
+            // GROUP (repo folder), not a single workspace by creation index —
+            // ⌘1 = the top (most-recent) group, repeat-press toggles its
+            // collapse. Gate keeps stock cmux ⌘1…9 behavior unchanged. Delete
+            // if upstream adds first-class sidebar group selection.
+            if CasperBuildEnvironment.isBranded {
+                _ = CasperSidebarNavigator.selectGroup(digit: digit)
+                return true
+            }
             if let manager = tabManager,
                let targetIndex = WorkspaceShortcutMapper.workspaceIndex(forDigit: digit, workspaceCount: manager.tabs.count) {
 #if DEBUG

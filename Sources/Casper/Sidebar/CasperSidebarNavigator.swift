@@ -48,22 +48,21 @@ enum CasperSidebarNavigator {
         )
     }
 
-    /// Flattened, displayed row order. Mirrors `workspaceRows(renderContext:)`
-    /// in ContentView, including the two things that change what's actually on
-    /// screen: the active search filter (the query persists when the user
-    /// clicks away from the field without pressing Escape) and collapsed folder
-    /// groups. Both are applied here so ⌘↑/↓ can never land on a row that isn't
-    /// rendered.
-    static func orderedEntries(
+    /// Displayed group order. Mirrors `workspaceRows(renderContext:)` in
+    /// ContentView up to (but not including) the collapse filter: same activity
+    /// sort, entry build, search filter, and grouping. Collapsed groups are
+    /// KEPT here because group-level selection (⌘1…9) must be able to target a
+    /// collapsed group and expand it.
+    static func orderedGroups(
         tabManager: TabManager,
         notificationStore: TerminalNotificationStore
-    ) -> [CasperSidebarPanelEntry] {
+    ) -> [CasperWorkspaceGroup] {
         let tabs = tabManager.tabs
         guard !tabs.isEmpty else { return [] }
         // KEEP IN SYNC with `VerticalTabsSidebar.workspaceRows(renderContext:)` in
-        // ContentView — same activity sort, entry build, search filter, grouping,
-        // and collapse handling. If the view's ordering changes, mirror it here or
-        // ⌘↑/↓ will land on a row that isn't where the user sees the selection.
+        // ContentView — same activity sort, entry build, search filter, and
+        // grouping. If the view's ordering changes, mirror it here or ⌘↑/↓ and
+        // ⌘1…9 will land on rows/groups that aren't where the user sees them.
         let activityByID: [UUID: CasperWorkspaceActivity] = Dictionary(
             uniqueKeysWithValues: tabs.map { tab in
                 (tab.id, CasperAgentActivity.activity(for: tab, notificationStore: notificationStore))
@@ -96,12 +95,116 @@ enum CasperSidebarNavigator {
             entries,
             query: CasperSidebarSearchQueryStore.shared.query
         )
+        return CasperWorkspaceGroupResolver.groups(from: filtered)
+    }
+
+    /// Flattened, displayed row order. The two things that change what's
+    /// actually on screen — the active search filter (the query persists when
+    /// the user clicks away from the field without pressing Escape) and
+    /// collapsed folder groups — are both applied so ⌘↑/↓ can never land on a
+    /// row that isn't rendered.
+    static func orderedEntries(
+        tabManager: TabManager,
+        notificationStore: TerminalNotificationStore
+    ) -> [CasperSidebarPanelEntry] {
         // Drop rows inside collapsed groups, matching the view (which collapses
         // only named groups — see `CasperWorkspaceGroupSection`).
         let collapsedKeys = CasperWorkspaceGroupCollapseStore.shared.collapsedKeys
-        return CasperWorkspaceGroupResolver.groups(from: filtered)
+        return orderedGroups(tabManager: tabManager, notificationStore: notificationStore)
             .filter { $0.displayName.isEmpty || !collapsedKeys.contains($0.key) }
             .flatMap(\.entries)
+    }
+
+    /// ⌘1…9 entry point: select the Nth displayed workspace group. Group order
+    /// is most-recent-first (⌘1 = top group). Selecting a group focuses its
+    /// top-most (most-recent) session — which makes that group the "active"
+    /// group (the sidebar tints it) — and expands it if collapsed. Pressing the
+    /// same digit again, while its group is already active, toggles the group
+    /// collapsed/open and keeps the current session selected.
+    @discardableResult
+    static func selectGroup(digit: Int) -> Bool {
+        guard let tabManager = AppDelegate.shared?.tabManager,
+              let notificationStore = AppDelegate.shared?.notificationStore else {
+            return false
+        }
+        let groups = orderedGroups(tabManager: tabManager, notificationStore: notificationStore)
+        guard !groups.isEmpty else { return false }
+        // Reuse the workspace-number index mapping (1–8 fixed, 9 = last) for
+        // groups so the digit semantics match the badge the header shows.
+        guard let index = WorkspaceShortcutMapper.workspaceIndex(
+            forDigit: digit,
+            workspaceCount: groups.count
+        ) else { return false }
+        let target = groups[index]
+
+        if target.key == activeGroupKey(in: groups, tabManager: tabManager) {
+            // Already the active group → toggle collapse, keep selection. The
+            // unnamed "Other" bucket has no header and can't collapse, so no-op.
+            if !target.displayName.isEmpty {
+                CasperWorkspaceGroupCollapseStore.shared.toggle(target.key)
+            }
+            tabManager.casperGroupSelectionActive = true
+            return true
+        }
+
+        // Not yet active → reveal (if collapsed) and focus the group's top
+        // session so the whole group reads as selected.
+        if !target.displayName.isEmpty {
+            CasperWorkspaceGroupCollapseStore.shared.expand(target.key)
+        }
+        guard let top = target.entries.first else { return false }
+        tabManager.focusTab(top.key.workspaceId, surfaceId: top.key.panelId)
+        // Set AFTER focusTab, whose selectedTabId change clears the flag via
+        // didSet, so group-selected mode wins.
+        tabManager.casperGroupSelectionActive = true
+        return true
+    }
+
+    /// ⌘W in group-selected mode: close every session in the active group as
+    /// one batched, ⌘⇧T-reopenable action. Returns false (no-op) when no group
+    /// is active. Delete with group selection.
+    @discardableResult
+    static func closeActiveGroup() -> Bool {
+        guard let tabManager = AppDelegate.shared?.tabManager,
+              let notificationStore = AppDelegate.shared?.notificationStore else {
+            return false
+        }
+        let groups = orderedGroups(tabManager: tabManager, notificationStore: notificationStore)
+        guard let activeKey = activeGroupKey(in: groups, tabManager: tabManager),
+              let group = groups.first(where: { $0.key == activeKey }) else {
+            return false
+        }
+        var seen = Set<UUID>()
+        let workspaceIds = group.entries.compactMap { entry in
+            seen.insert(entry.key.workspaceId).inserted ? entry.key.workspaceId : nil
+        }
+        guard !workspaceIds.isEmpty else { return false }
+        // Clear before dispatching: the group is being torn down, so there's no
+        // group to stay "selected" in.
+        tabManager.casperGroupSelectionActive = false
+        tabManager.casperCloseWorkspaceGroup(workspaceIds: workspaceIds)
+        return true
+    }
+
+    /// Key of the group that currently holds the active session (selected
+    /// workspace + focused panel). `nil` when nothing matches.
+    static func activeGroupKey(
+        in groups: [CasperWorkspaceGroup],
+        tabManager: TabManager
+    ) -> String? {
+        guard let selectedTabId = tabManager.selectedTabId else { return nil }
+        let focusedPanelId = tabManager.focusedPanelId(for: selectedTabId)
+        // Prefer the exact focused (workspace, panel) row; fall back to any row
+        // of the selected workspace (panels of one workspace can span groups).
+        if let focusedPanelId,
+           let group = groups.first(where: { group in
+               group.entries.contains { $0.key.workspaceId == selectedTabId && $0.key.panelId == focusedPanelId }
+           }) {
+            return group.key
+        }
+        return groups.first { group in
+            group.entries.contains { $0.key.workspaceId == selectedTabId }
+        }?.key
     }
 
     @discardableResult

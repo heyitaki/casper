@@ -8422,6 +8422,7 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
                 surfaceId: terminalSurface.id
             )
         }
+        casperLeaveGroupSelectionMode()
         guard let surface = surface else { return }
         let eventPoint = convert(event.locationInWindow, from: nil)
         trackMousePointIfUsable(eventPoint)
@@ -9023,8 +9024,19 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
     }
 #endif
 
+    // CASPER: any pointer interaction with a terminal leaves ⌘1…9
+    // group-selected mode so ⌘W closes this session, not the whole group.
+    // Click-only — never fires during keyboard selectGroup. Delete with the
+    // group-selection feature.
+    private func casperLeaveGroupSelectionMode() {
+        if let tm = AppDelegate.shared?.tabManager, tm.casperGroupSelectionActive {
+            tm.casperGroupSelectionActive = false
+        }
+    }
+
     override func rightMouseDown(with event: NSEvent) {
         guard let surface = surface else { return }
+        casperLeaveGroupSelectionMode()
         if !ghostty_surface_mouse_captured(surface) {
             requestPointerFocusRecovery()
             super.rightMouseDown(with: event)

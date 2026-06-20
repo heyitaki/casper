@@ -2840,7 +2840,9 @@ struct ContentView: View {
                 var didRecover = false
 
                 // Ensure there is at least one workspace.
-                if tabManager.tabs.isEmpty {
+                // CASPER: an empty window is a valid state (the user closed the
+                // last session), so don't force a replacement workspace.
+                if tabManager.tabs.isEmpty, !CasperBuildEnvironment.isBranded {
                     tabManager.addWorkspace()
                     didRecover = true
                 }
@@ -9816,6 +9818,15 @@ struct VerticalTabsSidebar: View {
         let withinGroupSpacing: CGFloat = 1
         let betweenGroupSpacing: CGFloat = 14
         let collapsedKeys = workspaceGroupCollapseStore.collapsedKeys
+        // CASPER: the group holding the active session (selected workspace +
+        // focused panel) gets a light-blue "selected group" tint. Read straight
+        // off the already-stamped entry flags rather than re-scanning — this is
+        // a per-status-publish render body. ⌘1…9 sets the selection via
+        // CasperSidebarNavigator.selectGroup, which moves this key here.
+        let activeSessionGroupKey: String? = isCasperCompactSidebar
+            ? (panelEntries.first { $0.isWorkspaceSelected && $0.isPanelFocused }?.groupKey
+                ?? panelEntries.first { $0.isWorkspaceSelected }?.groupKey)
+            : nil
         // Short-circuit on `isCasperCompactSidebar` so the non-compact path
         // doesn't tie this `workspaceRows` body to the modifier monitor —
         // the non-compact `workspaceRow(_:)` helper reads the monitor itself
@@ -9866,10 +9877,27 @@ struct VerticalTabsSidebar: View {
             ForEach(Array(groups.enumerated()), id: \.element.id) { offset, group in
                 let isCollapsed = !group.displayName.isEmpty
                     && collapsedKeys.contains(group.key)
+                let groupShortcutDigit = isCasperCompactSidebar
+                    ? WorkspaceShortcutMapper.digitForWorkspace(at: offset, workspaceCount: groups.count)
+                    : nil
+                let isGroupSelected = isCasperCompactSidebar
+                    && activeSessionGroupKey == group.key
+                // Distinct workspace ids in display order — top (most-recent)
+                // first — for the batched "Close All" / ⌘⇧T group reopen.
+                var seenGroupWorkspaceIds = Set<UUID>()
+                let groupWorkspaceIds: [UUID] = group.entries.compactMap { entry in
+                    seenGroupWorkspaceIds.insert(entry.key.workspaceId).inserted ? entry.key.workspaceId : nil
+                }
                 CasperWorkspaceGroupSection(
                     displayName: group.displayName,
                     isCollapsed: isCollapsed,
+                    isSelected: isGroupSelected,
                     withinGroupSpacing: withinGroupSpacing,
+                    shortcutDigit: groupShortcutDigit,
+                    shortcutModifierSymbol: renderContext.workspaceNumberShortcut.numberedDigitHintPrefix,
+                    showsShortcutHint: liveShowsModifierShortcutHints || alwaysShowShortcutHints,
+                    shortcutHintXOffset: renderContext.tabItemSettings.sidebarShortcutHintXOffset,
+                    shortcutHintYOffset: renderContext.tabItemSettings.sidebarShortcutHintYOffset,
                     onToggle: { [weak workspaceGroupCollapseStore] in
                         workspaceGroupCollapseStore?.toggle(group.key)
                     },
@@ -9880,35 +9908,18 @@ struct VerticalTabsSidebar: View {
                         // directory by passing nil rather than an empty string.
                         let workingDirectory = group.key.isEmpty ? nil : group.key
                         _ = tabManager.addWorkspace(workingDirectory: workingDirectory)
+                    },
+                    onCloseAll: { [weak tabManager] in
+                        tabManager?.casperCloseWorkspaceGroup(workspaceIds: groupWorkspaceIds)
                     }
                 ) {
                     ForEach(group.entries, id: \.id) { entry in
                         if isCasperCompactSidebar {
                             let ownsWorkspaceAnchor = firstEntryIdsPerWorkspace.contains(entry.id)
                             let workspaceId = entry.key.workspaceId
-                            // Numbered ⌘N selects the workspace (panels share
-                            // a workspace), so only the anchor-owning row gets
-                            // the badge. Digit derives from the workspace's
-                            // position in `tabManager.tabs` — same source the
-                            // shortcut handler uses — not the activity-sorted
-                            // sidebar order.
-                            let workspaceShortcutDigit: Int? = ownsWorkspaceAnchor
-                                ? renderContext.tabIndexById[workspaceId].flatMap { workspaceIndex in
-                                    WorkspaceShortcutMapper.digitForWorkspace(
-                                        at: workspaceIndex,
-                                        workspaceCount: renderContext.workspaceCount
-                                    )
-                                }
-                                : nil
                             let rowActions = casperSidebarRowActions(for: entry, workspaceLookup: workspacesById)
                             CasperSidebarPanelRow(
                                 entry: entry,
-                                workspaceShortcutDigit: workspaceShortcutDigit,
-                                workspaceShortcutModifierSymbol: renderContext.workspaceNumberShortcut.numberedDigitHintPrefix,
-                                showsModifierShortcutHints: liveShowsModifierShortcutHints,
-                                alwaysShowShortcutHints: alwaysShowShortcutHints,
-                                shortcutHintXOffset: renderContext.tabItemSettings.sidebarShortcutHintXOffset,
-                                shortcutHintYOffset: renderContext.tabItemSettings.sidebarShortcutHintYOffset,
                                 onSelect: { [weak tabManager] in
                                     #if DEBUG
                                     cmuxDebugLog(

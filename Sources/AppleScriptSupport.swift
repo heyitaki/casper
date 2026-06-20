@@ -469,7 +469,10 @@ final class ScriptTab: NSObject {
             return nil
         }
 
-        if state.tabManager.tabs.count > 1 {
+        // CASPER: closing the last workspace empties the window (matching the
+        // in-app close paths) instead of closing it. Stock cmux closes the
+        // window. Delete if upstream adds an empty-window state.
+        if state.tabManager.casperAllowsEmptyWindow || state.tabManager.tabs.count > 1 {
             state.tabManager.closeWorkspace(workspace)
             return nil
         }
@@ -620,7 +623,9 @@ final class ScriptTerminal: NSObject {
         }
 
         if workspace.panels.count == 1 {
-            if state.tabManager.tabs.count > 1 {
+            // CASPER: closing the last panel of the last workspace empties the
+            // window instead of closing it (matches the in-app close paths).
+            if state.tabManager.casperAllowsEmptyWindow || state.tabManager.tabs.count > 1 {
                 state.tabManager.closeWorkspace(workspace)
                 return nil
             }

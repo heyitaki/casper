@@ -418,7 +418,12 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
     nonisolated static func == (lhs: CasperWorkspaceGroupHeader, rhs: CasperWorkspaceGroupHeader) -> Bool {
         lhs.displayName == rhs.displayName &&
         lhs.isCollapsed == rhs.isCollapsed &&
-        lhs.showsAddWorkspaceButton == rhs.showsAddWorkspaceButton
+        lhs.showsAddWorkspaceButton == rhs.showsAddWorkspaceButton &&
+        lhs.shortcutDigit == rhs.shortcutDigit &&
+        lhs.shortcutModifierSymbol == rhs.shortcutModifierSymbol &&
+        lhs.showsShortcutHint == rhs.showsShortcutHint &&
+        lhs.shortcutHintXOffset == rhs.shortcutHintXOffset &&
+        lhs.shortcutHintYOffset == rhs.shortcutHintYOffset
     }
 
     let displayName: String
@@ -428,14 +433,38 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
     /// is over the header or any workspace row inside the group, so the
     /// affordance also reveals while the user is on their way to or from a row.
     let showsAddWorkspaceButton: Bool
+    /// `⌘N` digit for this group's display position (1 = top group). `nil`
+    /// suppresses the badge — groups outside the 1–9 mapping.
+    let shortcutDigit: Int?
+    /// Prefix glyph(s) for the modifier — e.g. `⌘`. Sourced from the
+    /// `selectWorkspaceByNumber` binding so a custom modifier renders correctly.
+    let shortcutModifierSymbol: String
+    /// True when the modifier is held (or the always-show debug toggle is on)
+    /// — gates the shortcut pill.
+    let showsShortcutHint: Bool
+    /// Debug-menu nudges for the shortcut pill (Debug > Shortcut Hints).
+    let shortcutHintXOffset: Double
+    let shortcutHintYOffset: Double
     let onToggle: () -> Void
     let onAddWorkspace: () -> Void
+    /// Closes every session in this group as one batched action (restorable in
+    /// a single ⌘⇧T). Built in ContentView where `TabManager` is in scope.
+    let onCloseAll: () -> Void
     /// Fired by the trailing `+` icon's own hover tracker. The parent ORs this
     /// with the section-wide hover so moving the cursor directly over the icon
     /// (which can race the parent VStack's `.onHover(false)` when SwiftUI
     /// reroutes hover to a nested interactive child) doesn't make the icon
     /// flicker away under the pointer.
     let onAddButtonHoverChange: (Bool) -> Void
+
+    private var shortcutLabel: String? {
+        guard let shortcutDigit else { return nil }
+        return "\(shortcutModifierSymbol)\(shortcutDigit)"
+    }
+
+    private var showsBadge: Bool {
+        showsShortcutHint && shortcutLabel != nil
+    }
 
     var body: some View {
         HStack(spacing: 4) {
@@ -485,7 +514,9 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
                 // 16pt frame's) lines up with the workspace row's time column.
                 .frame(width: 16, height: 16, alignment: .trailing)
                 .contentShape(Rectangle())
-                .opacity(showsAddWorkspaceButton ? 1 : 0)
+                // Hide the `+` while the shortcut badge is showing so they
+                // don't overlap in the same trailing column.
+                .opacity(showsAddWorkspaceButton && !showsBadge ? 1 : 0)
                 .animation(.easeInOut(duration: 0.12), value: showsAddWorkspaceButton)
                 .onHover { onAddButtonHoverChange($0) }
                 .onTapGesture { onAddWorkspace() }
@@ -510,6 +541,54 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
         .padding(.top, 4)
         .padding(.bottom, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // ⌘N badge for this group, shown while the modifier is held. Trailing
+        // overlay so it shares the `+` column without widening the header.
+        .overlay(alignment: .trailing) {
+            if showsBadge, let shortcutLabel {
+                ShortcutHintPill(text: shortcutLabel, fontSize: 10, emphasis: 0.9)
+                    .offset(
+                        x: ShortcutHintDebugSettings.clamped(shortcutHintXOffset),
+                        y: ShortcutHintDebugSettings.clamped(shortcutHintYOffset)
+                    )
+                    .padding(.trailing, 10)
+                    .allowsHitTesting(false)
+                    .shortcutHintTransition()
+            }
+        }
+        .shortcutHintVisibilityAnimation(value: showsBadge)
+        // CASPER: right-click (two-finger) context menu for the whole group.
+        .contextMenu { contextMenuItems }
+    }
+
+    @ViewBuilder
+    private var contextMenuItems: some View {
+        Button {
+            onAddWorkspace()
+        } label: {
+            Label(
+                String(localized: "sidebar.group.menu.newSession", defaultValue: "New Session"),
+                systemImage: "plus"
+            )
+        }
+        Button {
+            onToggle()
+        } label: {
+            Label(
+                isCollapsed
+                    ? String(localized: "sidebar.group.menu.expand", defaultValue: "Expand Group")
+                    : String(localized: "sidebar.group.menu.collapse", defaultValue: "Collapse Group"),
+                systemImage: isCollapsed ? "chevron.down" : "chevron.right"
+            )
+        }
+        Divider()
+        Button(role: .destructive) {
+            onCloseAll()
+        } label: {
+            Label(
+                String(localized: "sidebar.group.menu.closeAll", defaultValue: "Close All Sessions"),
+                systemImage: "xmark"
+            )
+        }
     }
 }
 
@@ -519,9 +598,19 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
 struct CasperWorkspaceGroupSection<Content: View>: View {
     let displayName: String
     let isCollapsed: Bool
+    /// True when this group holds the active session — the whole group gets a
+    /// light-blue tint while the active session row keeps the stronger
+    /// selection highlight on top.
+    let isSelected: Bool
     let withinGroupSpacing: CGFloat
+    let shortcutDigit: Int?
+    let shortcutModifierSymbol: String
+    let showsShortcutHint: Bool
+    let shortcutHintXOffset: Double
+    let shortcutHintYOffset: Double
     let onToggle: () -> Void
     let onAddWorkspace: () -> Void
+    let onCloseAll: () -> Void
     @ViewBuilder let content: () -> Content
 
     @State private var isHoveringSection: Bool = false
@@ -536,8 +625,14 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
                     displayName: displayName,
                     isCollapsed: isCollapsed,
                     showsAddWorkspaceButton: isHovering,
+                    shortcutDigit: shortcutDigit,
+                    shortcutModifierSymbol: shortcutModifierSymbol,
+                    showsShortcutHint: showsShortcutHint,
+                    shortcutHintXOffset: shortcutHintXOffset,
+                    shortcutHintYOffset: shortcutHintYOffset,
                     onToggle: onToggle,
                     onAddWorkspace: onAddWorkspace,
+                    onCloseAll: onCloseAll,
                     onAddButtonHoverChange: { newValue in
                         guard isHoveringAddButton != newValue else { return }
                         isHoveringAddButton = newValue
@@ -550,6 +645,13 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
                 content()
             }
         }
+        // CASPER: light-blue "selected group" tint behind the header + rows.
+        // Inset 6 on each side so it lines up with the row selection pills.
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color(nsColor: .controlAccentColor).opacity(0.12) : Color.clear)
+                .padding(.horizontal, 6)
+        )
         .contentShape(Rectangle())
         .overlay {
             CasperHoverTracker { hovering in
@@ -605,36 +707,10 @@ struct CasperSidebarPanelRow: View, Equatable {
     // Delete if upstream introduces Observation-tracked sidebar rows that
     // skip closure-driven invalidation.
     nonisolated static func == (lhs: CasperSidebarPanelRow, rhs: CasperSidebarPanelRow) -> Bool {
-        lhs.entry == rhs.entry &&
-        lhs.workspaceShortcutDigit == rhs.workspaceShortcutDigit &&
-        lhs.workspaceShortcutModifierSymbol == rhs.workspaceShortcutModifierSymbol &&
-        lhs.showsModifierShortcutHints == rhs.showsModifierShortcutHints &&
-        lhs.alwaysShowShortcutHints == rhs.alwaysShowShortcutHints &&
-        lhs.shortcutHintXOffset == rhs.shortcutHintXOffset &&
-        lhs.shortcutHintYOffset == rhs.shortcutHintYOffset
+        lhs.entry == rhs.entry
     }
 
     let entry: CasperSidebarPanelEntry
-    /// `⌘N` digit to display when the user is holding the modifier. Set only
-    /// on the first panel row per workspace (the anchor-owning row) since the
-    /// numbered shortcut selects the workspace, not a specific panel. `nil`
-    /// suppresses the badge — non-anchor rows and rows whose workspace falls
-    /// outside the 1–9 mapping.
-    let workspaceShortcutDigit: Int?
-    /// Prefix glyph(s) for the modifier — e.g. `⌘`. Provided by the
-    /// `selectWorkspaceByNumber` keyboard-shortcut binding so a custom
-    /// modifier (Ctrl, Option) renders the right symbol.
-    let workspaceShortcutModifierSymbol: String
-    /// Live `isModifierPressed` from the sidebar's shared modifier monitor.
-    /// Combined with the alwaysShow override below to decide whether to
-    /// render the pill.
-    let showsModifierShortcutHints: Bool
-    let alwaysShowShortcutHints: Bool
-    /// Live debug-menu nudge for the shortcut pill (Debug > Shortcut Hints).
-    /// Mirrors the `TabItemView` plumbing so both sidebar paths respond to
-    /// the same slider; defaults to 0 in production.
-    let shortcutHintXOffset: Double
-    let shortcutHintYOffset: Double
     let onSelect: () -> Void
     let onClose: () -> Void
     /// Right-click context-menu action bundle. Closures only — excluded from ==.
@@ -651,20 +727,9 @@ struct CasperSidebarPanelRow: View, Equatable {
         Color(nsColor: sidebarSelectedWorkspaceBackgroundNSColor(for: colorScheme))
     }
 
-    private var workspaceShortcutLabel: String? {
-        guard let workspaceShortcutDigit else { return nil }
-        return "\(workspaceShortcutModifierSymbol)\(workspaceShortcutDigit)"
-    }
-
-    private var showsWorkspaceShortcutHint: Bool {
-        (showsModifierShortcutHints || alwaysShowShortcutHints) && workspaceShortcutLabel != nil
-    }
-
     var body: some View {
         let activity = entry.activity
         let selected = isSelected
-        let shortcutLabel = workspaceShortcutLabel
-        let showsHint = showsWorkspaceShortcutHint
         // Outer Button (vs. `.onTapGesture`) so the inner close Button cleanly
         // consumes its own click — SwiftUI on macOS nests plain Buttons with
         // inner-wins hit routing.
@@ -715,25 +780,6 @@ struct CasperSidebarPanelRow: View, Equatable {
                     selectedColor: selected ? Color.white : nil
                 )
                 .fixedSize(horizontal: true, vertical: false)
-                // Pill shares the activity column's trailing anchor so it
-                // doesn't widen the row and shove the title left when Cmd
-                // is held — matches the non-compact `TabItemView` pattern.
-                .opacity(showsHint ? 0 : 1)
-                .overlay(alignment: .trailing) {
-                    if showsHint, let shortcutLabel {
-                        ShortcutHintPill(
-                            text: shortcutLabel,
-                            fontSize: 10,
-                            emphasis: selected ? 1.0 : 0.9
-                        )
-                        .offset(
-                            x: ShortcutHintDebugSettings.clamped(shortcutHintXOffset),
-                            y: ShortcutHintDebugSettings.clamped(shortcutHintYOffset)
-                        )
-                        .shortcutHintTransition()
-                    }
-                }
-                .shortcutHintVisibilityAnimation(value: showsHint)
             }
             .padding(.leading, 4)
             .padding(.trailing, 10)
@@ -938,6 +984,14 @@ final class CasperWorkspaceGroupCollapseStore: ObservableObject {
         } else {
             collapsedKeys.insert(key)
         }
+        defaults.set(Array(collapsedKeys).sorted(), forKey: Self.defaultsKey)
+    }
+
+    /// Expand a collapsed group (no-op if already expanded). Used by ⌘1…9 group
+    /// selection so targeting a collapsed group reveals its sessions.
+    func expand(_ key: String, defaults: UserDefaults = .standard) {
+        guard collapsedKeys.contains(key) else { return }
+        collapsedKeys.remove(key)
         defaults.set(Array(collapsedKeys).sorted(), forKey: Self.defaultsKey)
     }
 }

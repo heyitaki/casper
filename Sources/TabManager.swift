@@ -590,6 +590,11 @@ struct RecentlyClosedBrowserStack {
 enum CasperClosedItem {
     case panel(ClosedBrowserPanelRestoreSnapshot)
     case workspace(snapshot: SessionWorkspaceSnapshot, insertionIndex: Int)
+    // A whole workspace GROUP closed at once (sidebar "Close All Sessions").
+    // One ⌘⇧T reopens every member, so the group restores as a single undo
+    // step rather than N separate ones. `items` are in display order (top
+    // session first) so the reopened group re-selects its top session.
+    case workspaceGroup(items: [(snapshot: SessionWorkspaceSnapshot, insertionIndex: Int)])
 }
 
 #if DEBUG
@@ -966,6 +971,12 @@ class TabManager: ObservableObject {
         }
         didSet {
             guard selectedTabId != oldValue else { return }
+            // CASPER: any selection change moves focus onto a session, so leave
+            // ⌘1…9 group-selected mode (⌘W closes the focused session again).
+            // `selectGroup` re-sets the flag right after the focusTab it
+            // triggers, so group selection survives. Plain var, no view observes
+            // it; guarded to flip only on a real transition.
+            if casperGroupSelectionActive { casperGroupSelectionActive = false }
             sentryBreadcrumb("workspace.switch", data: [
                 "tabCount": tabs.count
             ])
@@ -1026,6 +1037,18 @@ class TabManager: ObservableObject {
     // upstream adds a unified reopen-closed stack.
     private var casperRecentlyClosedItems: [CasperClosedItem] = []
     private let casperRecentlyClosedItemsCapacity = 20
+    // CASPER: set while a "Close All Sessions" batch runs so the per-workspace
+    // close path doesn't push N individual undo entries — the batch records one
+    // `.workspaceGroup` entry instead. Delete with the group-close feature.
+    private var casperSuppressClosedItemRecording = false
+    // CASPER: true while ⌘1…9 group-selected mode is active (a group is
+    // highlighted and its top session is shown). In this mode ⌘W closes the
+    // whole group; the moment the user moves on to a session the mode clears
+    // and ⌘W closes the focused panel again. Cleared by any selection change
+    // (`selectedTabId.didSet`, covering row clicks / arrow-nav / palette) and by
+    // any keystroke other than ⌘1…9 / ⌘W (AppDelegate key handler). Plain var —
+    // no view observes it. Delete with the group-selection feature.
+    var casperGroupSelectionActive = false
     private let initialWorkspaceGitProbeQueue = DispatchQueue(
         label: "com.cmux.initial-workspace-git-probe",
         qos: .utility
@@ -4234,8 +4257,15 @@ class TabManager: ObservableObject {
         return trimmed
     }
 
+    // CASPER: in branded builds, closing the final workspace leaves an empty
+    // window (empty sidebar + blank editor) instead of closing it; the user
+    // opens a new session or quits explicitly. Named so the close paths read by
+    // intent. Delete if upstream adds an empty-window state.
+    var casperAllowsEmptyWindow: Bool { CasperBuildEnvironment.isBranded }
+
     func closeWorkspace(_ workspace: Workspace) {
-        guard tabs.count > 1 else { return }
+        // Stock cmux keeps ≥1 workspace per window; Casper allows zero.
+        guard casperAllowsEmptyWindow || tabs.count > 1 else { return }
         sentryBreadcrumb("workspace.close", data: ["tabCount": tabs.count - 1])
         clearWorkspaceGitProbes(workspaceId: workspace.id)
         clearWorkspacePullRequestTracking(workspaceId: workspace.id)
@@ -4247,7 +4277,8 @@ class TabManager: ObservableObject {
         // original tab index. `teardownAllPanels()` bypasses the bonsplit close
         // delegate, so this does not double-capture the panels. Delete with the
         // reopen-last-closed feature.
-        if let closingIndex = tabs.firstIndex(where: { $0.id == workspace.id }) {
+        if !casperSuppressClosedItemRecording,
+           let closingIndex = tabs.firstIndex(where: { $0.id == workspace.id }) {
             casperRecordClosedWorkspace(workspace, insertionIndex: closingIndex)
         }
         workspace.teardownAllPanels()
@@ -4259,11 +4290,17 @@ class TabManager: ObservableObject {
             tabs.remove(at: index)
 
             if selectedTabId == workspace.id {
-                // Keep the "focused index" stable when possible:
-                // - If we closed workspace i and there is still a workspace at index i, focus it (the one that moved up).
-                // - Otherwise (we closed the last workspace), focus the new last workspace (i-1).
-                let newIndex = min(index, max(0, tabs.count - 1))
-                selectedTabId = tabs[newIndex].id
+                if tabs.isEmpty {
+                    // CASPER: closed the last workspace — leave the window empty
+                    // with no selection (blank editor + empty sidebar).
+                    selectedTabId = nil
+                } else {
+                    // Keep the "focused index" stable when possible:
+                    // - If we closed workspace i and there is still a workspace at index i, focus it (the one that moved up).
+                    // - Otherwise (we closed the last workspace), focus the new last workspace (i-1).
+                    let newIndex = min(index, max(0, tabs.count - 1))
+                    selectedTabId = tabs[newIndex].id
+                }
             }
         }
         publishCmuxWorkspaceClosed(workspace)
@@ -4275,6 +4312,10 @@ class TabManager: ObservableObject {
     func detachWorkspace(tabId: UUID) -> Workspace? {
         guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return nil }
         clearWorkspaceGitProbes(workspaceId: tabId)
+        // Mirror closeWorkspace's per-workspace cleanup so a cross-window move
+        // doesn't leak PR tracking / notification entries in the source manager.
+        clearWorkspacePullRequestTracking(workspaceId: tabId)
+        AppDelegate.shared?.notificationStore?.clearNotifications(forTabId: tabId)
         sidebarSelectedWorkspaceIds.remove(tabId)
 
         let removed = tabs.remove(at: index)
@@ -4283,6 +4324,12 @@ class TabManager: ObservableObject {
         lastFocusedPanelByTab.removeValue(forKey: removed.id)
 
         if tabs.isEmpty {
+            // CASPER: leave the source window empty (matches closing the last
+            // session) instead of forcing a replacement workspace.
+            if casperAllowsEmptyWindow {
+                selectedTabId = nil
+                return removed
+            }
             // The UI assumes each window always has at least one workspace.
             _ = addWorkspace()
             return removed
@@ -4617,7 +4664,9 @@ class TabManager: ObservableObject {
     }
 
     private func closeWorkspacesPlan(for workspaces: [Workspace]) -> CloseWorkspacesPlan {
-        let willCloseWindow = workspaces.count == tabs.count
+        // CASPER: closing every workspace empties the window instead of closing
+        // it, so the confirmation shouldn't say "Close window?".
+        let willCloseWindow = !casperAllowsEmptyWindow && workspaces.count == tabs.count
         let title = willCloseWindow
             ? String(localized: "dialog.closeWindow.title", defaultValue: "Close window?")
             : String(localized: "dialog.closeWorkspaces.title", defaultValue: "Close workspaces?")
@@ -4658,7 +4707,9 @@ class TabManager: ObservableObject {
         requiresConfirmation: Bool = true,
         source: CloseConfirmationSource = .workspace
     ) {
-        let willCloseWindow = tabs.count <= 1
+        // CASPER: closing the last workspace empties the window instead of
+        // closing it, so it's not a window-close here.
+        let willCloseWindow = !casperAllowsEmptyWindow && tabs.count <= 1
         let needsCloseConfirmation = workspaceNeedsConfirmClose(workspace)
         if requiresConfirmation,
            shouldConfirmClose(requiresConfirmation: needsCloseConfirmation, source: source),
@@ -4669,7 +4720,11 @@ class TabManager: ObservableObject {
            ) {
             return
         }
-        if tabs.count <= 1 {
+        if casperAllowsEmptyWindow {
+            // CASPER: never close the window from a workspace close — leave it
+            // empty (vs. the stock `performClose` below).
+            closeWorkspace(workspace)
+        } else if tabs.count <= 1 {
             // Last workspace in this window: match Close Workspace shortcut behavior.
             if let window {
                 window.performClose(nil)
@@ -4866,7 +4921,12 @@ class TabManager: ObservableObject {
         // Child-exit on the last panel should collapse the workspace, matching explicit close
         // semantics (and close the window when it was the last workspace).
         if tab.panels.count <= 1 {
-            if tabs.count <= 1 {
+            if casperAllowsEmptyWindow {
+                // CASPER: shell-exit on the last session empties the window
+                // rather than closing it (closeWorkspace clears notifications
+                // and allows an empty tab list).
+                closeWorkspace(tab)
+            } else if tabs.count <= 1 {
                 if let app = AppDelegate.shared {
                     app.notificationStore?.clearNotifications(forTabId: tabId)
                     app.closeMainWindowContainingTabId(tabId)
@@ -6096,6 +6156,41 @@ class TabManager: ObservableObject {
         casperPushClosedItem(.workspace(snapshot: snapshot, insertionIndex: insertionIndex))
     }
 
+    /// CASPER: close every workspace in a sidebar group ("Close All Sessions")
+    /// as ONE undoable batch. Snapshots all members up front, runs them through
+    /// the normal multi-close confirmation path under the suppress flag (so each
+    /// close doesn't push its own undo entry), then records a single
+    /// `.workspaceGroup` entry containing exactly the workspaces that actually
+    /// closed — so one ⌘⇧T reopens the whole group. Delete with the group-close
+    /// feature.
+    func casperCloseWorkspaceGroup(workspaceIds: [UUID]) {
+        let restorableIndex = RestorableAgentSessionIndex.load()
+        // Snapshot before any teardown, preserving the passed display order.
+        var pending: [(id: UUID, snapshot: SessionWorkspaceSnapshot, index: Int)] = []
+        for id in workspaceIds {
+            guard let index = tabs.firstIndex(where: { $0.id == id }) else { continue }
+            pending.append((
+                id,
+                tabs[index].sessionSnapshot(includeScrollback: true, restorableAgentIndex: restorableIndex),
+                index
+            ))
+        }
+        guard !pending.isEmpty else { return }
+
+        let wasSuppressing = casperSuppressClosedItemRecording
+        casperSuppressClosedItemRecording = true
+        closeWorkspacesWithConfirmation(workspaceIds, allowPinned: false)
+        casperSuppressClosedItemRecording = wasSuppressing
+
+        // Keep only workspaces that actually closed (excludes pinned skips and a
+        // cancelled confirmation, which leave them in `tabs`).
+        let closed = pending.filter { entry in !tabs.contains(where: { $0.id == entry.id }) }
+        guard !closed.isEmpty else { return }
+        casperPushClosedItem(.workspaceGroup(
+            items: closed.map { (snapshot: $0.snapshot, insertionIndex: $0.index) }
+        ))
+    }
+
     /// ⌘⇧T entry point: reopen whatever was closed most recently — a single
     /// panel (any type) into its workspace best-effort, or a whole workspace
     /// with its full layout + agent auto-resume. Pops past entries that can no
@@ -6108,6 +6203,8 @@ class TabManager: ObservableObject {
                 if casperReopenClosedPanel(snapshot) { return true }
             case .workspace(let snapshot, let insertionIndex):
                 if casperReopenClosedWorkspace(snapshot, insertionIndex: insertionIndex) { return true }
+            case .workspaceGroup(let items):
+                if casperReopenClosedWorkspaceGroup(items) { return true }
             }
         }
         return false
@@ -6179,10 +6276,15 @@ class TabManager: ObservableObject {
         return workspace.casperRestoreClosedPanel(from: panelSnapshot, inPane: focusedPane)
     }
 
-    private func casperReopenClosedWorkspace(
+    /// Recreate a closed workspace from its snapshot and insert it at (clamped)
+    /// `insertionIndex`. Mirrors the full session-restore tail so the reopened
+    /// workspace gets its git branch/dirty badge immediately. Selection +
+    /// focus-notification are left to the caller so batch reopens select once.
+    @discardableResult
+    private func casperInsertClosedWorkspace(
         _ snapshot: SessionWorkspaceSnapshot,
         insertionIndex: Int
-    ) -> Bool {
+    ) -> Workspace? {
         let ordinal = Self.nextPortOrdinal
         Self.nextPortOrdinal += 1
         let workspace = Workspace(
@@ -6195,21 +6297,54 @@ class TabManager: ObservableObject {
         wireClosedBrowserTracking(for: workspace)
         let index = max(0, min(insertionIndex, tabs.count))
         tabs.insert(workspace, at: index)
-        selectedTabId = workspace.id
-        // CASPER: mirror the full session-restore tail so the reopened workspace
-        // gets its git branch/dirty badge populated immediately (not only after
-        // the ~60s background poll) and focus/socket listeners see the switch.
         for terminalPanel in workspace.panels.values.compactMap({ $0 as? TerminalPanel }) {
             scheduleInitialWorkspaceGitMetadataRefreshIfPossible(
                 workspaceId: workspace.id,
                 panelId: terminalPanel.id
             )
         }
+        return workspace
+    }
+
+    private func casperPostFocusNotification(for workspace: Workspace) {
         NotificationCenter.default.post(
             name: .ghosttyDidFocusTab,
             object: nil,
             userInfo: [GhosttyNotificationKey.tabId: workspace.id]
         )
+    }
+
+    private func casperReopenClosedWorkspace(
+        _ snapshot: SessionWorkspaceSnapshot,
+        insertionIndex: Int
+    ) -> Bool {
+        guard let workspace = casperInsertClosedWorkspace(snapshot, insertionIndex: insertionIndex) else {
+            return false
+        }
+        selectedTabId = workspace.id
+        casperPostFocusNotification(for: workspace)
+        return true
+    }
+
+    /// Reopen a whole closed group in one ⌘⇧T. Inserts members in ascending
+    /// original index so positions reconstruct left-to-right, then selects the
+    /// group's top session (first in display order, i.e. `items[0]`).
+    private func casperReopenClosedWorkspaceGroup(
+        _ items: [(snapshot: SessionWorkspaceSnapshot, insertionIndex: Int)]
+    ) -> Bool {
+        guard !items.isEmpty else { return false }
+        let ordered = items.enumerated().sorted { $0.element.insertionIndex < $1.element.insertionIndex }
+        var reopenedByOriginalOffset: [Int: Workspace] = [:]
+        for (originalOffset, item) in ordered {
+            if let workspace = casperInsertClosedWorkspace(item.snapshot, insertionIndex: item.insertionIndex) {
+                reopenedByOriginalOffset[originalOffset] = workspace
+            }
+        }
+        guard let topSession = reopenedByOriginalOffset[0] ?? reopenedByOriginalOffset.values.first else {
+            return false
+        }
+        selectedTabId = topSession.id
+        casperPostFocusNotification(for: topSession)
         return true
     }
 

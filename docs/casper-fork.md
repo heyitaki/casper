@@ -297,6 +297,32 @@ Four related sidebar/session features.
 - Deletion condition:
   - Delete if upstream adds first-class sidebar row keyboard nav, per-session row ordering/context menus, and a unified reopen-closed (panel + workspace) stack.
 
+### Sidebar group selection (⌘1…9), group context menu + batched close/reopen
+
+Repurposes the numbered shortcut to operate on folder groups instead of single workspaces, and gives groups the same right-click affordances sessions already have.
+
+- Casper-only files:
+  - `Sources/Casper/Sidebar/CasperSidebarNavigator.swift` — extracted `orderedGroups()` (sorted+filtered, NOT collapse-filtered) under the existing `orderedEntries()`; added `selectGroup(digit:)` and `activeGroupKey(in:tabManager:)`. ⌘1 = top (most-recent) group; selecting a group expands it (if collapsed) and focuses its top session; pressing the same digit again (group already active) toggles its collapse and keeps the selection.
+  - `Sources/Casper/Sidebar/CasperWorkspaceGroups.swift` — `CasperWorkspaceGroupHeader` gained the ⌘N badge pill (moved off session rows), an `onCloseAll` closure, and a `.contextMenu` (New Session / Collapse-Expand / Close All Sessions); `CasperWorkspaceGroupSection` gained the light-blue "selected group" tint (`isSelected`) drawn behind header+rows; `CasperSidebarPanelRow` lost all its per-row ⌘N digit/pill plumbing (now group-level); `CasperWorkspaceGroupCollapseStore.expand(_:)` added.
+- Upstream files modified (all `// CASPER:`-marked):
+  - `Sources/AppDelegate.swift` — the `selectWorkspaceByNumber` dispatch is gated: in branded Casper builds the digit routes to `CasperSidebarNavigator.selectGroup(digit:)`; stock cmux keeps `selectTab(at:)`.
+  - `Sources/ContentView.swift` — `workspaceRows` computes the active-session group key, the per-group display digit (from the group's display offset), the distinct group workspace ids, and an `onCloseAll` closure; passes the new params to `CasperWorkspaceGroupSection`; the `CasperSidebarPanelRow` call site dropped the removed digit args.
+  - `Sources/TabManager.swift` — `CasperClosedItem.workspaceGroup(items:)` case + `casperSuppressClosedItemRecording` flag (guards the per-workspace record in `closeWorkspace`); `casperCloseWorkspaceGroup(workspaceIds:)` snapshots all members, runs them through `closeWorkspacesWithConfirmation` under the flag, then pushes ONE group undo entry; `casperInsertClosedWorkspace` extracted from `casperReopenClosedWorkspace`; `casperReopenClosedWorkspaceGroup` reopens the whole group in one ⌘⇧T (re-selects the top session).
+  - `Resources/Localizable.xcstrings` — `sidebar.group.menu.*` strings (en/ja).
+- Notes:
+  - The "selected group" highlight is derived, not stored: it's the group containing the active session (selected workspace + focused panel), so clicking or arrowing into another group's session moves the tint with no extra state — no snapshot-boundary violation.
+  - Group close reuses the existing multi-close confirmation; only the undo bookkeeping is batched.
+- Deletion condition:
+  - Delete if upstream adds first-class sidebar group selection, group context menus, and batched group close/reopen.
+
+#### ⌘W group-close mode + empty-window state (follow-up)
+
+Two behaviors layered onto group selection.
+
+- **⌘W closes the active group while in group-selected mode.** `TabManager.casperGroupSelectionActive` (plain var, no view observes it) is set true by `CasperSidebarNavigator.selectGroup` (after its `focusTab` call, so the mode wins) and cleared the moment the user moves on to a session. Clear hooks: `selectedTabId.didSet` (covers every selection change — sidebar row click, ⌘↑/↓ arrow-nav, palette select, `selectWorkspace`/`selectTab`); the AppDelegate global key handler for any keystroke other than ⌘1…9 / ⌘W (covers typing AND in-terminal command keys like ⌘C/⌘V/⌘F); `GhosttyTerminalView.mouseDown` (clicking into a session — fires only on real clicks, never during keyboard selectGroup); and `applicationWillResignActive` (switching away from the app). The `.closeTab` (⌘W) dispatch checks the flag and routes to `CasperSidebarNavigator.closeActiveGroup()` (→ `casperCloseWorkspaceGroup`) instead of `closeCurrentPanelWithConfirmation()`.
+- **Closing the last workspace empties the window** (empty sidebar + blank editor) instead of closing it. Centralised behind `TabManager.casperAllowsEmptyWindow` (== `CasperBuildEnvironment.isBranded`). Gated edits: `closeWorkspace` guard now `casperAllowsEmptyWindow || tabs.count > 1` and sets `selectedTabId = nil` when `tabs` empties; `closeWorkspaceIfRunningProcess` routes the last-workspace case to `closeWorkspace` (not `window.performClose`) and reports `willCloseWindow = false`; `closeWorkspacesPlan` (multi-close dialog) suppresses the "Close window?" wording; the child-exit path (`closePanelAfterChildExited`) and `detachWorkspace` (leaves the source window empty, `selectedTabId = nil`) do the same; ContentView's onAppear startup-recovery skips the `addWorkspace()` refill; the two AppleScript close handlers (`AppleScriptSupport.swift`) also honor it. The app already renders an empty `tabs`/nil selection safely (no crashes — sidebar/editor/title/socket are all nil-guarded). New sessions come from ⌘T / the always-visible titlebar new-workspace button / command palette. This also fixes the earlier "Close All on a whole-window group orphaned the ⌘⇧T entry" edge, since the window no longer closes. NOT changed: session restore still opens one fresh workspace on cold launch (a safety net for empty/corrupt restores), so an empty window does not persist across a relaunch.
+- Deletion condition: delete with the group-selection feature; restore the `tabs.count > 1` invariant and `window.performClose` last-workspace behavior (drop `casperAllowsEmptyWindow`) if upstream doesn't adopt an empty-window state.
+
 ## Merge conflict notes
 
 These upstream files are touched by fork patches and tend to drift upstream. Re-check each one when running `git merge upstream/main`:
@@ -310,14 +336,15 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
   - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), the workspace grouping patch (`workspaceRows` now wraps rows in a per-group `ForEach`), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
 - `Sources/TabManager.swift`
   - Touched by the workspace grouping patch (`moveTabToTopForNotification` now bumps within the workspace's repo group). Stock cmux unconditionally bumps to global top of unpinned.
+  - Also touched by the group-selection follow-up: the empty-window gates in `closeWorkspace` (`guard … || tabs.count > 1`, `selectedTabId = nil` on empty), `closeWorkspaceIfRunningProcess` (Casper branch → `closeWorkspace`), and `closePanelAfterChildExited`; plus the `casperGroupSelectionActive` clear at the top of `focusTab`. Re-check these if upstream reworks the workspace-close or focus paths.
 - `Sources/AppDelegate.swift`
-  - Touched by patch 2 (sidebar reveal mouse-down handlers, `cmux_sendEvent` intercept, `runSidebarRevealEdgeMouseDownLoop`), patch 3 (new-workspace context menu shortcut display), and the restore-time agent warmup patch (two one-line `CasperStartupAgentWarmup.applyStartupWarmup` calls in `applySessionWindowSnapshot` and `createMainWindow`).
+  - Touched by patch 2 (sidebar reveal mouse-down handlers, `cmux_sendEvent` intercept, `runSidebarRevealEdgeMouseDownLoop`), patch 3 (new-workspace context menu shortcut display), the restore-time agent warmup patch (two one-line `CasperStartupAgentWarmup.applyStartupWarmup` calls in `applySessionWindowSnapshot` and `createMainWindow`), the group-selection patches (gated ⌘1…9 dispatch → `CasperSidebarNavigator.selectGroup`), and the group-selection follow-up (`.closeTab` ⌘W routes to `closeActiveGroup` in group mode; a non-Command keystroke clears `casperGroupSelectionActive` in the global key handler).
 - `Sources/BackgroundWorkspacePrimeCoordinator.swift`
   - Touched by the restore-time agent warmup patch (`Policy.maxConcurrentPrimes` cap + `withTaskGroup` parallel driver in `primePendingBackgroundWorkspaces`). If upstream rewrites the coordinator's pending-loop, re-validate the bounded-parallelism rewrite.
 - `Sources/WindowDecorationsController.swift`
   - Touched by the minimal-mode window-movable policy (one-line call to `CasperMinimalModeWindowMovable.apply` inside `apply(to:)`). Re-add if upstream rewrites the decorations apply path.
 - `Sources/GhosttyTerminalView.swift`
-  - Touched by patches 3 (rightMouseDown mouse-capture handling, menu wiring, removed legacy selectors), 4 (New Tab right-click item), and 7 (fish `XDG_DATA_DIRS` injection). High-traffic file — re-validate each region after upstream merges.
+  - Touched by patches 3 (rightMouseDown mouse-capture handling, menu wiring, removed legacy selectors), 4 (New Tab right-click item), 7 (fish `XDG_DATA_DIRS` injection), and the group-selection follow-up (a one-line `casperGroupSelectionActive` clear in `mouseDown`). High-traffic file — re-validate each region after upstream merges.
 - `Sources/TerminalWindowPortal.swift`, `Sources/BrowserWindowPortal.swift`
   - Touched by patch 2 (`hitTest()` pass-through bands for sidebar reveal). Hot path for typing latency — preserve the `isPointerEvent` guard and the interior-point early-reject.
 - `Sources/Update/UpdateTitlebarAccessory.swift`, `Sources/Update/MinimalModeSidebarControls.swift`, `Sources/WindowChromeMetrics.swift`
