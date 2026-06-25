@@ -2512,12 +2512,6 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         isPanelFocused: Bool = false,
         isPinned: Bool = false,
         activity: CasperWorkspaceActivity = CasperWorkspaceActivity(state: .none, lastActivityAt: nil),
-        workspaceShortcutDigit: Int? = 1,
-        workspaceShortcutModifierSymbol: String = "⌘",
-        showsModifierShortcutHints: Bool = false,
-        alwaysShowShortcutHints: Bool = false,
-        shortcutHintXOffset: Double = 0,
-        shortcutHintYOffset: Double = 0,
         onSelect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {}
     ) -> CasperSidebarPanelRow {
@@ -2538,14 +2532,17 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         )
         return CasperSidebarPanelRow(
             entry: entry,
-            workspaceShortcutDigit: workspaceShortcutDigit,
-            workspaceShortcutModifierSymbol: workspaceShortcutModifierSymbol,
-            showsModifierShortcutHints: showsModifierShortcutHints,
-            alwaysShowShortcutHints: alwaysShowShortcutHints,
-            shortcutHintXOffset: shortcutHintXOffset,
-            shortcutHintYOffset: shortcutHintYOffset,
             onSelect: onSelect,
-            onClose: onClose
+            onClose: onClose,
+            actions: CasperSidebarRowActions(
+                hasWorkingDirectory: false,
+                onRename: {},
+                onRevealInFinder: {},
+                onOpenWorkingDirectory: {},
+                onCopyPath: {},
+                onTogglePin: {},
+                onDuplicate: {}
+            )
         )
     }
 
@@ -2569,17 +2566,6 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             ),
             "Activity changes must re-render the trailing indicator"
         )
-        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(workspaceShortcutDigit: 2))
-        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(workspaceShortcutDigit: nil))
-        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(workspaceShortcutModifierSymbol: "⌃"))
-        XCTAssertNotEqual(
-            base,
-            makeCasperSidebarPanelRow(showsModifierShortcutHints: true),
-            "Cmd-hold hint visibility must invalidate the row or pills never appear"
-        )
-        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(alwaysShowShortcutHints: true))
-        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(shortcutHintXOffset: 4))
-        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(shortcutHintYOffset: 4))
     }
 
     func testNotificationsPopoverVisibilityIsScopedByWindow() {

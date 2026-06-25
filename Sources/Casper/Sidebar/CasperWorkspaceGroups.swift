@@ -719,17 +719,42 @@ struct CasperSidebarPanelRow: View, Equatable {
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHoveringRow: Bool = false
 
-    private var isSelected: Bool {
-        entry.isWorkspaceSelected && entry.isPanelFocused
+    /// Three-level selection highlight for the row.
+    /// `.selected` = the focused panel of the selected workspace (solid blue).
+    /// `.sibling` = another panel in that same workspace (lighter blue, so the
+    /// panels of a multi-panel workspace read as one group). `.none` = unrelated.
+    private enum Highlight: Equatable {
+        case selected
+        case sibling
+        case none
+    }
+
+    private var highlight: Highlight {
+        guard entry.isWorkspaceSelected else { return .none }
+        return entry.isPanelFocused ? .selected : .sibling
     }
 
     private var selectedBackground: Color {
         Color(nsColor: sidebarSelectedWorkspaceBackgroundNSColor(for: colorScheme))
     }
 
+    /// Lighter wash of the selection blue for sibling panels in the same
+    /// workspace. Same hue as the active row so they visibly belong together.
+    private var siblingBackground: Color {
+        selectedBackground.opacity(0.22)
+    }
+
     var body: some View {
         let activity = entry.activity
-        let selected = isSelected
+        let highlight = self.highlight
+        let selected = highlight == .selected
+        let rowBackground: Color = {
+            switch highlight {
+            case .selected: return selectedBackground
+            case .sibling: return siblingBackground
+            case .none: return Color.clear
+            }
+        }()
         // Outer Button (vs. `.onTapGesture`) so the inner close Button cleanly
         // consumes its own click — SwiftUI on macOS nests plain Buttons with
         // inner-wins hit routing.
@@ -786,7 +811,7 @@ struct CasperSidebarPanelRow: View, Equatable {
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(selected ? selectedBackground : Color.clear)
+                    .fill(rowBackground)
             )
             .padding(.horizontal, 6)
             .contentShape(Rectangle())
