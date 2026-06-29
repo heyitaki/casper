@@ -674,12 +674,16 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
 struct CasperSidebarRowActions {
     /// Gates the cwd-dependent items (reveal / open / copy / duplicate).
     let hasWorkingDirectory: Bool
+    /// Gates the "Fork Session" item — true only when a forkable (claude/codex)
+    /// agent is live on this panel. See `CasperForkSession.forkableKind`.
+    let canForkAgent: Bool
     let onRename: () -> Void
     let onRevealInFinder: () -> Void
     let onOpenWorkingDirectory: () -> Void
     let onCopyPath: () -> Void
     let onTogglePin: () -> Void
     let onDuplicate: () -> Void
+    let onForkSession: () -> Void
 }
 
 // MARK: - Panel row view
@@ -849,6 +853,18 @@ struct CasperSidebarPanelRow: View, Equatable {
                     : String(localized: "sidebar.session.menu.pin", defaultValue: "Pin Workspace"),
                 systemImage: entry.isPinned ? "pin.slash" : "pin"
             )
+        }
+        if actions.canForkAgent {
+            Divider()
+            // CASPER: branch the live claude/codex agent into a new workspace.
+            Button {
+                actions.onForkSession()
+            } label: {
+                Label(
+                    String(localized: "sidebar.session.menu.fork", defaultValue: "Fork Session"),
+                    systemImage: "arrow.triangle.branch"
+                )
+            }
         }
         if actions.hasWorkingDirectory {
             Divider()

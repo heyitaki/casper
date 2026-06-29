@@ -303,6 +303,7 @@
 		CA5840160000000000000003 /* Casper/Sidebar/CasperSidebarNavigator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840160000000000000004 /* Casper/Sidebar/CasperSidebarNavigator.swift */; };
 		CA5840170000000000000001 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840170000000000000002 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift */; };
 		CA5840180000000000000001 /* Casper/Sidebar/CasperAgentActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840180000000000000002 /* Casper/Sidebar/CasperAgentActivity.swift */; };
+		CA5840210000000000000001 /* Casper/Sidebar/CasperForkSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840210000000000000002 /* Casper/Sidebar/CasperForkSession.swift */; };
 		CA5840200000000000000001 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840200000000000000002 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift */; };
 		CA5840190000000000000001 /* Casper/Sidebar/CasperSidebarSearchField.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840190000000000000002 /* Casper/Sidebar/CasperSidebarSearchField.swift */; };
 		CA5840060000000000000001 /* Casper/Window/CasperMinimalModeWindowMovable.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840060000000000000002 /* Casper/Window/CasperMinimalModeWindowMovable.swift */; };
@@ -825,6 +826,7 @@
 		CA5840160000000000000004 /* Casper/Sidebar/CasperSidebarNavigator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperSidebarNavigator.swift; sourceTree = "<group>"; };
 		CA5840170000000000000002 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperCompactWorkspaceRow.swift; sourceTree = "<group>"; };
 		CA5840180000000000000002 /* Casper/Sidebar/CasperAgentActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperAgentActivity.swift; sourceTree = "<group>"; };
+		CA5840210000000000000002 /* Casper/Sidebar/CasperForkSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperForkSession.swift; sourceTree = "<group>"; };
 		CA5840200000000000000002 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperSidebarActivityRefresher.swift; sourceTree = "<group>"; };
 		CA5840190000000000000002 /* Casper/Sidebar/CasperSidebarSearchField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperSidebarSearchField.swift; sourceTree = "<group>"; };
 		CA5840060000000000000002 /* Casper/Window/CasperMinimalModeWindowMovable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Window/CasperMinimalModeWindowMovable.swift; sourceTree = "<group>"; };
@@ -1188,6 +1190,7 @@
 				CA5840160000000000000004 /* Casper/Sidebar/CasperSidebarNavigator.swift */,
 				CA5840170000000000000002 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift */,
 				CA5840180000000000000002 /* Casper/Sidebar/CasperAgentActivity.swift */,
+				CA5840210000000000000002 /* Casper/Sidebar/CasperForkSession.swift */,
 				CA5840200000000000000002 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift */,
 				CA5840190000000000000002 /* Casper/Sidebar/CasperSidebarSearchField.swift */,
 				CA58400E0000000000000002 /* Casper/Search/CasperFindUIConfig.swift */,
@@ -1887,6 +1890,7 @@
 				CA5840160000000000000003 /* Casper/Sidebar/CasperSidebarNavigator.swift in Sources */,
 				CA5840170000000000000001 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift in Sources */,
 				CA5840180000000000000001 /* Casper/Sidebar/CasperAgentActivity.swift in Sources */,
+				CA5840210000000000000001 /* Casper/Sidebar/CasperForkSession.swift in Sources */,
 				CA5840200000000000000001 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift in Sources */,
 				CA5840190000000000000001 /* Casper/Sidebar/CasperSidebarSearchField.swift in Sources */,
 				CA58400E0000000000000001 /* Casper/Search/CasperFindUIConfig.swift in Sources */,

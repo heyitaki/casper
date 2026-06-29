@@ -46,6 +46,108 @@ enum AgentResumeCommandBuilder {
         )
     }
 
+    // CASPER: Fork support for the sidebar "Fork Session" action. Builds the
+    // shell command that branches a prior agent session into a *new* session,
+    // leaving the original untouched. Only claude + codex are forkable today —
+    // claude forks via the `--fork-session` flag on resume, codex via its own
+    // `fork` subcommand. Reuses the resume machinery (env/cwd/launcher/arg
+    // preservation) so auth selection and the claudeTeams launcher survive.
+    // Delete if upstream adds first-class session forking.
+    static func forkShellCommand(
+        kind: RestorableAgentKind,
+        sessionId: String,
+        launchCommand: AgentLaunchCommandSnapshot?,
+        workingDirectory: String?,
+        includeWorkingDirectoryPrefix: Bool = true
+    ) -> String? {
+        guard !sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let argv = forkArguments(
+                  kind: kind,
+                  sessionId: sessionId,
+                  launchCommand: launchCommand
+              ),
+              !argv.isEmpty else {
+            return nil
+        }
+        return assembleShellCommand(
+            kind: kind,
+            argv: argv,
+            launchCommand: launchCommand,
+            workingDirectory: workingDirectory,
+            registrationOverride: nil,
+            includeWorkingDirectoryPrefix: includeWorkingDirectoryPrefix
+        )
+    }
+
+    // CASPER: per-kind fork argv. nil for any non-forkable kind. Delete with
+    // `forkShellCommand` if upstream adds first-class session forking.
+    private static func forkArguments(
+        kind: RestorableAgentKind,
+        sessionId: String,
+        launchCommand: AgentLaunchCommandSnapshot?
+    ) -> [String]? {
+        switch kind {
+        case .claude:
+            // claude --resume <id> [preserved] --fork-session. Reuses the
+            // resume argv so the claudeTeams launcher path is honored.
+            guard let resume = resumeArguments(
+                kind: .claude,
+                sessionId: sessionId,
+                launchCommand: launchCommand,
+                workingDirectory: nil,
+                customRegistration: nil
+            ) else {
+                return nil
+            }
+            return resume + ["--fork-session"]
+        case .codex:
+            // codex fork [preserved] <id> — same argv as resume with the
+            // subcommand swapped (see codexSessionArguments).
+            return codexSessionArguments(
+                subcommand: "fork",
+                sessionId: sessionId,
+                launchCommand: launchCommand
+            )
+        default:
+            return nil
+        }
+    }
+
+    // CASPER: codex's resume and fork argv differ only by the subcommand
+    // token, so build both here to keep them in lockstep. The launch sanitizer
+    // peels a leading `resume <id>` but hard-blocks a leading `fork` (it's in
+    // codexPolicy.nonRestorableCommands), so strip a leading `fork <id>`
+    // ourselves first — otherwise a session whose own launch was `codex fork …`
+    // (e.g. produced by this very feature) could be neither resumed nor forked.
+    // Delete the `fork` handling if upstream teaches the sanitizer to treat
+    // `fork` like `resume`.
+    private static func codexSessionArguments(
+        subcommand: String,
+        sessionId: String,
+        launchCommand: AgentLaunchCommandSnapshot?
+    ) -> [String]? {
+        let metadata = agentMetadata(kind: .codex, registration: nil)
+        let original = commandParts(
+            launchCommand: launchCommand,
+            fallbackExecutable: metadata.executable
+        )
+        var tail = original.tail
+        if tail.first == "fork" {
+            tail.removeFirst()
+            if let next = tail.first, !next.hasPrefix("-") {
+                tail.removeFirst()
+            }
+        }
+        guard let sanitizerKey = metadata.sanitizerKey,
+              let preserved = AgentLaunchSanitizer.preservedArguments(
+                  kind: sanitizerKey,
+                  args: tail
+              ) else {
+            return nil
+        }
+        return [original.executable, subcommand] + preserved + [sessionId]
+    }
+
     /// Builds the shell command for *starting a fresh agent* (no resume). Used
     /// as a fallback when the recorded session is orphaned (e.g. Claude's
     /// transcript file is missing). Preserves cwd + environment from the
@@ -234,11 +336,15 @@ enum AgentResumeCommandBuilder {
                 sessionId: sessionId
             )
         case .codex:
-            let original = commandParts(launchCommand: launchCommand, fallbackExecutable: metadata.executable)
-            guard let sanitizerKey = metadata.sanitizerKey,
-                  let preserved = AgentLaunchSanitizer.preservedArguments(kind: sanitizerKey, args: original.tail)
-            else { return nil }
-            return [original.executable, "resume"] + preserved + [sessionId]
+            // CASPER: routed through the shared codex argv builder so resume
+            // and fork stay in sync and a `codex fork …`-launched session
+            // remains resumable. Revert to the inline form if forkArguments is
+            // removed.
+            return codexSessionArguments(
+                subcommand: "resume",
+                sessionId: sessionId,
+                launchCommand: launchCommand
+            )
         case .opencode:
             let original = commandParts(launchCommand: launchCommand, fallbackExecutable: metadata.executable)
             guard let sanitizerKey = metadata.sanitizerKey,

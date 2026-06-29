@@ -9670,14 +9670,18 @@ struct VerticalTabsSidebar: View {
     ) -> CasperSidebarRowActions {
         let workspaceId = entry.key.workspaceId
         let panelId = entry.key.panelId
-        let cwd = casperSessionWorkingDirectory(
-            workspaceId: workspaceId,
-            panelId: panelId,
-            workspaceLookup: workspaceLookup
-        )
+        let workspace = workspaceLookup[workspaceId]
+        let cwd = casperSessionWorkingDirectory(workspace: workspace, panelId: panelId)
         let hasCwd = !(cwd?.isEmpty ?? true)
+        // CASPER: cheap, render-time check (no disk I/O) — only claude/codex
+        // panels with a live agent expose "Fork Session". The authoritative
+        // session lookup happens lazily on click in CasperForkSession.
+        let canFork = workspace.map {
+            CasperForkSession.forkableKind(for: $0, panelId: panelId) != nil
+        } ?? false
         return CasperSidebarRowActions(
             hasWorkingDirectory: hasCwd,
+            canForkAgent: canFork,
             onRename: { [weak tabManager] in
                 tabManager?.focusTab(workspaceId, surfaceId: panelId)
                 AppDelegate.shared?.requestCommandPaletteRenameTab(source: "casper.sidebar.contextMenu")
@@ -9701,6 +9705,15 @@ struct VerticalTabsSidebar: View {
             onDuplicate: { [weak tabManager] in
                 guard let tabManager, let cwd, !cwd.isEmpty else { return }
                 _ = tabManager.addWorkspace(workingDirectory: cwd)
+            },
+            onForkSession: { [weak tabManager] in
+                guard let tabManager else { return }
+                CasperForkSession.forkSession(
+                    tabManager: tabManager,
+                    workspaceId: workspaceId,
+                    panelId: panelId,
+                    fallbackCwd: cwd
+                )
             }
         )
     }
@@ -9708,11 +9721,10 @@ struct VerticalTabsSidebar: View {
     /// Working directory for a session row: the panel's own reported cwd,
     /// falling back to the workspace's current directory.
     private func casperSessionWorkingDirectory(
-        workspaceId: UUID,
-        panelId: UUID,
-        workspaceLookup: [UUID: Workspace]
+        workspace: Workspace?,
+        panelId: UUID
     ) -> String? {
-        guard let workspace = workspaceLookup[workspaceId] else {
+        guard let workspace else {
             return nil
         }
         let panelDir = workspace.panelDirectories[panelId]?

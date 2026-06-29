@@ -332,4 +332,121 @@ final class RestorableAgentNonInteractiveTests: XCTestCase {
             fileManager: .default
         ))
     }
+
+    // CASPER: "Fork Session" sidebar action builds its command through
+    // AgentResumeCommandBuilder.forkShellCommand. These assert the per-agent
+    // fork CLI shape (claude --fork-session flag vs codex `fork` subcommand)
+    // and that non-forkable kinds yield nil.
+    func testForkShellCommandClaudeAppendsForkSessionFlag() {
+        let command = AgentResumeCommandBuilder.forkShellCommand(
+            kind: .claude,
+            sessionId: "sess-1234",
+            launchCommand: AgentLaunchCommandSnapshot(
+                launcher: "claude",
+                executablePath: "/opt/bin/claude",
+                arguments: ["/opt/bin/claude"],
+                workingDirectory: "/work/repo",
+                environment: nil,
+                capturedAt: nil,
+                source: "test"
+            ),
+            workingDirectory: "/work/repo"
+        )
+        let unwrapped = try? XCTUnwrap(command)
+        XCTAssertNotNil(unwrapped)
+        guard let unwrapped else { return }
+        XCTAssertTrue(unwrapped.contains("--resume"), unwrapped)
+        XCTAssertTrue(unwrapped.contains("sess-1234"), unwrapped)
+        XCTAssertTrue(unwrapped.contains("--fork-session"), unwrapped)
+        XCTAssertTrue(unwrapped.contains("cd '/work/repo' &&"), unwrapped)
+    }
+
+    func testForkShellCommandCodexUsesForkSubcommandNotResume() {
+        let command = AgentResumeCommandBuilder.forkShellCommand(
+            kind: .codex,
+            sessionId: "rollout-9876",
+            launchCommand: AgentLaunchCommandSnapshot(
+                launcher: "codex",
+                executablePath: "/opt/bin/codex",
+                arguments: ["/opt/bin/codex"],
+                workingDirectory: "/work/repo",
+                environment: nil,
+                capturedAt: nil,
+                source: "test"
+            ),
+            workingDirectory: "/work/repo"
+        )
+        let unwrapped = try? XCTUnwrap(command)
+        XCTAssertNotNil(unwrapped)
+        guard let unwrapped else { return }
+        XCTAssertTrue(unwrapped.contains("'fork'"), unwrapped)
+        XCTAssertTrue(unwrapped.contains("rollout-9876"), unwrapped)
+        XCTAssertFalse(unwrapped.contains("'resume'"), unwrapped)
+    }
+
+    func testForkShellCommandNilForNonForkableKindAndEmptySession() {
+        XCTAssertNil(AgentResumeCommandBuilder.forkShellCommand(
+            kind: .gemini,
+            sessionId: "sess-1234",
+            launchCommand: nil,
+            workingDirectory: "/work/repo"
+        ))
+        XCTAssertNil(AgentResumeCommandBuilder.forkShellCommand(
+            kind: .claude,
+            sessionId: "   ",
+            launchCommand: nil,
+            workingDirectory: "/work/repo"
+        ))
+    }
+
+    // CASPER: a codex session whose own launch was `codex fork <parent> …`
+    // (e.g. produced by Fork Session itself) must stay forkable AND resumable.
+    // The sanitizer hard-blocks a leading `fork`, so the shared codex argv
+    // builder peels the leading `fork <parent>` and substitutes the new id.
+    private func codexForkLaunchedSnapshot() -> SessionRestorableAgentSnapshot {
+        SessionRestorableAgentSnapshot(
+            kind: .codex,
+            sessionId: "new-9999",
+            workingDirectory: "/work",
+            launchCommand: AgentLaunchCommandSnapshot(
+                launcher: "codex",
+                executablePath: "/opt/bin/codex",
+                arguments: ["/opt/bin/codex", "fork", "parent-1111", "-m", "gpt-x"],
+                workingDirectory: "/work",
+                environment: nil,
+                capturedAt: nil,
+                source: "test"
+            )
+        )
+    }
+
+    func testForkShellCommandCodexForkLaunchedSessionStripsParentFork() {
+        let snapshot = codexForkLaunchedSnapshot()
+        let command = AgentResumeCommandBuilder.forkShellCommand(
+            kind: snapshot.kind,
+            sessionId: snapshot.sessionId,
+            launchCommand: snapshot.launchCommand,
+            workingDirectory: snapshot.workingDirectory
+        )
+        let unwrapped = try? XCTUnwrap(command)
+        XCTAssertNotNil(unwrapped)
+        guard let unwrapped else { return }
+        XCTAssertTrue(unwrapped.contains("'fork'"), unwrapped)
+        XCTAssertTrue(unwrapped.contains("new-9999"), unwrapped)
+        XCTAssertTrue(unwrapped.contains("'-m' 'gpt-x'"), unwrapped)
+        XCTAssertFalse(unwrapped.contains("parent-1111"), unwrapped)
+    }
+
+    func testResumeCommandCodexForkLaunchedSessionIsResumable() {
+        // Previously nil: the sanitizer rejected the leading `fork`. Routing
+        // resume through the shared builder makes such a session resumable.
+        let command = try? XCTUnwrap(codexForkLaunchedSnapshot().resumeCommand)
+        XCTAssertNotNil(command)
+        guard let command else { return }
+        XCTAssertTrue(command.contains("'resume'"), command)
+        XCTAssertTrue(command.contains("new-9999"), command)
+        XCTAssertTrue(command.contains("'-m' 'gpt-x'"), command)
+        XCTAssertFalse(command.contains("parent-1111"), command)
+        XCTAssertFalse(command.contains("'fork'"), command)
+    }
 }
