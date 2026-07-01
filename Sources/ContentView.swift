@@ -9830,15 +9830,6 @@ struct VerticalTabsSidebar: View {
         let withinGroupSpacing: CGFloat = 1
         let betweenGroupSpacing: CGFloat = 14
         let collapsedKeys = workspaceGroupCollapseStore.collapsedKeys
-        // CASPER: the group holding the active session (selected workspace +
-        // focused panel) gets a light-blue "selected group" tint. Read straight
-        // off the already-stamped entry flags rather than re-scanning — this is
-        // a per-status-publish render body. ⌘1…9 sets the selection via
-        // CasperSidebarNavigator.selectGroup, which moves this key here.
-        let activeSessionGroupKey: String? = isCasperCompactSidebar
-            ? (panelEntries.first { $0.isWorkspaceSelected && $0.isPanelFocused }?.groupKey
-                ?? panelEntries.first { $0.isWorkspaceSelected }?.groupKey)
-            : nil
         // Short-circuit on `isCasperCompactSidebar` so the non-compact path
         // doesn't tie this `workspaceRows` body to the modifier monitor —
         // the non-compact `workspaceRow(_:)` helper reads the monitor itself
@@ -9892,8 +9883,6 @@ struct VerticalTabsSidebar: View {
                 let groupShortcutDigit = isCasperCompactSidebar
                     ? WorkspaceShortcutMapper.digitForWorkspace(at: offset, workspaceCount: groups.count)
                     : nil
-                let isGroupSelected = isCasperCompactSidebar
-                    && activeSessionGroupKey == group.key
                 // Distinct workspace ids in display order — top (most-recent)
                 // first — for the batched "Close All" / ⌘⇧T group reopen.
                 var seenGroupWorkspaceIds = Set<UUID>()
@@ -9903,7 +9892,6 @@ struct VerticalTabsSidebar: View {
                 CasperWorkspaceGroupSection(
                     displayName: group.displayName,
                     isCollapsed: isCollapsed,
-                    isSelected: isGroupSelected,
                     withinGroupSpacing: withinGroupSpacing,
                     shortcutDigit: groupShortcutDigit,
                     shortcutModifierSymbol: renderContext.workspaceNumberShortcut.numberedDigitHintPrefix,

@@ -598,10 +598,6 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
 struct CasperWorkspaceGroupSection<Content: View>: View {
     let displayName: String
     let isCollapsed: Bool
-    /// True when this group holds the active session — the whole group gets a
-    /// light-blue tint while the active session row keeps the stronger
-    /// selection highlight on top.
-    let isSelected: Bool
     let withinGroupSpacing: CGFloat
     let shortcutDigit: Int?
     let shortcutModifierSymbol: String
@@ -645,13 +641,6 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
                 content()
             }
         }
-        // CASPER: light-blue "selected group" tint behind the header + rows.
-        // Inset 6 on each side so it lines up with the row selection pills.
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? Color(nsColor: .controlAccentColor).opacity(0.12) : Color.clear)
-                .padding(.horizontal, 6)
-        )
         .contentShape(Rectangle())
         .overlay {
             CasperHoverTracker { hovering in
