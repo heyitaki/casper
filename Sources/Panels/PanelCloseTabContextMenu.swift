@@ -54,6 +54,41 @@ enum PanelTabActions {
         PanelCloseTabAction.perform(workspaceId: workspaceId, panelId: panelId)
     }
 
+    // CASPER: archive this one session (panel), or the whole workspace. Archive
+    // is a Casper (compact-sidebar) feature, gated on `isBranded`. Delete with
+    // the archive feature (`CasperArchiveStore`).
+    static var archiveAvailable: Bool {
+        CasperBuildEnvironment.isBranded
+    }
+
+    static func isSessionArchived(panelId: UUID) -> Bool {
+        CasperArchiveStore.shared.isArchived(panelId)
+    }
+
+    static func toggleSessionArchive(panelId: UUID) {
+        CasperArchiveStore.shared.toggle(panelId)
+    }
+
+    /// Terminal session ids in the panel's workspace (the same set the sidebar
+    /// turns into rows).
+    static func workspaceTerminalPanelIds(workspaceId: UUID) -> [UUID] {
+        guard let workspace = resolveManager(workspaceId: workspaceId)?
+            .tabs.first(where: { $0.id == workspaceId }) else {
+            return []
+        }
+        return workspace.sidebarOrderedPanelIds().filter {
+            workspace.panels[$0]?.panelType == .terminal
+        }
+    }
+
+    static func canArchiveWorkspace(workspaceId: UUID) -> Bool {
+        workspaceTerminalPanelIds(workspaceId: workspaceId).count > 1
+    }
+
+    static func archiveWorkspace(workspaceId: UUID) {
+        CasperArchiveStore.shared.archivePanels(workspaceTerminalPanelIds(workspaceId: workspaceId))
+    }
+
     private static func resolveManager(workspaceId: UUID) -> TabManager? {
         guard let app = AppDelegate.shared else { return nil }
         return app.tabManagerFor(tabId: workspaceId) ?? app.tabManager
@@ -132,6 +167,37 @@ final class PanelTabActionMenuController: NSObject {
                 accessibilityDescription: nil
             )
         }
+
+        // CASPER: archive this one session (or, for multi-session workspaces,
+        // the whole workspace).
+        if PanelTabActions.archiveAvailable {
+            menu.addItem(.separator())
+            let archived = PanelTabActions.isSessionArchived(panelId: panelId)
+            let archiveItem = menu.addItem(
+                withTitle: archived
+                    ? String(localized: "sidebar.session.menu.unarchive", defaultValue: "Move to Active Sessions")
+                    : String(localized: "sidebar.session.menu.archive", defaultValue: "Archive Session"),
+                action: #selector(panelToggleArchive(_:)),
+                keyEquivalent: ""
+            )
+            archiveItem.target = self
+            archiveItem.image = NSImage(
+                systemSymbolName: archived ? "tray.and.arrow.up" : "archivebox",
+                accessibilityDescription: nil
+            )
+            if !archived && PanelTabActions.canArchiveWorkspace(workspaceId: workspaceId) {
+                let archiveWorkspaceItem = menu.addItem(
+                    withTitle: String(localized: "sidebar.session.menu.archiveWorkspace", defaultValue: "Archive Workspace"),
+                    action: #selector(panelArchiveWorkspace(_:)),
+                    keyEquivalent: ""
+                )
+                archiveWorkspaceItem.target = self
+                archiveWorkspaceItem.image = NSImage(
+                    systemSymbolName: "archivebox.fill",
+                    accessibilityDescription: nil
+                )
+            }
+        }
     }
 
     private func applyConfiguredMenuShortcutIfAvailable(
@@ -162,6 +228,14 @@ final class PanelTabActionMenuController: NSObject {
 
     @objc private func panelMoveTabToNewWorkspace(_ sender: Any?) {
         PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
+    }
+
+    @objc private func panelToggleArchive(_ sender: Any?) {
+        PanelTabActions.toggleSessionArchive(panelId: panelId)
+    }
+
+    @objc private func panelArchiveWorkspace(_ sender: Any?) {
+        PanelTabActions.archiveWorkspace(workspaceId: workspaceId)
     }
 }
 
@@ -238,6 +312,29 @@ private struct PanelTabActionsContextMenu: ViewModifier {
                     PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
                 } label: {
                     Text(String(localized: "panelContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"))
+                }
+            }
+
+            // CASPER: archive this one session (or, for multi-session
+            // workspaces, the whole workspace).
+            if PanelTabActions.archiveAvailable {
+                Divider()
+                Button {
+                    PanelTabActions.toggleSessionArchive(panelId: panelId)
+                } label: {
+                    Text(
+                        PanelTabActions.isSessionArchived(panelId: panelId)
+                            ? String(localized: "sidebar.session.menu.unarchive", defaultValue: "Move to Active Sessions")
+                            : String(localized: "sidebar.session.menu.archive", defaultValue: "Archive Session")
+                    )
+                }
+                if !PanelTabActions.isSessionArchived(panelId: panelId)
+                    && PanelTabActions.canArchiveWorkspace(workspaceId: workspaceId) {
+                    Button {
+                        PanelTabActions.archiveWorkspace(workspaceId: workspaceId)
+                    } label: {
+                        Text(String(localized: "sidebar.session.menu.archiveWorkspace", defaultValue: "Archive Workspace"))
+                    }
                 }
             }
         }

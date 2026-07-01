@@ -259,6 +259,13 @@ struct SessionPanelSnapshot: Codable, Sendable {
     var browser: SessionBrowserPanelSnapshot?
     var markdown: SessionMarkdownPanelSnapshot?
     var filePreview: SessionFilePreviewPanelSnapshot?
+    // CASPER: whether this session (panel) is in the sidebar archive. Optional so
+    // old session files (without the key) decode as nil → not archived. Panel
+    // UUIDs are regenerated on restore, so the live archive set is repopulated
+    // from this flag as each panel is rebuilt (see
+    // Workspace.applySessionPanelMetadata). Delete with the archive feature
+    // (`CasperArchiveStore`).
+    var archived: Bool?
 }
 
 enum SessionSplitOrientation: String, Codable, Sendable {

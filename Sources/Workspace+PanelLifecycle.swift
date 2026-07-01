@@ -194,6 +194,13 @@ extension Workspace {
         panelTitles.removeValue(forKey: panelId)
         panelCustomTitles.removeValue(forKey: panelId)
         pinnedPanelIds.remove(panelId)
+        // CASPER: drop this panel from the sidebar archive when it's torn down,
+        // so a closed-while-archived session doesn't leave a stale id that keeps
+        // `CasperArchiveStore.hasArchivedSessions` armed (defeating the keyDown
+        // fast-path gate). This is the per-panel teardown chokepoint, so it also
+        // covers workspace close and split-panel close. Delete with the archive
+        // feature (`CasperArchiveStore`).
+        CasperArchiveStore.shared.unarchive(panelId)
         manualUnreadPanelIds.remove(panelId)
         manualUnreadMarkedAt.removeValue(forKey: panelId)
         panelShellActivityStates.removeValue(forKey: panelId)

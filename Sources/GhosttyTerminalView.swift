@@ -7604,6 +7604,15 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 #if DEBUG
             dismissNotificationMs = (ProcessInfo.processInfo.systemUptime - dismissNotificationStart) * 1000.0
 #endif
+            // CASPER: a submitted command / agent message (plain Return, not
+            // Shift/Option+Return) in an archived session pulls that session back
+            // into the active list. The hasArchivedSessions gate short-circuits
+            // to a single bool read on this keystroke hot path when nothing is
+            // archived (the common case). Delete with the archive feature.
+            if CasperArchiveStore.shared.hasArchivedSessions,
+               CasperArchiveSubmitDetector.isSubmitReturn(event) {
+                CasperArchiveStore.shared.noteUserSubmit(panelId: terminalSurface.id)
+            }
         }
         let flags = ShortcutStroke.normalizedModifierFlags(from: event.modifierFlags)
         if !cmuxFindEventIsPlainEscape(event) { endFindEscapeSuppression() }

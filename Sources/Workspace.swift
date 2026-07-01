@@ -507,7 +507,11 @@ extension Workspace {
             terminal: terminalSnapshot,
             browser: browserSnapshot,
             markdown: markdownSnapshot,
-            filePreview: filePreviewSnapshot
+            filePreview: filePreviewSnapshot,
+            // CASPER: persist sidebar-archive membership so it survives restart.
+            // nil (not true) when not archived keeps old-shaped JSON for the
+            // common case. Delete with the archive feature (`CasperArchiveStore`).
+            archived: CasperArchiveStore.shared.isArchived(panelId) ? true : nil
         )
     }
 
@@ -843,6 +847,13 @@ extension Workspace {
     }
 
     private func applySessionPanelMetadata(_ snapshot: SessionPanelSnapshot, toPanelId panelId: UUID) {
+        // CASPER: re-archive this session under its freshly-minted panel id.
+        // Stale pre-restore ids are dropped by pruneMissing after the tab list
+        // is rebuilt. Delete with the archive feature (`CasperArchiveStore`).
+        if snapshot.archived == true {
+            CasperArchiveStore.shared.archive(panelId)
+        }
+
         if let title = snapshot.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             panelTitles[panelId] = title
         }

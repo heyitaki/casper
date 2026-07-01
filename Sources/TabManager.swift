@@ -7795,6 +7795,9 @@ extension TabManager {
                 portOrdinal: ordinal
             )
             workspace.owningTabManager = self
+            // CASPER: per-panel archive flags are re-registered into
+            // CasperArchiveStore inside restoreSessionSnapshot (via
+            // applySessionPanelMetadata) under the freshly-minted panel ids.
             workspace.restoreSessionSnapshot(workspaceSnapshot)
             wireClosedBrowserTracking(for: workspace)
             newTabs.append(workspace)
@@ -7823,6 +7826,13 @@ extension TabManager {
         tabs = newTabs
         selectedTabId = newSelectedId
         let existingIds = Set(newTabs.map(\.id))
+        // CASPER: drop any archive ids that didn't come back under a live panel
+        // (pre-restore sessions whose ids are now gone). The restored sessions
+        // were re-archived under their new panel ids during the loop above.
+        // Delete with the archive feature (`CasperArchiveStore`).
+        CasperArchiveStore.shared.pruneMissing(
+            livePanelIds: Set(newTabs.flatMap { $0.panels.keys })
+        )
         pruneBackgroundWorkspaceLoads(existingIds: existingIds)
         sidebarSelectedWorkspaceIds.formIntersection(existingIds)
         for workspace in previousTabs {

@@ -57,6 +57,20 @@ struct CasperSidebarPanelEntry: Identifiable, Equatable, Sendable {
     /// Sort tiebreaker so panels inside the same workspace keep a stable
     /// in-list position when their activity ties (the common case for v1).
     let withinWorkspaceOrder: Int
+    /// CASPER: true when this session (panel) is in the sidebar archive.
+    /// Archive is per-panel: only this row relocates to the bottom Archive
+    /// section, so a multi-panel workspace can have some rows active and some
+    /// archived. Drives partitioning and the row's context-menu label (Archive
+    /// vs Move to Active). Part of `==` so a row re-evaluates when its archive
+    /// state flips. Delete with the archive feature (`CasperArchiveStore`).
+    let isArchived: Bool
+    /// CASPER: true when this session's workspace has more than one terminal
+    /// session, so the row's menu offers "Archive Workspace". Stamped once per
+    /// workspace in the builder (which already computes the panel count), so the
+    /// per-row context-menu gate is a value read rather than a per-render
+    /// bonsplit tree walk. In `==` so the menu can't go stale. Delete with the
+    /// archive feature (`CasperArchiveStore`).
+    let isMultiPanelWorkspace: Bool
 
     var id: UUID { key.panelId }
 }
@@ -288,7 +302,8 @@ enum CasperSidebarPanelEntryBuilder {
         from workspaces: [Workspace],
         selectedWorkspaceId: UUID?,
         activityByWorkspaceId: [UUID: CasperWorkspaceActivity],
-        notificationStore: TerminalNotificationStore
+        notificationStore: TerminalNotificationStore,
+        archivedPanelIds: Set<UUID> = []
     ) -> [CasperSidebarPanelEntry] {
         var out: [CasperSidebarPanelEntry] = []
         out.reserveCapacity(workspaces.reduce(0) { $0 + $1.panels.count })
@@ -356,7 +371,9 @@ enum CasperSidebarPanelEntryBuilder {
                         isPanelFocused: focusedPanelId == panelId,
                         isPinned: workspace.isPinned,
                         activity: activity,
-                        withinWorkspaceOrder: index
+                        withinWorkspaceOrder: index,
+                        isArchived: archivedPanelIds.contains(panelId),
+                        isMultiPanelWorkspace: isMultiPanel
                     )
                 )
             }
@@ -391,7 +408,11 @@ enum CasperSidebarPanelEntryBuilder {
                 isPanelFocused: true,
                 isPinned: workspace.isPinned,
                 activity: activity,
-                withinWorkspaceOrder: offset
+                withinWorkspaceOrder: offset,
+                // Archive is a compact-sidebar-only feature; the non-compact
+                // workspace-row path never archives.
+                isArchived: false,
+                isMultiPanelWorkspace: false
             )
         }
     }
@@ -673,6 +694,14 @@ struct CasperSidebarRowActions {
     let onTogglePin: () -> Void
     let onDuplicate: () -> Void
     let onForkSession: () -> Void
+    /// CASPER: archive this one session (active row) or move it back to active
+    /// (archived row). The label is chosen from `entry.isArchived`; this performs
+    /// the toggle. Delete with the archive feature (`CasperArchiveStore`).
+    let onToggleArchive: () -> Void
+    /// CASPER: archive every session in this row's workspace at once. Gated in
+    /// the menu by `entry.isMultiPanelWorkspace` (a value on the entry, so the
+    /// gate can't go stale and needs no per-render workspace walk).
+    let onArchiveWorkspace: () -> Void
 }
 
 // MARK: - Panel row view
@@ -887,6 +916,41 @@ struct CasperSidebarPanelRow: View, Equatable {
                 Label(
                     String(localized: "sidebar.session.menu.copyPath", defaultValue: "Copy Path"),
                     systemImage: "doc.on.clipboard"
+                )
+            }
+        }
+        Divider()
+        // CASPER: archive / move-back-to-active this one session. Label flips
+        // on entry.isArchived.
+        Button {
+            actions.onToggleArchive()
+        } label: {
+            Label(
+                entry.isArchived
+                    ? String(
+                        localized: "sidebar.session.menu.unarchive",
+                        defaultValue: "Move to Active Sessions"
+                    )
+                    : String(
+                        localized: "sidebar.session.menu.archive",
+                        defaultValue: "Archive Session"
+                    ),
+                systemImage: entry.isArchived ? "tray.and.arrow.up" : "archivebox"
+            )
+        }
+        // CASPER: multi-session workspaces also offer archiving the whole
+        // workspace (all its sessions). Hidden for single-session workspaces,
+        // where "Archive Session" already covers it, and for archived rows.
+        if entry.isMultiPanelWorkspace && !entry.isArchived {
+            Button {
+                actions.onArchiveWorkspace()
+            } label: {
+                Label(
+                    String(
+                        localized: "sidebar.session.menu.archiveWorkspace",
+                        defaultValue: "Archive Workspace"
+                    ),
+                    systemImage: "archivebox.fill"
                 )
             }
         }

@@ -339,6 +339,29 @@ Adds a **Fork Session** item to the session-row right-click menu. Forking branch
   - `codex fork` is a recent subcommand — on an older `codex` the new terminal errors visibly (the same CLI-version dependency `codex resume` already carries).
 - Deletion condition: delete if upstream adds first-class session forking from the sidebar (retire `forkShellCommand`/`forkArguments`/`codexSessionArguments`, restore the inline `resumeArguments` codex case, drop the two `CasperSidebarRowActions` fields, and remove `CasperForkSession.swift`).
 
+### Sidebar session archive
+
+Adds a collapsible **Archive** section at the bottom of the compact sidebar. Right-clicking a session row **or** a terminal panel offers "Archive Session"; that one session drops out of its repo group into the Archive. Selecting an archived session only *displays* it (it stays listed in Archive). It returns to its active repo folder only when the user **submits** work into it — a plain-Return command/agent-message in its terminal, a Feed reply, or the explicit "Move to Active Sessions" menu item. Archiving is **per-session (per-panel)**: "archive" is a sidebar-row presentation concept, not a workspace-detachment one — the panel stays in its workspace's bonsplit tree, only its sidebar row relocates. So a multi-panel workspace can have one session archived and the rest active, and shows rows in both the active groups and the Archive. Multi-session workspaces additionally offer "Archive Workspace" (archive every session in the workspace at once); single-session workspaces don't, since "Archive Session" already covers it.
+
+- Casper-only files:
+  - `Sources/Casper/Sidebar/CasperArchiveStore.swift` (new) — `CasperArchiveStore` (`ObservableObject` singleton; `@Published archivedPanelIds: Set<UUID>` + a UserDefaults-backed `isCollapsed`). `hasArchivedSessions` is the cheap hot-path gate (single bool read on every Return keystroke when nothing is archived). `noteUserSubmit(panelId:)` unarchives only if archived; `archivePanels(_:)` is the bulk "Archive Workspace" insert; `pruneMissing(livePanelIds:)` keeps the set aligned with live panels. `CasperArchiveSubmitDetector.isSubmitReturn(_:)` classifies a key event as a submit (plain Return/keypad-Enter; Shift/Option+Return are newline gestures and excluded). `CasperArchiveSection` is the collapsible bottom section view (archivebox header + baseline-aligned count, reuses the compact row builder).
+  - `Sources/Casper/Sidebar/CasperWorkspaceGroups.swift` — `CasperSidebarPanelEntry` gained `isArchived` (per-panel) and `isMultiPanelWorkspace` (both in `==`, stamped by `CasperSidebarPanelEntryBuilder.entries(…, archivedPanelIds:)`); `CasperSidebarRowActions` gained `onToggleArchive` + `onArchiveWorkspace`; `CasperSidebarPanelRow.contextMenuItems` gained the Archive/Move-to-Active button (label flips on `entry.isArchived`) plus the multi-session "Archive Workspace" button (gated on `entry.isMultiPanelWorkspace` — a value read, so no per-render bonsplit walk).
+- Upstream files modified (all `// CASPER:`-marked):
+  - `Sources/ContentView.swift` — `VerticalTabsSidebar` observes `CasperArchiveStore.shared`; `workspaceRows` partitions entries into `activePanelEntries` (→ repo groups) and `archivedPanelEntries` (→ `CasperArchiveSection` at the bottom, hidden when empty), and wires `onToggleArchive`/`onArchiveWorkspace` (the latter from the workspace's terminal panel ids). The per-row compact block was extracted into a shared `casperCompactPanelRow(entry:ownsWorkspaceAnchor:workspacesById:)` helper so the active groups and the Archive section render identical rows. A `pruneMissing(livePanelIds:)` call rides the existing `onChange(of: tabs.map(\.id))` handler.
+  - `Sources/GhosttyTerminalView.swift` — one-line submit hook in `keyDown` after the existing `dismissNotificationOnDirectInteraction` call: `hasArchivedSessions && isSubmitReturn` → `noteUserSubmit(panelId: terminalSurface.id)`. Zero hot-path cost when nothing is archived (short-circuit bool).
+  - `Sources/Feed/FeedCoordinator.swift` — `sendTextToWorkstream` calls `noteUserSubmit(panelId:)` on the resolved surface id (a Feed reply is a submit).
+  - `Sources/Panels/PanelCloseTabContextMenu.swift` — `PanelTabActions` gained `archiveAvailable`/`isSessionArchived`/`toggleSessionArchive` + `canArchiveWorkspace`/`archiveWorkspace`; both the AppKit (`PanelTabActionMenuController`) and SwiftUI (`PanelTabActionsContextMenu`) panel right-click menus gained the gated Archive/Move-to-Active + Archive-Workspace items.
+  - `Sources/SessionPersistence.swift` — `SessionPanelSnapshot.archived: Bool?` (optional → old session files decode as nil).
+  - `Sources/Workspace.swift` — `sessionPanelSnapshot(…)` writes `archived: CasperArchiveStore.shared.isArchived(panelId) ? true : nil`; `applySessionPanelMetadata` re-registers the flag under the freshly-minted panel id on restore.
+  - `Sources/Workspace+PanelLifecycle.swift` — `discardClosedPanelLifecycleState` (the single per-panel teardown chokepoint) calls `CasperArchiveStore.shared.unarchive(panelId)`, so closing an archived split-panel (workspace survives) can't leave a stale id that keeps `hasArchivedSessions` armed.
+  - `Sources/TabManager.swift` — `restoreSessionSnapshot` calls `pruneMissing(livePanelIds:)` after `tabs` is live (the restored sessions were re-archived under their new panel ids during the restore loop; this drops the stale pre-restore ids). Panel UUIDs are regenerated on restore, so the live set can't be persisted by id directly.
+  - `Resources/Localizable.xcstrings` — `sidebar.session.menu.archive`, `sidebar.session.menu.unarchive`, `sidebar.session.menu.archiveWorkspace`, `sidebar.archive.header` (en/ja).
+  - `GhosttyTabs.xcodeproj/project.pbxproj` — registers `CasperArchiveStore.swift`.
+- Notes:
+  - Cross-restart durability rides the per-panel session snapshot, not UserDefaults, because panel UUIDs are freshly minted on every restore. Only the section-collapsed bool (stable identity) persists via UserDefaults.
+  - Selecting an archived session deliberately does **not** unarchive — only a submit does. This is why the trigger lives at the Return keystroke / Feed-send / explicit-menu layer, not at the selection/`focusTab` layer.
+- Deletion condition: delete if upstream adds a first-class sidebar session archive. Retire `CasperArchiveStore.swift`, the `isArchived`/`onToggleArchive`/`onArchiveWorkspace` additions, the `archived` panel-snapshot field + its read/write, the `keyDown`/`FeedCoordinator`/panel-menu hooks, and the `casperCompactPanelRow` extraction (fold back inline).
+
 ## Merge conflict notes
 
 These upstream files are touched by fork patches and tend to drift upstream. Re-check each one when running `git merge upstream/main`:
@@ -349,10 +372,11 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
   - Touched by the session-nav patch (4 new actions + `.nonBrowserPanel` context + `casperEventEditsTextInput`). If upstream adds arrow-key actions, re-check default-shortcut collisions.
 
 - `Sources/ContentView.swift`
-  - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), the workspace grouping patch (`workspaceRows` now wraps rows in a per-group `ForEach`), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
+  - Heaviest conflict surface. Touched by patches 2 (sidebar reveal strips, header icon alignment animation, effective titlebar padding), the minimal-mode window-movable policy (one-line call inside the WindowAccessor refresh), the workspace grouping patch (`workspaceRows` now wraps rows in a per-group `ForEach`), the archive patch (`workspaceRows` partitions active/archived, extracts `casperCompactPanelRow`, appends `CasperArchiveSection`; `pruneMissing` on the tabs `onChange`), and the cleanup tail. If upstream refactors sidebar layout, hidden-sidebar gap handling, or titlebar padding math, expect non-trivial manual conflict resolution.
 - `Sources/TabManager.swift`
   - Touched by the workspace grouping patch (`moveTabToTopForNotification` now bumps within the workspace's repo group). Stock cmux unconditionally bumps to global top of unpinned.
   - Also touched by the group-selection follow-up: the empty-window gates in `closeWorkspace` (`guard … || tabs.count > 1`, `selectedTabId = nil` on empty), `closeWorkspaceIfRunningProcess` (Casper branch → `closeWorkspace`), and `closePanelAfterChildExited`; plus the `casperGroupSelectionActive` clear at the top of `focusTab`. Re-check these if upstream reworks the workspace-close or focus paths.
+  - Also touched by the archive patch — see the dedicated `Sources/TabManager.swift (archive)` note below (`pruneMissing(livePanelIds:)` after `tabs` is assigned).
 - `Sources/AppDelegate.swift`
   - Touched by patch 2 (sidebar reveal mouse-down handlers, `cmux_sendEvent` intercept, `runSidebarRevealEdgeMouseDownLoop`), patch 3 (new-workspace context menu shortcut display), the restore-time agent warmup patch (two one-line `CasperStartupAgentWarmup.applyStartupWarmup` calls in `applySessionWindowSnapshot` and `createMainWindow`), the group-selection patches (gated ⌘1…9 dispatch → `CasperSidebarNavigator.selectGroup`), and the group-selection follow-up (`.closeTab` ⌘W routes to `closeActiveGroup` in group mode; a non-Command keystroke clears `casperGroupSelectionActive` in the global key handler).
 - `Sources/BackgroundWorkspacePrimeCoordinator.swift`
@@ -362,7 +386,15 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
 - `Sources/WindowDecorationsController.swift`
   - Touched by the minimal-mode window-movable policy (one-line call to `CasperMinimalModeWindowMovable.apply` inside `apply(to:)`). Re-add if upstream rewrites the decorations apply path.
 - `Sources/GhosttyTerminalView.swift`
-  - Touched by patches 3 (rightMouseDown mouse-capture handling, menu wiring, removed legacy selectors), 4 (New Tab right-click item), 7 (fish `XDG_DATA_DIRS` injection), and the group-selection follow-up (a one-line `casperGroupSelectionActive` clear in `mouseDown`). High-traffic file — re-validate each region after upstream merges.
+  - Touched by patches 3 (rightMouseDown mouse-capture handling, menu wiring, removed legacy selectors), 4 (New Tab right-click item), 7 (fish `XDG_DATA_DIRS` injection), the group-selection follow-up (a one-line `casperGroupSelectionActive` clear in `mouseDown`), and the archive patch (a `keyDown` submit hook beside the existing `dismissNotificationOnDirectInteraction` call). High-traffic file — re-validate each region after upstream merges.
+- `Sources/Panels/PanelCloseTabContextMenu.swift`
+  - Touched by the archive patch (`PanelTabActions.archiveAvailable`/`isSessionArchived`/`toggleSessionArchive`/`canArchiveWorkspace`/`archiveWorkspace` + the gated Archive / Archive-Workspace items in both the AppKit and SwiftUI panel menus). Re-validate if upstream reworks the panel tab-bar context menu.
+- `Sources/Feed/FeedCoordinator.swift`
+  - Touched by the archive patch (one `noteUserSubmit(panelId:)` call in `sendTextToWorkstream`). Re-validate if upstream reworks the Feed reply path.
+- `Sources/SessionPersistence.swift`, `Sources/Workspace.swift`, `Sources/Workspace+PanelLifecycle.swift`
+  - Touched by the archive patch (`SessionPanelSnapshot.archived: Bool?`, written in `Workspace.sessionPanelSnapshot` and re-registered on restore in `applySessionPanelMetadata`; `discardClosedPanelLifecycleState` unarchives on panel teardown). Re-validate if upstream changes the panel snapshot shape, panel-restore path, or panel-teardown path.
+- `Sources/TabManager.swift` (archive)
+  - `restoreSessionSnapshot` calls `CasperArchiveStore.shared.pruneMissing(livePanelIds:)` after `tabs` is assigned. Re-validate if upstream reworks session restore.
 - `Sources/TerminalWindowPortal.swift`, `Sources/BrowserWindowPortal.swift`
   - Touched by patch 2 (`hitTest()` pass-through bands for sidebar reveal). Hot path for typing latency — preserve the `isPointerEvent` guard and the interior-point early-reject.
 - `Sources/Update/UpdateTitlebarAccessory.swift`, `Sources/Update/MinimalModeSidebarControls.swift`, `Sources/WindowChromeMetrics.swift`
@@ -374,9 +406,9 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
 - `Sources/FileDropOverlayViewHitTesting.swift`
   - Touched by the debug-log gating patch (`logHitTestDecision` stale-pasteboard guard).
 - `GhosttyTabs.xcodeproj/project.pbxproj`
-  - Touched by patches 3 (new PanelCloseTabContextMenu.swift entry, removed legacy files) and 6 (ripgrep PBXShellScriptBuildPhase + Copy CLI). Conflicts here are mechanical but always require manual resolution.
+  - Touched by patches 3 (new PanelCloseTabContextMenu.swift entry, removed legacy files), 6 (ripgrep PBXShellScriptBuildPhase + Copy CLI), and the archive patch (registers `CasperArchiveStore.swift`). Conflicts here are mechanical but always require manual resolution.
 - `Resources/Localizable.xcstrings`
-  - Touched by patches 2, 3, 4. xcstrings JSON merges poorly; expect to redo string additions if upstream touches the same strings.
+  - Touched by patches 2, 3, 4 and the archive patch (`sidebar.session.menu.archive`/`unarchive`, `sidebar.archive.header`). xcstrings JSON merges poorly; expect to redo string additions if upstream touches the same strings.
 - `.github/workflows/release.yml`, `.github/workflows/nightly.yml`, `.github/workflows/build-ghosttykit.yml`, `.github/workflows/test-depot.yml`, `.github/workflows/test-e2e.yml`
   - Touched by patches 1 and 6 (heyitaki/ghostty URLs, ripgrep fetch+cache).
 - `.gitmodules`

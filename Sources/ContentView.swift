@@ -9232,6 +9232,10 @@ struct VerticalTabsSidebar: View {
     @ObservedObject private var keyboardShortcutSettingsObserver = KeyboardShortcutSettingsObserver.shared
     // CASPER: collapse state for workspace groups; delete if upstream adds workspace grouping.
     @ObservedObject private var workspaceGroupCollapseStore = CasperWorkspaceGroupCollapseStore.shared
+    // CASPER: sidebar session archive — archived workspaces drop to a collapsible
+    // section at the bottom of the list. Observed here so archive/unarchive
+    // re-partitions the list. Delete with the archive feature.
+    @ObservedObject private var archiveStore = CasperArchiveStore.shared
     // CASPER: off-main Claude JSONL activity snapshot; observed at the
     // sidebar level so workspace re-sort fires when new dates arrive.
     // Row subtrees must NOT observe this — they read activity via the
@@ -9489,6 +9493,12 @@ struct VerticalTabsSidebar: View {
                 self.frozenTabItemPresentation = nil
             }
             sidebarActivityRefresher.sync(workspaces: tabManager.tabs)
+            // CASPER: drop archive ids for panels that no longer exist (their
+            // workspace closed, or restored under a new id) so the set doesn't
+            // accumulate staleness. Safe here — an event handler, not a body
+            // computation. Delete with the archive feature.
+            let livePanelIds = Set(tabManager.tabs.flatMap { $0.panels.keys })
+            archiveStore.pruneMissing(livePanelIds: livePanelIds)
         }
         .onReceive(NotificationCenter.default.publisher(for: SidebarDragLifecycleNotification.requestClear)) { notification in
             guard draggedTabId != nil else { return }
@@ -9714,6 +9724,22 @@ struct VerticalTabsSidebar: View {
                     panelId: panelId,
                     fallbackCwd: cwd
                 )
+            },
+            // CASPER: archive (active) or move-back-to-active (archived) just
+            // this one session. Label is chosen in the row from entry.isArchived.
+            onToggleArchive: {
+                CasperArchiveStore.shared.toggle(panelId)
+            },
+            // CASPER: archive every session in the workspace. The panel ids are
+            // resolved on click (menu gate lives on entry.isMultiPanelWorkspace),
+            // so no bonsplit tree walk runs during the sidebar render. Order is
+            // irrelevant for a set insert, so `panels` is filtered directly.
+            onArchiveWorkspace: { [weak tabManager] in
+                guard let workspace = tabManager?.tabs.first(where: { $0.id == workspaceId }) else { return }
+                let terminalPanelIds = workspace.panels.compactMap {
+                    $0.value.panelType == .terminal ? $0.key : nil
+                }
+                CasperArchiveStore.shared.archivePanels(terminalPanelIds)
             }
         )
     }
@@ -9734,6 +9760,94 @@ struct VerticalTabsSidebar: View {
         return cwd.isEmpty ? nil : cwd
     }
 
+    // CASPER: shared compact sidebar row, used by both the repo groups and the
+    // bottom Archive section so archived sessions render identically (same
+    // selection/close/anchor behavior). Delete with the archive feature if the
+    // single call site folds back inline.
+    @ViewBuilder
+    private func casperCompactPanelRow(
+        entry: CasperSidebarPanelEntry,
+        ownsWorkspaceAnchor: Bool,
+        workspacesById: [UUID: Workspace]
+    ) -> some View {
+        let workspaceId = entry.key.workspaceId
+        let rowActions = casperSidebarRowActions(for: entry, workspaceLookup: workspacesById)
+        CasperSidebarPanelRow(
+            entry: entry,
+            onSelect: { [weak tabManager] in
+                #if DEBUG
+                cmuxDebugLog(
+                    "sidebar.panelRow.onSelect workspace=\(entry.key.workspaceId.uuidString.prefix(5)) " +
+                    "panel=\(entry.key.panelId.uuidString.prefix(5)) " +
+                    "tabManager=\(tabManager != nil ? "ok" : "nil")"
+                )
+                #endif
+                guard let tabManager,
+                      let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
+                else {
+                    #if DEBUG
+                    cmuxDebugLog(
+                        "sidebar.panelRow.onSelect.BAIL workspace=\(entry.key.workspaceId.uuidString.prefix(5)) " +
+                        "tabManager=\(tabManager != nil ? "ok" : "nil") " +
+                        "workspaceFound=\(tabManager?.tabs.contains(where: { $0.id == entry.key.workspaceId }) ?? false)"
+                    )
+                    #endif
+                    return
+                }
+                // Route through focusTab so lastFocusedPanelByTab is primed
+                // before selectedTabId.didSet's async restore reads it;
+                // otherwise the restore re-focuses the previously remembered
+                // panel and clobbers the clicked one when switching workspaces.
+                tabManager.focusTab(workspace.id, surfaceId: entry.key.panelId)
+                // Disambiguate: panels in the same workspace share a ⌘N digit.
+                if workspace.panels.count > 1 {
+                    workspace.triggerFocusFlash(panelId: entry.key.panelId)
+                }
+            },
+            onClose: { [weak tabManager] in
+                guard let tabManager,
+                      let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
+                else { return }
+                // Last panel closure falls through to
+                // confirmation-aware workspace close so we
+                // don't strand an empty workspace.
+                if workspace.panels.count <= 1 {
+                    _ = tabManager.closeWorkspaceFromSidebarCloseButton(workspace)
+                } else {
+                    _ = workspace.closePanel(entry.key.panelId)
+                }
+            },
+            actions: rowActions
+        )
+        // CASPER: row skips body re-eval unless its snapshot
+        // changes — load-bearing against the CA-commit-stall
+        // foreground freeze (see CasperSidebarPanelRow ==).
+        // Was temporarily removed to debug a sidebar
+        // click-through report; live-log forensics showed
+        // clicks reach onSelect fine (ws.switch trigger=focus),
+        // so the removal only reintroduced the freeze.
+        .equatable()
+        // Anchor-owning row claims the workspace UUID as
+        // its SwiftUI explicit identity so
+        // `ScrollViewProxy.scrollTo(selectedWorkspaceId)`
+        // (`flushPendingSelectedWorkspaceScroll`) resolves
+        // to a real row. Non-anchor panel rows keep their
+        // panel UUID identity. Workspace and panel UUIDs
+        // come from independent pools — collisions in
+        // practice would require a UUID birthday miracle.
+        .id(ownsWorkspaceAnchor ? workspaceId : entry.id)
+        .preference(
+            key: SidebarWorkspaceRowIdsPreferenceKey.self,
+            value: ownsWorkspaceAnchor ? Set([workspaceId]) : []
+        )
+        .anchorPreference(
+            key: SidebarWorkspaceRowFramePreferenceKey.self,
+            value: .bounds
+        ) { anchor in
+            ownsWorkspaceAnchor ? [workspaceId: anchor] : [:]
+        }
+    }
+
     private func workspaceRows(renderContext: WorkspaceListRenderContext) -> some View {
         // Workspaces are bounded, so prefer a non-lazy stack here.
         // LazyVStack + drag-state invalidations can recurse through layout.
@@ -9749,6 +9863,8 @@ struct VerticalTabsSidebar: View {
         // The panel-level filter happens after entries are built below.
         // Empty query = all workspaces.
         let isCasperCompactSidebar = CasperBuildEnvironment.isBranded
+        // CASPER: archived session (panel) ids drive the active/archive partition below.
+        let archivedPanelIds = archiveStore.archivedPanelIds
         let filteredTabs: [Workspace] = isCasperCompactSidebar
             ? renderContext.tabs
             : CasperWorkspaceTitleFilter.filter(
@@ -9801,7 +9917,8 @@ struct VerticalTabsSidebar: View {
                 from: sortedTabs,
                 selectedWorkspaceId: tabManager.selectedTabId,
                 activityByWorkspaceId: activityByID,
-                notificationStore: notificationStore
+                notificationStore: notificationStore,
+                archivedPanelIds: archivedPanelIds
             )
             : CasperSidebarPanelEntryBuilder.workspaceRowEntries(
                 from: sortedTabs,
@@ -9814,19 +9931,39 @@ struct VerticalTabsSidebar: View {
                 query: workspaceSearchQuery
             )
             : rawPanelEntries
+        // CASPER: split the list — archived sessions render in the bottom
+        // Archive section, everything else in the repo groups. Delete with the
+        // archive feature.
+        let activePanelEntries = isCasperCompactSidebar
+            ? panelEntries.filter { !$0.isArchived }
+            : panelEntries
+        let archivedPanelEntries = isCasperCompactSidebar
+            ? panelEntries.filter { $0.isArchived }
+            : []
         // First panel row encountered per workspace owns the workspace-level
         // SwiftUI preference anchors (drag-drop targets + scroll-to-selected).
         // Without this every workspace would either lose its anchor (only
         // last row wins via the merge) or every panel row would emit the
         // same anchor (last write wins arbitrarily).
+        // CASPER: prefer an ACTIVE entry as the anchor owner, falling back to an
+        // archived entry only for fully-archived workspaces. Per-session archive
+        // can split one workspace across both sections; the anchor must land on a
+        // row that's always mounted (active rows live in always-visible repo
+        // groups) rather than one inside the collapsible Archive section — a
+        // collapsed archive doesn't mount its rows, which would strand the
+        // workspace's scroll/drop anchor. Delete the two-pass ordering with the
+        // archive feature.
         var firstEntryIdsPerWorkspace: Set<UUID> = []
         do {
             var seen: Set<UUID> = []
-            for entry in panelEntries where seen.insert(entry.key.workspaceId).inserted {
+            for entry in activePanelEntries where seen.insert(entry.key.workspaceId).inserted {
+                firstEntryIdsPerWorkspace.insert(entry.id)
+            }
+            for entry in archivedPanelEntries where seen.insert(entry.key.workspaceId).inserted {
                 firstEntryIdsPerWorkspace.insert(entry.id)
             }
         }
-        let groups = CasperWorkspaceGroupResolver.groups(from: panelEntries)
+        let groups = CasperWorkspaceGroupResolver.groups(from: activePanelEntries)
         let withinGroupSpacing: CGFloat = 1
         let betweenGroupSpacing: CGFloat = 14
         let collapsedKeys = workspaceGroupCollapseStore.collapsedKeys
@@ -9915,83 +10052,14 @@ struct VerticalTabsSidebar: View {
                 ) {
                     ForEach(group.entries, id: \.id) { entry in
                         if isCasperCompactSidebar {
-                            let ownsWorkspaceAnchor = firstEntryIdsPerWorkspace.contains(entry.id)
-                            let workspaceId = entry.key.workspaceId
-                            let rowActions = casperSidebarRowActions(for: entry, workspaceLookup: workspacesById)
-                            CasperSidebarPanelRow(
+                            // CASPER: shared compact-row builder (reused by the
+                            // bottom Archive section). Delete with the archive
+                            // feature if it folds back inline.
+                            casperCompactPanelRow(
                                 entry: entry,
-                                onSelect: { [weak tabManager] in
-                                    #if DEBUG
-                                    cmuxDebugLog(
-                                        "sidebar.panelRow.onSelect workspace=\(entry.key.workspaceId.uuidString.prefix(5)) " +
-                                        "panel=\(entry.key.panelId.uuidString.prefix(5)) " +
-                                        "tabManager=\(tabManager != nil ? "ok" : "nil")"
-                                    )
-                                    #endif
-                                    guard let tabManager,
-                                          let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
-                                    else {
-                                        #if DEBUG
-                                        cmuxDebugLog(
-                                            "sidebar.panelRow.onSelect.BAIL workspace=\(entry.key.workspaceId.uuidString.prefix(5)) " +
-                                            "tabManager=\(tabManager != nil ? "ok" : "nil") " +
-                                            "workspaceFound=\(tabManager?.tabs.contains(where: { $0.id == entry.key.workspaceId }) ?? false)"
-                                        )
-                                        #endif
-                                        return
-                                    }
-                                    // Route through focusTab so lastFocusedPanelByTab is primed
-                                    // before selectedTabId.didSet's async restore reads it;
-                                    // otherwise the restore re-focuses the previously remembered
-                                    // panel and clobbers the clicked one when switching workspaces.
-                                    tabManager.focusTab(workspace.id, surfaceId: entry.key.panelId)
-                                    // Disambiguate: panels in the same workspace share a ⌘N digit.
-                                    if workspace.panels.count > 1 {
-                                        workspace.triggerFocusFlash(panelId: entry.key.panelId)
-                                    }
-                                },
-                                onClose: { [weak tabManager] in
-                                    guard let tabManager,
-                                          let workspace = tabManager.tabs.first(where: { $0.id == entry.key.workspaceId })
-                                    else { return }
-                                    // Last panel closure falls through to
-                                    // confirmation-aware workspace close so we
-                                    // don't strand an empty workspace.
-                                    if workspace.panels.count <= 1 {
-                                        _ = tabManager.closeWorkspaceFromSidebarCloseButton(workspace)
-                                    } else {
-                                        _ = workspace.closePanel(entry.key.panelId)
-                                    }
-                                },
-                                actions: rowActions
+                                ownsWorkspaceAnchor: firstEntryIdsPerWorkspace.contains(entry.id),
+                                workspacesById: workspacesById
                             )
-                            // CASPER: row skips body re-eval unless its snapshot
-                            // changes — load-bearing against the CA-commit-stall
-                            // foreground freeze (see CasperSidebarPanelRow ==).
-                            // Was temporarily removed to debug a sidebar
-                            // click-through report; live-log forensics showed
-                            // clicks reach onSelect fine (ws.switch trigger=focus),
-                            // so the removal only reintroduced the freeze.
-                            .equatable()
-                            // Anchor-owning row claims the workspace UUID as
-                            // its SwiftUI explicit identity so
-                            // `ScrollViewProxy.scrollTo(selectedWorkspaceId)`
-                            // (`flushPendingSelectedWorkspaceScroll`) resolves
-                            // to a real row. Non-anchor panel rows keep their
-                            // panel UUID identity. Workspace and panel UUIDs
-                            // come from independent pools — collisions in
-                            // practice would require a UUID birthday miracle.
-                            .id(ownsWorkspaceAnchor ? workspaceId : entry.id)
-                            .preference(
-                                key: SidebarWorkspaceRowIdsPreferenceKey.self,
-                                value: ownsWorkspaceAnchor ? Set([workspaceId]) : []
-                            )
-                            .anchorPreference(
-                                key: SidebarWorkspaceRowFramePreferenceKey.self,
-                                value: .bounds
-                            ) { anchor in
-                                ownsWorkspaceAnchor ? [workspaceId: anchor] : [:]
-                            }
                         } else if let tab = workspacesById[entry.key.workspaceId] {
                             workspaceRow(
                                 tab,
@@ -10003,10 +10071,31 @@ struct VerticalTabsSidebar: View {
                 }
                 .padding(.top, offset == 0 ? 0 : betweenGroupSpacing)
             }
+            // CASPER: bottom Archive section. Hidden when nothing is archived;
+            // rows reuse the same compact row builder so they look and behave
+            // like active sessions. Delete with the archive feature.
+            if isCasperCompactSidebar && !archivedPanelEntries.isEmpty {
+                CasperArchiveSection(
+                    count: archivedPanelEntries.count,
+                    isCollapsed: archiveStore.isCollapsed,
+                    onToggle: { [weak archiveStore] in
+                        archiveStore?.toggleCollapsed()
+                    }
+                ) {
+                    ForEach(archivedPanelEntries, id: \.id) { entry in
+                        casperCompactPanelRow(
+                            entry: entry,
+                            ownsWorkspaceAnchor: firstEntryIdsPerWorkspace.contains(entry.id),
+                            workspacesById: workspacesById
+                        )
+                    }
+                }
+                .padding(.top, groups.isEmpty ? 0 : betweenGroupSpacing)
+            }
         }
         .padding(.vertical, SidebarWorkspaceListMetrics.rowVerticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task(id: claudeWorkspaceSessionsTaskID) {
+        .task(id: agentSessionsTaskID) {
             // Initial scan + periodic re-scan every 20s. The task is cancelled
             // and restarted when the hook map version or visible workspace
             // set changes. The poll loop catches resumes that *reuse* the

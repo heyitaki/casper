@@ -299,6 +299,12 @@ extension FeedCoordinator {
             surfaceId: target.surfaceId,
             text: text
         )
+        // CASPER: replying to an archived agent session from the Feed is a
+        // submit — pull that session back into the active list. Delete with the
+        // archive feature.
+        if let panelUUID = UUID(uuidString: target.surfaceId) {
+            CasperArchiveStore.shared.noteUserSubmit(panelId: panelUUID)
+        }
         return true
     }
 }
