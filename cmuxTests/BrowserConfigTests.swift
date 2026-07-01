@@ -3392,6 +3392,56 @@ final class BrowserLinkOpenSettingsTests: XCTestCase {
         XCTAssertTrue(BrowserLinkOpenSettings.initialInterceptTerminalOpenCommandInCmuxBrowserValue(defaults: defaults))
     }
 
+    func testInterceptedOpenCommandStaysInternalWithoutRespectFlag() {
+        // Explicit `cmux browser open` (no respect flag) is never forced external,
+        // even when interception is disabled.
+        defaults.set(false, forKey: BrowserLinkOpenSettings.interceptTerminalOpenCommandInCmuxBrowserKey)
+        XCTAssertFalse(
+            BrowserLinkOpenSettings.shouldOpenInterceptedOpenCommandExternally(
+                URL(string: "https://example.com")!,
+                respectExternalOpenRules: false,
+                defaults: defaults
+            )
+        )
+    }
+
+    func testInterceptedOpenCommandOpensExternallyWhenInterceptionDisabled() {
+        // Casper-equivalent: interception off → the shim-forwarded URL goes external.
+        defaults.set(false, forKey: BrowserLinkOpenSettings.interceptTerminalOpenCommandInCmuxBrowserKey)
+        XCTAssertTrue(
+            BrowserLinkOpenSettings.shouldOpenInterceptedOpenCommandExternally(
+                URL(string: "https://example.com")!,
+                respectExternalOpenRules: true,
+                defaults: defaults
+            )
+        )
+    }
+
+    func testInterceptedOpenCommandStaysInternalWhenInterceptionEnabled() {
+        // Interception on → the shim-forwarded URL splits into the embedded panel.
+        defaults.set(true, forKey: BrowserLinkOpenSettings.interceptTerminalOpenCommandInCmuxBrowserKey)
+        XCTAssertFalse(
+            BrowserLinkOpenSettings.shouldOpenInterceptedOpenCommandExternally(
+                URL(string: "https://example.com")!,
+                respectExternalOpenRules: true,
+                defaults: defaults
+            )
+        )
+    }
+
+    func testInterceptedOpenCommandHonorsExternalPatternEvenWhenInterceptionEnabled() {
+        // A configured external-open pattern wins regardless of the intercept toggle.
+        defaults.set(true, forKey: BrowserLinkOpenSettings.interceptTerminalOpenCommandInCmuxBrowserKey)
+        defaults.set("example.com/billing", forKey: BrowserLinkOpenSettings.browserExternalOpenPatternsKey)
+        XCTAssertTrue(
+            BrowserLinkOpenSettings.shouldOpenInterceptedOpenCommandExternally(
+                URL(string: "https://example.com/billing")!,
+                respectExternalOpenRules: true,
+                defaults: defaults
+            )
+        )
+    }
+
     func testExternalOpenPatternsDefaultToEmpty() {
         XCTAssertTrue(BrowserLinkOpenSettings.externalOpenPatterns(defaults: defaults).isEmpty)
     }

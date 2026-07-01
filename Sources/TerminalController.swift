@@ -9054,9 +9054,13 @@ class TerminalController {
                 result = .err(code: "not_found", message: "Workspace not found", data: nil)
                 return
             }
+            // Route `open <url>` (forwarded here by Resources/bin/open) to the external
+            // browser when interception is off — the shim can't read registered/unwritten
+            // defaults itself, so we re-decide here. Explicit `cmux browser open` doesn't
+            // set the flag, so it still splits below. See the predicate for the full why.
             if let url,
-               respectExternalOpenRules,
-               BrowserLinkOpenSettings.shouldOpenExternally(url) {
+               BrowserLinkOpenSettings.shouldOpenInterceptedOpenCommandExternally(
+                   url, respectExternalOpenRules: respectExternalOpenRules) {
                 guard NSWorkspace.shared.open(url) else {
                     result = .err(
                         code: "external_open_failed",

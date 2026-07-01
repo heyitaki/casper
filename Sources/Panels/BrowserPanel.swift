@@ -706,6 +706,27 @@ enum BrowserLinkOpenSettings {
         return false
     }
 
+    /// Whether a URL forwarded by the `open` shim (`Resources/bin/open`) should be
+    /// handed to the user's external browser instead of the embedded panel.
+    ///
+    /// `respectExternalOpenRules` is set exclusively by that shim. The shim reads the
+    /// intercept setting via `defaults read`, which only sees the persistent domain —
+    /// registered defaults (e.g. Casper's external-by-default, or any value never
+    /// written to disk) are invisible to it, so it forwards URLs it should have passed
+    /// to `/usr/bin/open`. Re-checking the real intercept setting here routes
+    /// `open <url>` (vite/gh/npm auto-open, etc.) externally when interception is off.
+    /// Explicit `cmux browser open` never sets the flag, so it still splits into the
+    /// panel. Configured external-open patterns still win regardless of the toggle.
+    static func shouldOpenInterceptedOpenCommandExternally(
+        _ url: URL,
+        respectExternalOpenRules: Bool,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard respectExternalOpenRules else { return false }
+        return !interceptTerminalOpenCommandInCmuxBrowser(defaults: defaults)
+            || shouldOpenExternally(url, defaults: defaults)
+    }
+
     /// Check whether a hostname matches the configured whitelist.
     /// Empty whitelist means "allow all" (no filtering).
     /// Supports exact match and wildcard prefix (`*.example.com`).
