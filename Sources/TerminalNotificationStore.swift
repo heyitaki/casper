@@ -604,7 +604,15 @@ enum AppFocusState {
         if let overrideIsFocused {
             return overrideIsFocused
         }
-        return NSApp.isActive
+        if NSApp.isActive {
+            return true
+        }
+        // CASPER: NSApp.isActive can be stuck false after a missed
+        // didBecomeActive (AppKit-vs-system activation desync — see
+        // AppDelegate+CasperActivationDesyncRepair.swift). Fall back to the
+        // system-side truth so badge dismissal on user clicks isn't dropped
+        // while desynced. Delete if upstream resyncs NSApp.isActive.
+        return CasperActivationDesyncRepairPolicy.isSystemActive
     }
 
     static func isAppFocused() -> Bool {

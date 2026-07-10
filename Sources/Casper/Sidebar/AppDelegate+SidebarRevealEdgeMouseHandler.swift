@@ -18,7 +18,10 @@ extension AppDelegate {
             cmuxDebugLog(
                 "sidebar.click.context x=\(Int(event.locationInWindow.x)) y=\(Int(event.locationInWindow.y)) " +
                 "key=\(window.isKeyWindow ? 1 : 0) main=\(window.isMainWindow ? 1 : 0) " +
-                "appActive=\(NSApp.isActive ? 1 : 0) clicks=\(event.clickCount)"
+                "appActive=\(NSApp.isActive ? 1 : 0) " +
+                "sysActive=\(CasperActivationDesyncRepairPolicy.isSystemActive ? 1 : 0) " +
+                "mods=\(event.modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue) " +
+                "clicks=\(event.clickCount)"
             )
         }
         #endif

@@ -14453,6 +14453,15 @@ private extension NSWindow {
            AppDelegate.shared?.handleSidebarRevealTrailingEdgeMouseDown(window: self, event: event) == true {
             return
         }
+        // CASPER: repair AppKit-vs-system activation desync before dispatch, but
+        // AFTER the chrome/reveal-strip interceptors — their nextEvent tracking
+        // loops service the main queue, so makeKey()'s deferred didBecomeKey work
+        // must not be scheduled ahead of them. Delete if upstream resyncs
+        // NSApp.isActive after a missed didBecomeActive
+        // (see AppDelegate+CasperActivationDesyncRepair.swift).
+        if event.type == .leftMouseDown {
+            AppDelegate.shared?.casperRepairActivationDesyncForMouseDown(window: self, event: event)
+        }
 #if DEBUG
         defer {
             if event.type == .keyDown {

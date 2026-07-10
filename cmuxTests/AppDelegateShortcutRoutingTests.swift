@@ -2478,6 +2478,41 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         )
     }
 
+    func testActivationDesyncRepairPolicyMatrix() {
+        // CASPER: regression coverage for the "sidebar dead until Space switch"
+        // strand — the OS kept routing input to the app (arrow keys consumed by
+        // the file explorer) while NSApp.isActive was stuck false, so AppKit's
+        // click-to-activate no-op'd and the #3856 gate swallowed every click.
+        // Precondition (caller-guarded): AppKit-inactive, main workspace window.
+        XCTAssertEqual(
+            CasperActivationDesyncRepairPolicy.decide(
+                systemActive: true, windowIsKey: false
+            ),
+            CasperActivationDesyncRepairPolicy.Decision(
+                requestActivation: true, restoreKeyWindow: true
+            ),
+            "Desync (system active, AppKit inactive) restores key status and re-requests activation"
+        )
+        XCTAssertEqual(
+            CasperActivationDesyncRepairPolicy.decide(
+                systemActive: false, windowIsKey: false
+            ),
+            CasperActivationDesyncRepairPolicy.Decision(
+                requestActivation: true, restoreKeyWindow: false
+            ),
+            "Genuine background click only nudges activation — the #3856 gate keeps its first-click swallow"
+        )
+        XCTAssertEqual(
+            CasperActivationDesyncRepairPolicy.decide(
+                systemActive: true, windowIsKey: true
+            ),
+            CasperActivationDesyncRepairPolicy.Decision(
+                requestActivation: true, restoreKeyWindow: false
+            ),
+            "Already-key window has nothing to restore but still re-requests activation"
+        )
+    }
+
     func testSidebarRevealInterceptBypassesShiftClicksForTerminalSelection() {
         // CASPER: shift+drag is ghostty's text-selection path while a TUI
         // (Claude Code, vim) captures the mouse; a selection starting in the
