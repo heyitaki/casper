@@ -140,13 +140,7 @@ public final class DebugEventLog: @unchecked Sendable {
             let line = entry + "\n"
             guard let data = line.data(using: .utf8) else { return }
 
-            if let handle = FileHandle(forWritingAtPath: Self.logPath) {
-                defer { try? handle.close() }
-                guard (try? handle.seekToEnd()) != nil else { return }
-                try? handle.write(contentsOf: data)
-            } else {
-                FileManager.default.createFile(atPath: Self.logPath, contents: data)
-            }
+            CappedLogWriter.append(data, toFileAtPath: Self.logPath)
         }
     }
 

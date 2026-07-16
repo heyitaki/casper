@@ -13,6 +13,7 @@ import os
 import Sentry
 import Bonsplit
 import CMUXAgentLaunch
+import CMUXDebugLog
 import CMUXMobileCore
 import CMUXPasteboardFidelity
 import IOSurface
@@ -1755,7 +1756,6 @@ class GhosttyApp {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
-
     private(set) var app: ghostty_app_t?
     private(set) var config: ghostty_config_t?
     /// Coalesce wakeup → tick dispatches.  The I/O thread may fire wakeup_cb
@@ -1952,6 +1952,7 @@ class GhosttyApp {
     private let backgroundLogURL = GhosttyApp.resolveBackgroundLogURL()
     private let backgroundLogStartUptime = ProcessInfo.processInfo.systemUptime
     private let backgroundLogLock = NSLock()
+    private let backgroundLogQueue = DispatchQueue(label: "cmux.background-log", qos: .utility)
     private var backgroundLogSequence: UInt64 = 0
     private var appObservers: [NSObjectProtocol] = []
     private var bellAudioSound: NSSound?
@@ -5055,13 +5056,11 @@ class GhosttyApp {
         let line =
             "\(timestamp) seq=\(sequence) t+\(String(format: "%.3f", uptimeMs))ms thread=\(threadLabel) frame60=\(frame60) frame120=\(frame120) cmux bg: \(message)\n"
         if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: backgroundLogURL.path) == false {
-                FileManager.default.createFile(atPath: backgroundLogURL.path, contents: nil)
-            }
-            if let handle = try? FileHandle(forWritingTo: backgroundLogURL) {
-                defer { try? handle.close() }
-                guard (try? handle.seekToEnd()) != nil else { return }
-                try? handle.write(contentsOf: data)
+            let path = backgroundLogURL.path
+            // Enqueue inside the lock so file-write order always matches seq order.
+            // A trim can do ~64MB read + rewrite; run it off the calling (often main) thread.
+            backgroundLogQueue.async {
+                CappedLogWriter.append(data, toFileAtPath: path)
             }
         }
     }
