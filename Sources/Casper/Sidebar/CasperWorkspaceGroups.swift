@@ -215,10 +215,13 @@ enum CasperWorkspaceGroupResolver {
     /// pre-sorted input (so the group holding the most-recent session sorts
     /// first), but rows inside a group are re-sorted by per-entry activity so a
     /// workspace's split-panels are NOT forced adjacent — every session row
-    /// sits at its own reverse-chronological position. The bucket's original
-    /// input index is the stable tiebreak, keeping ties from jittering on every
-    /// status update. Delete the within-group sort if upstream adds first-class
-    /// per-session ordering.
+    /// sits at its own reverse-chronological position. `.none`-activity rows
+    /// still sink to the bottom via `compareEntryActivityDesc`. The bucket's
+    /// original input index is the stable tiebreak, keeping ties from jittering
+    /// on every status update. Supersedes the workspace-block sort this file
+    /// previously used, which forced a workspace's split-panels adjacent.
+    /// Delete the within-group sort if upstream adds first-class per-session
+    /// ordering.
     static func groups(from entries: [CasperSidebarPanelEntry]) -> [CasperWorkspaceGroup] {
         var order: [String] = []
         var buckets: [String: [(index: Int, entry: CasperSidebarPanelEntry)]] = [:]
@@ -450,9 +453,10 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
     let displayName: String
     let isCollapsed: Bool
     /// Drives the trailing `+` button's opacity. The parent
-    /// `CasperWorkspaceGroupSection` flips this to `true` whenever the cursor
-    /// is over the header or any workspace row inside the group, so the
-    /// affordance also reveals while the user is on their way to or from a row.
+    /// `CasperSidebarGroupHeaderRow` flips this to `true` on header hover.
+    /// (Pre-flat-plan this tracked hover across the header AND its rows; the
+    /// flat LazyVStack plan makes rows separate ForEach siblings, so hover is
+    /// header-only now.)
     let showsAddWorkspaceButton: Bool
     /// `⌘N` digit for this group's display position (1 = top group). `nil`
     /// suppresses the badge — groups outside the 1–9 mapping.
@@ -468,8 +472,9 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
     let shortcutHintYOffset: Double
     let onToggle: () -> Void
     let onAddWorkspace: () -> Void
-    /// Closes every session in this group as one batched action (restorable in
-    /// a single ⌘⇧T). Built in ContentView where `TabManager` is in scope.
+    /// Closes every session in this group. Built in ContentView where
+    /// `TabManager` is in scope. Each member lands in upstream's closed-item
+    /// history individually, so ⌘⇧T currently reopens them one at a time.
     let onCloseAll: () -> Void
     /// Fired by the trailing `+` icon's own hover tracker. The parent ORs this
     /// with the section-wide hover so moving the cursor directly over the icon
@@ -613,13 +618,21 @@ struct CasperWorkspaceGroupHeader: View, Equatable {
     }
 }
 
-/// Wraps a workspace group's header and rows so a single hover detector covers
-/// both. The `+` on the header reveals whenever the cursor is anywhere inside
-/// the group's visual bounds — header OR any row.
-struct CasperWorkspaceGroupSection<Content: View>: View {
-    let displayName: String
+/// Standalone group header for the flat-plan LazyVStack branded sidebar.
+/// Unlike the pre-flat-plan group section, this view renders only the header row
+/// and manages its own hover state (no section-wide hover covering the rows
+/// below, since those are separate ForEach siblings in the flat plan).
+/// The `+` button appears on header-self-hover instead of section-wide hover —
+/// a minor UX tradeoff accepted to preserve LazyVStack virtualization.
+///
+/// CASPER: delete with the compact-sidebar patch if upstream adds repo-grouped
+/// panel rows with a flat LazyVStack rendering model.
+struct CasperSidebarGroupHeaderRow: View {
+    let group: CasperWorkspaceGroup
     let isCollapsed: Bool
-    let withinGroupSpacing: CGFloat
+    // CASPER: ⌘N selects a GROUP in branded builds, so the digit badge lives on
+    // the group header rather than on a workspace row. Delete with the
+    // group-selection feature.
     let shortcutDigit: Int?
     let shortcutModifierSymbol: String
     let showsShortcutHint: Bool
@@ -627,47 +640,38 @@ struct CasperWorkspaceGroupSection<Content: View>: View {
     let shortcutHintYOffset: Double
     let onToggle: () -> Void
     let onAddWorkspace: () -> Void
+    /// CASPER: "Close All Sessions" for this group. Delete with the
+    /// group-close feature.
     let onCloseAll: () -> Void
-    @ViewBuilder let content: () -> Content
 
-    @State private var isHoveringSection: Bool = false
+    @State private var isHovering: Bool = false
     @State private var isHoveringAddButton: Bool = false
 
-    private var isHovering: Bool { isHoveringSection || isHoveringAddButton }
+    private var showsAddButton: Bool { isHovering || isHoveringAddButton }
 
     var body: some View {
-        VStack(spacing: withinGroupSpacing) {
-            if !displayName.isEmpty {
-                CasperWorkspaceGroupHeader(
-                    displayName: displayName,
-                    isCollapsed: isCollapsed,
-                    showsAddWorkspaceButton: isHovering,
-                    shortcutDigit: shortcutDigit,
-                    shortcutModifierSymbol: shortcutModifierSymbol,
-                    showsShortcutHint: showsShortcutHint,
-                    shortcutHintXOffset: shortcutHintXOffset,
-                    shortcutHintYOffset: shortcutHintYOffset,
-                    onToggle: onToggle,
-                    onAddWorkspace: onAddWorkspace,
-                    onCloseAll: onCloseAll,
-                    onAddButtonHoverChange: { newValue in
-                        guard isHoveringAddButton != newValue else { return }
-                        isHoveringAddButton = newValue
-                    }
-                )
-                // CASPER: see CasperWorkspaceGroupHeader ==(_:_:).
-                .equatable()
+        CasperWorkspaceGroupHeader(
+            displayName: group.displayName,
+            isCollapsed: isCollapsed,
+            showsAddWorkspaceButton: showsAddButton,
+            shortcutDigit: shortcutDigit,
+            shortcutModifierSymbol: shortcutModifierSymbol,
+            showsShortcutHint: showsShortcutHint,
+            shortcutHintXOffset: shortcutHintXOffset,
+            shortcutHintYOffset: shortcutHintYOffset,
+            onToggle: onToggle,
+            onAddWorkspace: onAddWorkspace,
+            onCloseAll: onCloseAll,
+            onAddButtonHoverChange: { newValue in
+                guard isHoveringAddButton != newValue else { return }
+                isHoveringAddButton = newValue
             }
-            if !isCollapsed {
-                content()
-            }
-        }
-        .contentShape(Rectangle())
+        )
+        .equatable()
         .overlay {
             CasperHoverTracker { hovering in
-                let next = (isCollapsed && !hovering) ? false : hovering
-                guard isHoveringSection != next else { return }
-                isHoveringSection = next
+                guard isHovering != hovering else { return }
+                isHovering = hovering
             }
         }
     }
@@ -729,10 +733,17 @@ struct CasperSidebarPanelRow: View, Equatable {
     // Delete if upstream introduces Observation-tracked sidebar rows that
     // skip closure-driven invalidation.
     nonisolated static func == (lhs: CasperSidebarPanelRow, rhs: CasperSidebarPanelRow) -> Bool {
-        lhs.entry == rhs.entry
+        lhs.entry == rhs.entry &&
+        lhs.isInMultiSelection == rhs.isInMultiSelection
     }
 
     let entry: CasperSidebarPanelEntry
+    /// True when this row's workspace is part of a Shift-click or Cmd-click
+    /// multi-selection range. Drives the accent-tinted background that mirrors
+    /// the non-branded `TabItemView.isMultiSelected` treatment.
+    /// Excluded from the snapshot-boundary rule — it's a plain Bool snapshot
+    /// derived from `selectedTabIds` in the parent, not a store reference.
+    let isInMultiSelection: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
     /// Right-click context-menu action bundle. Closures only — excluded from ==.
@@ -766,6 +777,13 @@ struct CasperSidebarPanelRow: View, Equatable {
         selectedBackground.opacity(0.22)
     }
 
+    /// Accent-tinted background for rows in the multi-selection range that are
+    /// not the primary focused row. Mirrors `sidebarWorkspaceRowBackgroundStyle`'s
+    /// `.solidFill` / `.leftRail` isMultiSelected branch at 25% opacity.
+    private var multiSelectionBackground: Color {
+        Color(nsColor: cmuxAccentNSColor(for: colorScheme)).opacity(0.25)
+    }
+
     var body: some View {
         let activity = entry.activity
         let highlight = self.highlight
@@ -774,7 +792,10 @@ struct CasperSidebarPanelRow: View, Equatable {
             switch highlight {
             case .selected: return selectedBackground
             case .sibling: return siblingBackground
-            case .none: return Color.clear
+            // CASPER: a row outside the selected workspace can still be part of
+            // a Shift/Cmd-click multi-selection range; that tint ranks below the
+            // sibling wash so the focused workspace's panels stay distinguishable.
+            case .none: return isInMultiSelection ? multiSelectionBackground : Color.clear
             }
         }()
         // Outer Button (vs. `.onTapGesture`) so the inner close Button cleanly

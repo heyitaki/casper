@@ -38,6 +38,15 @@ enum PanelTabActions {
         AppDelegate.shared?.canMoveSurfaceToNewWorkspace(panelId: panelId) ?? false
     }
 
+    // CASPER: #3890 port — expose existing-workspace move targets so the unified
+    // panel menu shows a "Move Tab" submenu with all workspaces, matching
+    // GhosttyNSView+MoveTabToNewWorkspace upstream. Delete when upstream adds
+    // a unified panel menu that covers browser/markdown/file-preview panels too.
+    static func workspaceMoveTargets(panelId: UUID) -> [AppDelegate.WorkspaceMoveTarget] {
+        guard let app = AppDelegate.shared else { return [] }
+        return app.workspaceMoveTargets(forSurface: panelId)
+    }
+
     static func moveTabToNewWorkspace(panelId: UUID) {
         guard canMoveTabToNewWorkspace(panelId: panelId) else {
             NSSound.beep()
@@ -48,6 +57,18 @@ enum PanelTabActions {
             focus: true,
             focusWindow: false
         )
+    }
+
+    static func moveTabToWorkspace(panelId: UUID, workspaceId: UUID) {
+        guard AppDelegate.shared?.moveSurface(
+            panelId: panelId,
+            toWorkspace: workspaceId,
+            focus: true,
+            focusWindow: true
+        ) == true else {
+            NSSound.beep()
+            return
+        }
     }
 
     static func closeTab(workspaceId: UUID, panelId: UUID) {
@@ -155,9 +176,20 @@ final class PanelTabActionMenuController: NSObject {
             action: #selector(panelCloseTab(_:))
         )
 
-        if PanelTabActions.canMoveTabToNewWorkspace(panelId: panelId) {
+        appendMoveTabMenuItems(to: menu)
+    }
+
+    // CASPER: #3890 port — "Move Tab" submenu mirrors GhosttyNSView appendMoveCurrentSurfaceMoveMenuItems
+    // but covers all panel types. Delete if upstream unifies terminal/browser/other panel menus.
+    private func appendMoveTabMenuItems(to menu: NSMenu) {
+        let canMoveToNewWorkspace = PanelTabActions.canMoveTabToNewWorkspace(panelId: panelId)
+        let workspaceTargets = PanelTabActions.workspaceMoveTargets(panelId: panelId)
+        guard canMoveToNewWorkspace || !workspaceTargets.isEmpty else { return }
+
+        if workspaceTargets.isEmpty {
+            // Only new-workspace is available — show a flat item.
             let moveItem = menu.addItem(
-                withTitle: String(localized: "panelContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"),
+                withTitle: String(localized: "terminalContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"),
                 action: #selector(panelMoveTabToNewWorkspace(_:)),
                 keyEquivalent: ""
             )
@@ -166,7 +198,49 @@ final class PanelTabActionMenuController: NSObject {
                 systemSymbolName: "rectangle.portrait.and.arrow.right",
                 accessibilityDescription: nil
             )
+            return
         }
+
+        // Multiple destinations — show a "Move Tab ▸" submenu.
+        let topItem = NSMenuItem(
+            title: String(localized: "terminalContextMenu.moveTab", defaultValue: "Move Tab"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        topItem.image = NSImage(
+            systemSymbolName: "rectangle.stack.badge.play",
+            accessibilityDescription: nil
+        )
+        let submenu = NSMenu()
+        if canMoveToNewWorkspace {
+            let newWorkspaceItem = submenu.addItem(
+                withTitle: String(localized: "terminalContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"),
+                action: #selector(panelMoveTabToNewWorkspace(_:)),
+                keyEquivalent: ""
+            )
+            newWorkspaceItem.target = self
+            newWorkspaceItem.image = NSImage(
+                systemSymbolName: "rectangle.portrait.and.arrow.right",
+                accessibilityDescription: nil
+            )
+            submenu.addItem(.separator())
+        }
+        for target in workspaceTargets {
+            let item = NSMenuItem(
+                title: target.label,
+                action: #selector(panelMoveTabToWorkspace(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = target.workspaceId
+            item.image = NSImage(
+                systemSymbolName: "rectangle.portrait.on.rectangle.portrait",
+                accessibilityDescription: nil
+            )
+            submenu.addItem(item)
+        }
+        topItem.submenu = submenu
+        menu.addItem(topItem)
 
         // CASPER: archive this one session (or, for multi-session workspaces,
         // the whole workspace).
@@ -228,6 +302,15 @@ final class PanelTabActionMenuController: NSObject {
 
     @objc private func panelMoveTabToNewWorkspace(_ sender: Any?) {
         PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
+    }
+
+    @objc private func panelMoveTabToWorkspace(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let targetWorkspaceId = item.representedObject as? UUID else {
+            NSSound.beep()
+            return
+        }
+        PanelTabActions.moveTabToWorkspace(panelId: panelId, workspaceId: targetWorkspaceId)
     }
 
     @objc private func panelToggleArchive(_ sender: Any?) {
@@ -307,11 +390,35 @@ private struct PanelTabActionsContextMenu: ViewModifier {
             }
             .keyboardShortcut(closeTabShortcut)
 
-            if PanelTabActions.canMoveTabToNewWorkspace(panelId: panelId) {
-                Button {
-                    PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
-                } label: {
-                    Text(String(localized: "panelContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"))
+            // CASPER: #3890 port — submenu mirrors the AppKit version above.
+            // Delete if upstream unifies panel context menus.
+            let workspaceTargets = PanelTabActions.workspaceMoveTargets(panelId: panelId)
+            let canMoveToNewWorkspace = PanelTabActions.canMoveTabToNewWorkspace(panelId: panelId)
+            if canMoveToNewWorkspace || !workspaceTargets.isEmpty {
+                if workspaceTargets.isEmpty {
+                    Button {
+                        PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
+                    } label: {
+                        Text(String(localized: "terminalContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"))
+                    }
+                } else {
+                    Menu(String(localized: "terminalContextMenu.moveTab", defaultValue: "Move Tab")) {
+                        if canMoveToNewWorkspace {
+                            Button {
+                                PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
+                            } label: {
+                                Text(String(localized: "terminalContextMenu.moveTabToNewWorkspace", defaultValue: "Move Tab to New Workspace"))
+                            }
+                            Divider()
+                        }
+                        ForEach(workspaceTargets) { target in
+                            Button {
+                                PanelTabActions.moveTabToWorkspace(panelId: panelId, workspaceId: target.workspaceId)
+                            } label: {
+                                Text(target.label)
+                            }
+                        }
+                    }
                 }
             }
 

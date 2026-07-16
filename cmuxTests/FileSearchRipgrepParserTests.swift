@@ -119,11 +119,14 @@ final class FileSearchRipgrepParserTests: XCTestCase {
 }
 
 final class FileSearchOutputPipelineTests: XCTestCase {
-    func testFinishPreservesLimitedStatusFromTrailingBufferedLine() async throws {
+    func testFinishStopsAtHardMaxFromTrailingBufferedLine() async throws {
+        // CASPER: fork pipeline paginates — hardMaxResults replaces maxResults,
+        // the snapshot timer is gone, and the hard cap reports `.matches` +
+        // shouldStopProcess (hasMore drives pagination) instead of `.limited`.
         let pipeline = FileSearchOutputPipeline(
             rootPath: "/tmp/project",
-            maxResults: 1,
-            snapshotInterval: 60
+            hardMaxResults: 1,
+            initialEmissionTarget: 1
         )
         let line = try makeMatchLine(relativePath: "Sources/App.swift")
 
@@ -132,28 +135,31 @@ final class FileSearchOutputPipelineTests: XCTestCase {
 
         let finalUpdate = await pipeline.finish(status: 0)
 
-        XCTAssertEqual(finalUpdate.status, .limited(1))
+        XCTAssertEqual(finalUpdate.status, .matches)
         XCTAssertEqual(finalUpdate.results.map(\.relativePath), ["Sources/App.swift"])
         XCTAssertFalse(finalUpdate.isSearching)
         XCTAssertTrue(finalUpdate.shouldStopProcess)
     }
 
-    func testFinishKeepsEarlierLimitedStatusAfterStreamingLimit() async throws {
+    func testFinishKeepsStopAfterStreamingHitsHardMax() async throws {
+        // CASPER: fork pipeline paginates — hardMaxResults replaces maxResults,
+        // the snapshot timer is gone, and the hard cap reports `.matches` +
+        // shouldStopProcess (hasMore drives pagination) instead of `.limited`.
         let pipeline = FileSearchOutputPipeline(
             rootPath: "/tmp/project",
-            maxResults: 1,
-            snapshotInterval: 60
+            hardMaxResults: 1,
+            initialEmissionTarget: 1
         )
         let line = try makeMatchLine(relativePath: "Sources/App.swift") + "\n"
 
         let maybeStreamingUpdate = await pipeline.consumeStdout(Data(line.utf8))
         let streamingUpdate = try XCTUnwrap(maybeStreamingUpdate)
-        XCTAssertEqual(streamingUpdate.status, .limited(1))
+        XCTAssertEqual(streamingUpdate.status, .matches)
         XCTAssertTrue(streamingUpdate.shouldStopProcess)
 
         let finalUpdate = await pipeline.finish(status: 0)
 
-        XCTAssertEqual(finalUpdate.status, .limited(1))
+        XCTAssertEqual(finalUpdate.status, .matches)
         XCTAssertEqual(finalUpdate.results.map(\.relativePath), ["Sources/App.swift"])
         XCTAssertFalse(finalUpdate.isSearching)
         XCTAssertTrue(finalUpdate.shouldStopProcess)

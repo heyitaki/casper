@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import CmuxUpdater
 import SwiftUI
 import WebKit
 
@@ -55,18 +56,18 @@ final class InactivePaneFirstClickFocusTests: XCTestCase {
         XCTAssertFalse(view.acceptsFirstMouse(for: nil))
     }
 
-    func testMarkdownPointerObserverAcceptsFirstMouseWhenSettingEnabled() {
+    func testMarkdownWebViewAcceptsFirstMouseWhenSettingEnabled() {
         UserDefaults.standard.set(true, forKey: settingsKey)
 
-        let view = MarkdownPanelPointerObserverView(frame: .zero)
+        let view = MarkdownWebView(frame: .zero, configuration: WKWebViewConfiguration())
 
         XCTAssertTrue(view.acceptsFirstMouse(for: nil))
     }
 
-    func testMarkdownPointerObserverRejectsFirstMouseWhenSettingDisabled() {
+    func testMarkdownWebViewRejectsFirstMouseWhenSettingDisabled() {
         UserDefaults.standard.set(false, forKey: settingsKey)
 
-        let view = MarkdownPanelPointerObserverView(frame: .zero)
+        let view = MarkdownWebView(frame: .zero, configuration: WKWebViewConfiguration())
 
         XCTAssertFalse(view.acceptsFirstMouse(for: nil))
     }
@@ -152,10 +153,12 @@ final class InactivePaneFirstClickFocusTests: XCTestCase {
         var selectedTabIds: Set<UUID> = [initialWorkspace.id]
         var lastSidebarSelectionIndex: Int? = 0
         let sidebar = VerticalTabsSidebar(
-            updateViewModel: UpdateViewModel(),
+            updateViewModel: UpdateStateModel(),
             fileExplorerState: FileExplorerState(),
+            windowId: UUID(),
             onToggleSidebar: {},
             onNewTab: {},
+            observedWindow: nil,
             selection: Binding(
                 get: { selection },
                 set: { selection = $0 }

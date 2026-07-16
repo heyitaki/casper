@@ -283,7 +283,7 @@ enum CasperArchiveSubmitDetector {
 
 /// Bottom-of-sidebar "Archive" section: a collapsible header (archivebox icon,
 /// title, count) over the supplied archived rows. Mirrors
-/// `CasperWorkspaceGroupSection`'s header styling so archived rows read as the
+/// the repo group header's styling so archived rows read as the
 /// same kind of list, with a distinct icon to signal the stashed state. Render
 /// only when there is at least one archived session.
 struct CasperArchiveSection<Content: View>: View {

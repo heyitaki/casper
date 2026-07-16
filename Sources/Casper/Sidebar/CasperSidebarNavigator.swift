@@ -108,7 +108,7 @@ enum CasperSidebarNavigator {
         notificationStore: TerminalNotificationStore
     ) -> [CasperSidebarPanelEntry] {
         // Drop rows inside collapsed groups, matching the view (which collapses
-        // only named groups — see `CasperWorkspaceGroupSection`).
+        // only named groups — see `CasperSidebarRenderPlan.build`).
         let collapsedKeys = CasperWorkspaceGroupCollapseStore.shared.collapsedKeys
         return orderedGroups(tabManager: tabManager, notificationStore: notificationStore)
             .filter { $0.displayName.isEmpty || !collapsedKeys.contains($0.key) }

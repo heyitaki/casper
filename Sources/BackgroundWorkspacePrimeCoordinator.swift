@@ -6,6 +6,7 @@ final class BackgroundWorkspacePrimeCoordinator {
     private nonisolated enum PrimeCompletionReason: String {
         case alreadyCleared = "already_cleared"
         case cancelled
+        case noSurfaceWork = "no_surface_work"
         case surfaceReady = "surface_ready"
         case timeout
         case workspaceRemoved = "workspace_removed"
@@ -156,6 +157,19 @@ final class BackgroundWorkspacePrimeCoordinator {
             tabManager.releaseBackgroundWorkspaceMount(for: workspaceId)
             return .alreadyCleared
         }
+        guard let workspace = tabManager.tabs.first(where: { $0.id == workspaceId }) else {
+            tabManager.completeBackgroundWorkspaceLoad(for: workspaceId)
+            return .workspaceRemoved
+        }
+        guard workspace.hasBackgroundPrimeTerminalSurfaceStartWork() else {
+            tabManager.completeBackgroundWorkspaceLoad(for: workspaceId)
+            return .noSurfaceWork
+        }
+        guard !workspace.hasLoadedBackgroundPrimeTerminalSurface() else {
+            tabManager.completeBackgroundWorkspaceLoad(for: workspaceId)
+            return .surfaceReady
+        }
+
         tabManager.retainBackgroundWorkspaceMount(for: workspaceId)
 
 #if DEBUG
@@ -193,6 +207,14 @@ final class BackgroundWorkspacePrimeCoordinator {
         guard let workspace = tabManager.tabs.first(where: { $0.id == workspaceId }) else {
             tabManager.completeBackgroundWorkspaceLoad(for: workspaceId)
             return .completed(reason: .workspaceRemoved)
+        }
+        guard workspace.hasBackgroundPrimeTerminalSurfaceStartWork() else {
+            tabManager.completeBackgroundWorkspaceLoad(for: workspaceId)
+            return .completed(reason: .noSurfaceWork)
+        }
+        guard !workspace.hasLoadedBackgroundPrimeTerminalSurface() else {
+            tabManager.completeBackgroundWorkspaceLoad(for: workspaceId)
+            return .completed(reason: .surfaceReady)
         }
 
         workspace.requestBackgroundPrimeTerminalSurfaceStartIfNeeded()
