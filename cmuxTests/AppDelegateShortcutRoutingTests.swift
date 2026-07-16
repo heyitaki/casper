@@ -2563,7 +2563,9 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             isPanelFocused: isPanelFocused,
             isPinned: isPinned,
             activity: activity,
-            withinWorkspaceOrder: 0
+            withinWorkspaceOrder: 0,
+            isArchived: false,
+            isMultiPanelWorkspace: false
         )
         return CasperSidebarPanelRow(
             entry: entry,
@@ -2571,12 +2573,16 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             onClose: onClose,
             actions: CasperSidebarRowActions(
                 hasWorkingDirectory: false,
+                canForkAgent: false,
                 onRename: {},
                 onRevealInFinder: {},
                 onOpenWorkingDirectory: {},
                 onCopyPath: {},
                 onTogglePin: {},
-                onDuplicate: {}
+                onDuplicate: {},
+                onForkSession: {},
+                onToggleArchive: {},
+                onArchiveWorkspace: {}
             )
         )
     }

@@ -1819,7 +1819,8 @@ final class RecentlyClosedBrowserStackTests: XCTestCase {
             originalTabIndex: index,
             fallbackSplitOrientation: .horizontal,
             fallbackSplitInsertFirst: false,
-            fallbackAnchorPaneId: UUID()
+            fallbackAnchorPaneId: UUID(),
+            panelSnapshot: nil
         )
     }
 }

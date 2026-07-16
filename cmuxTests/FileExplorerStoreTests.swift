@@ -530,7 +530,8 @@ final class FileExplorerStoreTests: XCTestCase {
                 ),
             ],
             status: .matches,
-            isSearching: false
+            isSearching: false,
+            hasMore: false
         ))
 
         // Re-binding to the same workspace id is a no-op; per-workspace state
@@ -563,7 +564,8 @@ final class FileExplorerStoreTests: XCTestCase {
                 ),
             ],
             status: .matches,
-            isSearching: false
+            isSearching: false,
+            hasMore: false
         ))
 
         store.beginWorkspace(UUID())
@@ -833,7 +835,8 @@ final class FileSearchControllerTests: XCTestCase {
             query: "needle",
             results: [Self.searchResult(relativePath: "first.txt")],
             status: .searching,
-            isSearching: true
+            isSearching: true,
+            hasMore: false
         ))
         let originalRequestCount = searchController.searchRequests.count
 
@@ -851,7 +854,8 @@ final class FileSearchControllerTests: XCTestCase {
             query: "needle",
             results: [Self.searchResult(relativePath: "first.txt")],
             status: .matches,
-            isSearching: false
+            isSearching: false,
+            hasMore: false
         ))
 
         XCTAssertEqual(searchController.searchRequests.count, originalRequestCount + 1)
@@ -955,6 +959,8 @@ final class FileSearchControllerTests: XCTestCase {
                 options: options
             ))
         }
+
+        func loadMore() {}
 
         func publish(_ snapshot: FileSearchSnapshot) {
             onSnapshotChanged?(snapshot)
