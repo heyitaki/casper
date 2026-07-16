@@ -339,7 +339,7 @@ Adds a collapsible **Archive** section at the bottom of the compact sidebar. Rig
 These upstream files are touched by fork patches and tend to drift upstream. Re-check each when running `git merge upstream/main`:
 
 - `Sources/Workspace.swift`
-  - No longer touched by Casper: the reopen-last-closed patch was retired in the 2026-07 merge in favor of upstream's `ClosedItemHistoryStore`.
+  - The reopen-last-closed patch specifically was retired in the 2026-07 merge in favor of upstream's `ClosedItemHistoryStore`, but the file is still live: touched by patch 4 (`tabBarVisibility: .multipleTabs` in `BonsplitConfiguration`), the activity publisher, the `appendLog` compatibility seam, and the archive patch (`sessionPanelSnapshot(…)` writes `archived:`, `applySessionPanelMetadata` re-registers it on restore). Re-validate all of the above on the next upstream merge — do not assume this file is untouched.
 - `Sources/KeyboardShortcutSettings.swift`, `Sources/KeyboardShortcutContext.swift`
   - Touched by the session-nav patch (4 new actions + `.nonBrowserPanel` context + `casperEventEditsTextInput`). If upstream adds arrow-key actions, re-check default-shortcut collisions.
 
@@ -354,7 +354,7 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
 - `Sources/BackgroundWorkspacePrimeCoordinator.swift`
   - Touched by the restore-time agent warmup patch (`Policy.maxConcurrentPrimes` cap + `withTaskGroup` parallel driver in `primePendingBackgroundWorkspaces`). If upstream rewrites the coordinator's pending-loop, re-validate the bounded-parallelism rewrite.
 - `Sources/RestorableAgentSession.swift`
-  - No longer touched by Casper: upstream's own `forkShellCommand` superseded the fork patch in the 2026-07 merge.
+  - The fork patch specifically was retired in the 2026-07 merge (upstream's own `forkShellCommand` superseded it), but the file is still live: touched by the `freshLaunchShellCommand` + orphan-transcript resume fallback (small CASPER hunk, see above). Re-validate that hunk on the next upstream merge — do not assume this file is untouched.
 - `Sources/WindowDecorationsController.swift`
   - Touched by the minimal-mode window-movable policy (one-line call to `CasperMinimalModeWindowMovable.apply` inside `apply(to:)`). Re-add if upstream rewrites the decorations apply path.
 - `Sources/GhosttyTerminalView.swift`

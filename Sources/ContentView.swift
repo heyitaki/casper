@@ -12966,6 +12966,8 @@ struct VerticalTabsSidebar: View {
                 for panelId in tab.sidebarOrderedPanelIds() {
                     let panelPaths = CasperAgentActivity.claudeJSONLPaths(forPanel: panelId, in: tab)
                     if !panelPaths.isEmpty { claudePanelSessions[panelId] = panelPaths }
+                    let codexPanelIDs = CasperAgentActivity.codexSessionIDs(forPanel: panelId, in: tab)
+                    if !codexPanelIDs.isEmpty { codexPanelSessions[panelId] = codexPanelIDs }
                 }
             }
         }

@@ -177,6 +177,12 @@ final class PanelTabActionMenuController: NSObject {
         )
 
         appendMoveTabMenuItems(to: menu)
+
+        // CASPER: archive is independent of whether any Move Tab destination
+        // exists — must not live inside appendMoveTabMenuItems's early
+        // returns (that nesting silently dropped Archive/Archive Workspace
+        // for single-workspace users during the 2026-07 upstream merge).
+        appendArchiveMenuItems(to: menu)
     }
 
     // CASPER: #3890 port — "Move Tab" submenu mirrors GhosttyNSView appendMoveCurrentSurfaceMoveMenuItems
@@ -241,36 +247,40 @@ final class PanelTabActionMenuController: NSObject {
         }
         topItem.submenu = submenu
         menu.addItem(topItem)
+    }
 
-        // CASPER: archive this one session (or, for multi-session workspaces,
-        // the whole workspace).
-        if PanelTabActions.archiveAvailable {
-            menu.addItem(.separator())
-            let archived = PanelTabActions.isSessionArchived(panelId: panelId)
-            let archiveItem = menu.addItem(
-                withTitle: archived
-                    ? String(localized: "sidebar.session.menu.unarchive", defaultValue: "Move to Active Sessions")
-                    : String(localized: "sidebar.session.menu.archive", defaultValue: "Archive Session"),
-                action: #selector(panelToggleArchive(_:)),
+    // CASPER: archive this one session (or, for multi-session workspaces, the
+    // whole workspace). Independent of Move Tab's targets — must run
+    // unconditionally from appendActions, not nested inside
+    // appendMoveTabMenuItems, whose early returns (no targets / new-workspace
+    // only) would otherwise skip it.
+    private func appendArchiveMenuItems(to menu: NSMenu) {
+        guard PanelTabActions.archiveAvailable else { return }
+        menu.addItem(.separator())
+        let archived = PanelTabActions.isSessionArchived(panelId: panelId)
+        let archiveItem = menu.addItem(
+            withTitle: archived
+                ? String(localized: "sidebar.session.menu.unarchive", defaultValue: "Move to Active Sessions")
+                : String(localized: "sidebar.session.menu.archive", defaultValue: "Archive Session"),
+            action: #selector(panelToggleArchive(_:)),
+            keyEquivalent: ""
+        )
+        archiveItem.target = self
+        archiveItem.image = NSImage(
+            systemSymbolName: archived ? "tray.and.arrow.up" : "archivebox",
+            accessibilityDescription: nil
+        )
+        if !archived && PanelTabActions.canArchiveWorkspace(workspaceId: workspaceId) {
+            let archiveWorkspaceItem = menu.addItem(
+                withTitle: String(localized: "sidebar.session.menu.archiveWorkspace", defaultValue: "Archive Workspace"),
+                action: #selector(panelArchiveWorkspace(_:)),
                 keyEquivalent: ""
             )
-            archiveItem.target = self
-            archiveItem.image = NSImage(
-                systemSymbolName: archived ? "tray.and.arrow.up" : "archivebox",
+            archiveWorkspaceItem.target = self
+            archiveWorkspaceItem.image = NSImage(
+                systemSymbolName: "archivebox.fill",
                 accessibilityDescription: nil
             )
-            if !archived && PanelTabActions.canArchiveWorkspace(workspaceId: workspaceId) {
-                let archiveWorkspaceItem = menu.addItem(
-                    withTitle: String(localized: "sidebar.session.menu.archiveWorkspace", defaultValue: "Archive Workspace"),
-                    action: #selector(panelArchiveWorkspace(_:)),
-                    keyEquivalent: ""
-                )
-                archiveWorkspaceItem.target = self
-                archiveWorkspaceItem.image = NSImage(
-                    systemSymbolName: "archivebox.fill",
-                    accessibilityDescription: nil
-                )
-            }
         }
     }
 

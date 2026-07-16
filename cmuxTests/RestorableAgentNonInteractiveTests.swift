@@ -309,7 +309,10 @@ final class RestorableAgentNonInteractiveTests: XCTestCase {
         let projectsDir = homeDirectory
             .appendingPathComponent(".claude/projects/\(encoded)", isDirectory: true)
         try fileManager.createDirectory(at: projectsDir, withIntermediateDirectories: true)
-        try Data().write(to: projectsDir.appendingPathComponent("\(sessionId).jsonl"))
+        // Non-empty: claudeTranscriptFileExists requires size > 0 (regularNonEmptyFileExists),
+        // so a zero-byte fixture file is indistinguishable from "no transcript" and would
+        // silently fall through to the fresh-launch path instead of the one under test.
+        try Data(#"{"type":"summary"}"#.utf8).write(to: projectsDir.appendingPathComponent("\(sessionId).jsonl"))
 
         let live = SessionRestorableAgentSnapshot(
             kind: .claude,
@@ -373,7 +376,11 @@ final class RestorableAgentNonInteractiveTests: XCTestCase {
         XCTAssertTrue(unwrapped.contains("--resume"), unwrapped)
         XCTAssertTrue(unwrapped.contains("sess-1234"), unwrapped)
         XCTAssertTrue(unwrapped.contains("--fork-session"), unwrapped)
-        XCTAssertTrue(unwrapped.contains("cd '/work/repo' &&"), unwrapped)
+        let expectedPrefix = TerminalStartupWorkingDirectoryPrefix.optionalChangeDirectoryPrefix(for: "/work/repo")
+        XCTAssertNotNil(expectedPrefix)
+        if let expectedPrefix {
+            XCTAssertTrue(unwrapped.contains(expectedPrefix), unwrapped)
+        }
     }
 
     func testForkShellCommandCodexUsesForkSubcommandNotResume() {
@@ -418,15 +425,19 @@ final class RestorableAgentNonInteractiveTests: XCTestCase {
     // (e.g. produced by Fork Session itself) must stay forkable AND resumable.
     // The sanitizer hard-blocks a leading `fork`, so the shared codex argv
     // builder peels the leading `fork <parent>` and substitutes the new id.
+    // Realistic-shaped codex session identifiers: looksLikeCodexSessionIdentifier requires
+    // either a "019" prefix or a >=20-char hex/dash string, matching real codex rollout IDs.
+    // Short human-readable placeholders (e.g. "parent-1111") don't satisfy this and silently
+    // skip the fork-positional stripping this test exists to exercise.
     private func codexForkLaunchedSnapshot() -> SessionRestorableAgentSnapshot {
         SessionRestorableAgentSnapshot(
             kind: .codex,
-            sessionId: "new-9999",
+            sessionId: "01997c3a-eeee-7fff-8000-111111111111",
             workingDirectory: "/work",
             launchCommand: AgentLaunchCommandSnapshot(
                 launcher: "codex",
                 executablePath: "/opt/bin/codex",
-                arguments: ["/opt/bin/codex", "fork", "parent-1111", "-m", "gpt-x"],
+                arguments: ["/opt/bin/codex", "fork", "01997c3a-aaaa-7bbb-8ccc-dddddddddddd", "-m", "gpt-x"],
                 workingDirectory: "/work",
                 environment: nil,
                 capturedAt: nil,
@@ -447,9 +458,9 @@ final class RestorableAgentNonInteractiveTests: XCTestCase {
         XCTAssertNotNil(unwrapped)
         guard let unwrapped else { return }
         XCTAssertTrue(unwrapped.contains("'fork'"), unwrapped)
-        XCTAssertTrue(unwrapped.contains("new-9999"), unwrapped)
+        XCTAssertTrue(unwrapped.contains("01997c3a-eeee-7fff-8000-111111111111"), unwrapped)
         XCTAssertTrue(unwrapped.contains("'-m' 'gpt-x'"), unwrapped)
-        XCTAssertFalse(unwrapped.contains("parent-1111"), unwrapped)
+        XCTAssertFalse(unwrapped.contains("01997c3a-aaaa-7bbb-8ccc-dddddddddddd"), unwrapped)
     }
 
     func testResumeCommandCodexForkLaunchedSessionIsResumable() {
@@ -459,9 +470,9 @@ final class RestorableAgentNonInteractiveTests: XCTestCase {
         XCTAssertNotNil(command)
         guard let command else { return }
         XCTAssertTrue(command.contains("'resume'"), command)
-        XCTAssertTrue(command.contains("new-9999"), command)
+        XCTAssertTrue(command.contains("01997c3a-eeee-7fff-8000-111111111111"), command)
         XCTAssertTrue(command.contains("'-m' 'gpt-x'"), command)
-        XCTAssertFalse(command.contains("parent-1111"), command)
+        XCTAssertFalse(command.contains("01997c3a-aaaa-7bbb-8ccc-dddddddddddd"), command)
         XCTAssertFalse(command.contains("'fork'"), command)
     }
 }
