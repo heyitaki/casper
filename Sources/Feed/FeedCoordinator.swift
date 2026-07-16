@@ -300,10 +300,16 @@ extension FeedCoordinator {
             text: text
         )
         // CASPER: replying to an archived agent session from the Feed is a
-        // submit — pull that session back into the active list. Delete with the
-        // archive feature.
+        // submit — pull that session back into the active list. The composed
+        // reply text is typed input by construction, so it bypasses the
+        // terminal-keystroke arming requirement. Delete with the archive
+        // feature.
         if let panelUUID = UUID(uuidString: target.surfaceId) {
-            CasperArchiveStore.shared.noteUserSubmit(panelId: panelUUID)
+            CasperArchiveStore.shared.noteUserSubmit(
+                panelId: panelUUID,
+                origin: .feed,
+                requireTypedInput: false
+            )
         }
         return true
     }

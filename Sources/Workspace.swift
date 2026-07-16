@@ -851,7 +851,7 @@ extension Workspace {
         // Stale pre-restore ids are dropped by pruneMissing after the tab list
         // is rebuilt. Delete with the archive feature (`CasperArchiveStore`).
         if snapshot.archived == true {
-            CasperArchiveStore.shared.archive(panelId)
+            CasperArchiveStore.shared.archive(panelId, origin: .restore)
         }
 
         if let title = snapshot.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {

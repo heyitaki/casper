@@ -9496,9 +9496,11 @@ struct VerticalTabsSidebar: View {
             // CASPER: drop archive ids for panels that no longer exist (their
             // workspace closed, or restored under a new id) so the set doesn't
             // accumulate staleness. Safe here — an event handler, not a body
-            // computation. Delete with the archive feature.
-            let livePanelIds = Set(tabManager.tabs.flatMap { $0.panels.keys })
-            archiveStore.pruneMissing(livePanelIds: livePanelIds)
+            // computation. Pruned across ALL windows' panels, not just this
+            // sidebar's tabManager, or a tab-list change in one window would
+            // wipe the other windows' archived sessions. Delete with the
+            // archive feature.
+            archiveStore.pruneMissingAcrossMainWindows(origin: .tabsChange, including: tabManager)
         }
         .onReceive(NotificationCenter.default.publisher(for: SidebarDragLifecycleNotification.requestClear)) { notification in
             guard draggedTabId != nil else { return }
@@ -9732,14 +9734,11 @@ struct VerticalTabsSidebar: View {
             },
             // CASPER: archive every session in the workspace. The panel ids are
             // resolved on click (menu gate lives on entry.isMultiPanelWorkspace),
-            // so no bonsplit tree walk runs during the sidebar render. Order is
-            // irrelevant for a set insert, so `panels` is filtered directly.
-            onArchiveWorkspace: { [weak tabManager] in
-                guard let workspace = tabManager?.tabs.first(where: { $0.id == workspaceId }) else { return }
-                let terminalPanelIds = workspace.panels.compactMap {
-                    $0.value.panelType == .terminal ? $0.key : nil
-                }
-                CasperArchiveStore.shared.archivePanels(terminalPanelIds)
+            // so no bonsplit tree walk runs during the sidebar render. Shares
+            // the panel-menu implementation so the id-resolution logic can't
+            // drift between the two entrypoints.
+            onArchiveWorkspace: {
+                PanelTabActions.archiveWorkspace(workspaceId: workspaceId)
             }
         )
     }

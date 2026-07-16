@@ -7073,13 +7073,24 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 
     @IBAction func paste(_ sender: Any?) {
         guard prepareSurfaceForPaste(reason: "paste.missingSurface") else { return }
+        casperArmArchivedSessionForPaste()
         _ = performBindingAction("paste_from_clipboard")
     }
 
     /// Pastes clipboard text as plain text, stripping any rich formatting.
     @IBAction func pasteAsPlainText(_ sender: Any?) {
         guard prepareSurfaceForPaste(reason: "pasteAsPlainText.missingSurface") else { return }
+        casperArmArchivedSessionForPaste()
         _ = performBindingAction("paste_from_clipboard")
+    }
+
+    // CASPER: pasting into an archived session is composed content, but the
+    // pasted text is injected by Ghostty's binding action and never hits
+    // keyDown — arm submit-unarchive here so a following plain Return counts
+    // as a submit. Delete with the archive feature (`CasperArchiveStore`).
+    private func casperArmArchivedSessionForPaste() {
+        guard CasperArchiveStore.shared.hasArchivedSessions, let terminalSurface else { return }
+        CasperArchiveStore.shared.noteTypedInput(panelId: terminalSurface.id)
     }
 
     private func applyConfiguredMenuShortcut(_ shortcut: StoredShortcut, to item: NSMenuItem) {
@@ -7604,15 +7615,6 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 #if DEBUG
             dismissNotificationMs = (ProcessInfo.processInfo.systemUptime - dismissNotificationStart) * 1000.0
 #endif
-            // CASPER: a submitted command / agent message (plain Return, not
-            // Shift/Option+Return) in an archived session pulls that session back
-            // into the active list. The hasArchivedSessions gate short-circuits
-            // to a single bool read on this keystroke hot path when nothing is
-            // archived (the common case). Delete with the archive feature.
-            if CasperArchiveStore.shared.hasArchivedSessions,
-               CasperArchiveSubmitDetector.isSubmitReturn(event) {
-                CasperArchiveStore.shared.noteUserSubmit(panelId: terminalSurface.id)
-            }
         }
         let flags = ShortcutStroke.normalizedModifierFlags(from: event.modifierFlags)
         if !cmuxFindEventIsPlainEscape(event) { endFindEscapeSuppression() }
@@ -7634,6 +7636,24 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 #if DEBUG
         keyboardCopyModeMs = (ProcessInfo.processInfo.systemUptime - keyboardCopyModeStart) * 1000.0
 #endif
+        // CASPER: a submitted command / agent message (plain Return, not
+        // Shift/Option+Return) in an archived session pulls that session back
+        // into the active list — but only after the user typed into it since
+        // archiving (composing keystrokes "arm" the panel), so a bare Enter
+        // into a pager/TUI prompt can't silently drain the archive. Placed
+        // after the copy-mode consumption check: keystrokes copy mode swallows
+        // (j/k/h/l scrollback navigation) never reach the shell and must not
+        // arm, while Cmd-chorded keys that bypass copy mode still count. The
+        // hasArchivedSessions gate short-circuits to a single bool read on this
+        // keystroke hot path when nothing is archived (the common case).
+        // Delete with the archive feature (`CasperArchiveStore`).
+        if let terminalSurface, CasperArchiveStore.shared.hasArchivedSessions {
+            if CasperArchiveSubmitDetector.isSubmitReturn(event) {
+                CasperArchiveStore.shared.noteUserSubmit(panelId: terminalSurface.id)
+            } else if CasperArchiveSubmitDetector.isComposingKeystroke(event) {
+                CasperArchiveStore.shared.noteTypedInput(panelId: terminalSurface.id)
+            }
+        }
 #if DEBUG
         recordKeyLatency(path: "keyDown", event: event)
 #endif

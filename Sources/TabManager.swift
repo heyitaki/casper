@@ -7829,10 +7829,12 @@ extension TabManager {
         // CASPER: drop any archive ids that didn't come back under a live panel
         // (pre-restore sessions whose ids are now gone). The restored sessions
         // were re-archived under their new panel ids during the loop above.
-        // Delete with the archive feature (`CasperArchiveStore`).
-        CasperArchiveStore.shared.pruneMissing(
-            livePanelIds: Set(newTabs.flatMap { $0.panels.keys })
-        )
+        // Pruned across ALL windows' panels, not just this TabManager's — the
+        // store is app-global, and windows restore sequentially. `including:
+        // self` is required: this runs before the window registers in
+        // `mainWindowContexts`. Delete with the archive feature
+        // (`CasperArchiveStore`).
+        CasperArchiveStore.shared.pruneMissingAcrossMainWindows(origin: .restore, including: self)
         pruneBackgroundWorkspaceLoads(existingIds: existingIds)
         sidebarSelectedWorkspaceIds.formIntersection(existingIds)
         for workspace in previousTabs {

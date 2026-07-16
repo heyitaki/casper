@@ -200,7 +200,7 @@ extension Workspace {
         // fast-path gate). This is the per-panel teardown chokepoint, so it also
         // covers workspace close and split-panel close. Delete with the archive
         // feature (`CasperArchiveStore`).
-        CasperArchiveStore.shared.unarchive(panelId)
+        CasperArchiveStore.shared.unarchive(panelId, origin: .teardown)
         manualUnreadPanelIds.remove(panelId)
         manualUnreadMarkedAt.removeValue(forKey: panelId)
         panelShellActivityStates.removeValue(forKey: panelId)

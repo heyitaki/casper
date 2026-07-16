@@ -3258,6 +3258,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
 
+        // CASPER: sidebar-archive membership must dirty the fingerprint —
+        // otherwise archiving/unarchiving alone never triggers an autosave and
+        // the flags only reach disk when unrelated state changes (and are lost
+        // entirely on a non-graceful exit). Delete with the archive feature
+        // (`CasperArchiveStore`).
+        hasher.combine(CasperArchiveStore.shared.archivedPanelIds)
+
         return hasher.finalize()
     }
 
