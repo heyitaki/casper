@@ -18,10 +18,10 @@ enum CasperRelativeTime {
         if hours < 24 { return "\(hours)h" }
         let days = hours / 24
         if days < 7 { return "\(days)d" }
-        let weeks = days / 7
-        if weeks < 52 { return "\(weeks)w" }
-        let years = days / 365
-        return "\(years)y"
+        // Gate the week branch on days (not weeks): at day 364, weeks is
+        // already 52 but years is still 0, which rendered "0y".
+        if days < 365 { return "\(days / 7)w" }
+        return "\(days / 365)y"
     }
 }
 

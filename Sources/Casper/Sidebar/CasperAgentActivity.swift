@@ -6,6 +6,7 @@
 // Workspace.
 
 import Foundation
+import SQLite3
 import SwiftUI
 
 /// 4-state activity classification for a single workspace.
@@ -61,10 +62,27 @@ enum CasperAgentActivity {
         for workspace: Workspace,
         notificationStore: TerminalNotificationStore
     ) -> CasperWorkspaceActivity {
-        return classifyActivity(
+        return classifyWorkspaceScoped(
             agentEntries: allAgentEntries(in: workspace),
             workspace: workspace,
             notificationStore: notificationStore
+        )
+    }
+
+    /// Workspace-scoped candidate bundle, shared by `activity(for:)` and the
+    /// single-terminal `panelActivity` branch (panel == workspace there) so
+    /// the two call sites can't drift on what "workspace scope" includes.
+    private static func classifyWorkspaceScoped(
+        agentEntries: [SidebarStatusEntry],
+        workspace: Workspace,
+        notificationStore: TerminalNotificationStore
+    ) -> CasperWorkspaceActivity {
+        classifyActivity(
+            agentEntries: agentEntries,
+            unreadCount: notificationStore.unreadCount(forTabId: workspace.id),
+            notificationDate: notificationStore.latestNotification(forTabId: workspace.id)?.createdAt,
+            claudeHistoryDate: claudeActivityDate(for: workspace),
+            codexHistoryDate: codexActivityDate(for: workspace)
         )
     }
 
@@ -88,16 +106,16 @@ enum CasperAgentActivity {
         let panelStatusKeys = workspace.agentPIDKeysByPanelId[panelId] ?? []
         if panelStatusKeys.isEmpty {
             if terminalPanelCount <= 1 {
-                return classifyActivity(
-                    agentEntries: allAgentEntries(in: workspace),
-                    workspace: workspace,
-                    notificationStore: notificationStore
-                )
+                return activity(for: workspace, notificationStore: notificationStore)
             }
             // Multi-panel, no live PID attribution — check per-panel JSONL
             // dates so panels retain their "done" timestamp after session-end
-            // clears the PID + status atomically.
-            if let panelDate = claudeActivityDate(forPanelId: panelId) {
+            // clears the PID + status atomically. Most-recent agent wins.
+            let panelDates = [
+                claudeActivityDate(forPanelId: panelId, in: workspace),
+                codexActivityDate(forPanelId: panelId),
+            ]
+            if let panelDate = panelDates.compactMap({ $0 }).max() {
                 return CasperWorkspaceActivity(state: .done, lastActivityAt: panelDate)
             }
             return CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
@@ -107,10 +125,27 @@ enum CasperAgentActivity {
             guard agentStatusKeys.contains(statusKey.lowercased()) else { return nil }
             return workspace.statusEntries[statusKey]
         }
+        if terminalPanelCount <= 1 {
+            // Single terminal: panel == workspace, and the panel-keyed
+            // activity stores aren't populated for single-panel workspaces —
+            // workspace-scoped candidates ARE this panel's candidates.
+            return classifyWorkspaceScoped(
+                agentEntries: agentEntries,
+                workspace: workspace,
+                notificationStore: notificationStore
+            )
+        }
+        // Multi-panel: every candidate must be scoped to THIS panel. Passing
+        // workspace-level JSONL/notification dates here made all sibling rows
+        // report the most-recently-active sibling's time (the aggregation this
+        // file's attribution machinery exists to avoid).
+        let latestNotification = notificationStore.latestNotification(forTabId: workspace.id)
         return classifyActivity(
             agentEntries: agentEntries,
-            workspace: workspace,
-            notificationStore: notificationStore
+            unreadCount: notificationStore.hasUnreadNotification(forTabId: workspace.id, surfaceId: panelId) ? 1 : 0,
+            notificationDate: latestNotification?.surfaceId == panelId ? latestNotification?.createdAt : nil,
+            claudeHistoryDate: claudeActivityDate(forPanelId: panelId, in: workspace),
+            codexHistoryDate: codexActivityDate(forPanelId: panelId)
         )
     }
 
@@ -129,58 +164,85 @@ enum CasperAgentActivity {
         return String(pidKey[..<dotIndex])
     }
 
-    private static func classifyActivity(
+    /// Pure classification over caller-scoped candidates. Callers decide the
+    /// attribution scope: `activity(for:)` passes workspace-level candidates,
+    /// `panelActivity` passes panel-level ones — classification itself never
+    /// reaches back into workspace-wide state, so a panel row can't inherit a
+    /// sibling's timestamp.
+    ///
+    /// `lastActivityAt` is the max across every scoped candidate for all
+    /// states (a working session keeps sorting by its live JSONL stream, not
+    /// the status-change instant).
+    ///
+    /// History candidates are "real user-visible activity" only. We
+    /// deliberately exclude `workspace.logEntries.last?.timestamp` even
+    /// though it has a timestamp — `appendSidebarLog` fires `Date()` for
+    /// system events like port-conflict warnings during terminal reconnect,
+    /// which pegs every restored workspace to "<1m" the moment they come
+    /// back. Same category as `/resume` / `/compact`: not real user activity.
+    ///
+    /// Claude JSONL is the history fallback (parsed off-main into
+    /// `CasperClaudeActivityStore`) — the latest real user/assistant message
+    /// timestamp in `~/.claude/projects/<dashed-cwd>/*.jsonl`, skipping
+    /// metadata-only resume records and compact-summary turns.
+    static func classifyActivity(
         agentEntries: [SidebarStatusEntry],
-        workspace: Workspace,
-        notificationStore: TerminalNotificationStore
+        unreadCount: Int,
+        notificationDate: Date?,
+        claudeHistoryDate: Date?,
+        codexHistoryDate: Date?
     ) -> CasperWorkspaceActivity {
+        let agentMax = agentEntries.map(\.timestamp).max()
+        let lastActivityAt = [agentMax, notificationDate, claudeHistoryDate, codexHistoryDate]
+            .compactMap { $0 }
+            .max()
         // WORKING / NEEDS_INPUT only fire when cmux's hook system has live
         // agent state. Working wins over everything; needs-input includes
         // unread notifications even if the agent entry says Idle.
         if agentEntries.contains(where: isWorkingValue) {
-            return CasperWorkspaceActivity(
-                state: .working,
-                lastActivityAt: agentEntries.map(\.timestamp).max()
-            )
+            return CasperWorkspaceActivity(state: .working, lastActivityAt: lastActivityAt)
         }
-        let unreadCount = notificationStore.unreadCount(forTabId: workspace.id)
         if agentEntries.contains(where: isNeedsInputValue) || (unreadCount > 0 && !agentEntries.isEmpty) {
-            let agentMax = agentEntries.map(\.timestamp).max()
-            let notifDate = notificationStore.latestNotification(forTabId: workspace.id)?.createdAt
-            let lastActivityAt = [agentMax, notifDate].compactMap { $0 }.max()
             return CasperWorkspaceActivity(state: .needsInput, lastActivityAt: lastActivityAt)
         }
-
-        // DONE: real user-visible activity only. We deliberately exclude
-        // `workspace.logEntries.last?.timestamp` even though it has a
-        // timestamp — `appendSidebarLog` fires `Date()` for system events
-        // like port-conflict warnings during terminal reconnect, which pegs
-        // every restored workspace to "<1m" the moment they come back. Same
-        // category as `/resume` / `/compact`: not real user activity.
-        //
-        // Claude JSONL is the per-workspace fallback (parsed off-main into
-        // `CasperClaudeActivityStore`) — finds the latest real user/assistant
-        // message timestamp in `~/.claude/projects/<dashed-cwd>/*.jsonl`,
-        // skipping metadata-only resume records and compact-summary turns.
-        let agentMax = agentEntries.map(\.timestamp).max()
-        let notifDate = notificationStore.latestNotification(forTabId: workspace.id)?.createdAt
-        let claudeDate = claudeActivityDate(for: workspace)
-        let candidates = [agentMax, notifDate, claudeDate].compactMap { $0 }
-        if let lastActivityAt = candidates.max() {
+        if let lastActivityAt {
             return CasperWorkspaceActivity(state: .done, lastActivityAt: lastActivityAt)
         }
         return CasperWorkspaceActivity(state: .none, lastActivityAt: nil)
     }
 
-    /// Pure snapshot read against `CasperClaudeActivityStore` — no I/O. The
+    /// Snapshot read against `CasperClaudeActivityStore` — dict lookups only,
+    /// no file I/O (the path fallback may TTL-kick the hook map's off-main
+    /// refresh, same as the sidebar's own `claudeJSONLPaths` body reads). The
     /// store is refreshed off-main by the sidebar whenever the visible
-    /// workspaces' JSONL path set changes.
+    /// workspaces' JSONL path set changes. When the UUID-keyed runtime map has
+    /// no entry yet (cold start: workspace/panel UUIDs are minted fresh on
+    /// every session restore, so no UUID survives a relaunch), falls back to
+    /// the path-keyed disk cache via this workspace's memoized JSONL paths.
     private static func claudeActivityDate(for workspace: Workspace) -> Date? {
-        CasperClaudeActivityStore.shared.latestActivity(forWorkspaceID: workspace.id)
+        if let live = CasperClaudeActivityStore.shared.latestActivity(forWorkspaceID: workspace.id) {
+            return live
+        }
+        return CasperClaudeActivityStore.shared.latestActivity(
+            forJSONLPaths: claudeJSONLPaths(for: workspace)
+        )
     }
 
-    private static func claudeActivityDate(forPanelId panelId: UUID) -> Date? {
-        CasperClaudeActivityStore.shared.latestActivity(forPanelID: panelId)
+    private static func claudeActivityDate(forPanelId panelId: UUID, in workspace: Workspace) -> Date? {
+        if let live = CasperClaudeActivityStore.shared.latestActivity(forPanelID: panelId) {
+            return live
+        }
+        return CasperClaudeActivityStore.shared.latestActivity(
+            forJSONLPaths: claudeJSONLPaths(forPanel: panelId, in: workspace)
+        )
+    }
+
+    private static func codexActivityDate(for workspace: Workspace) -> Date? {
+        CasperCodexActivityStore.shared.latestActivity(forWorkspaceID: workspace.id)
+    }
+
+    private static func codexActivityDate(forPanelId panelId: UUID) -> Date? {
+        CasperCodexActivityStore.shared.latestActivity(forPanelID: panelId)
     }
 
     /// JSONL paths to scan for this workspace's last activity. Always tied
@@ -198,8 +260,8 @@ enum CasperAgentActivity {
     ///    workspace sharing a cwd (e.g. all `~/code/pixie` tabs) to the
     ///    most-recently-active sibling's time. Better to show no time than
     ///    a wildly misleading one.
-    /// Paths are sorted so identical sets hash identically for the activity
-    /// store's per-path-set dedup.
+    /// Paths are sorted so equal sets compare equal wherever they're used as
+    /// grouping/refresh keys, independent of dict iteration order.
     static func claudeJSONLPaths(
         for workspace: Workspace,
         now: Date = Date()
@@ -267,7 +329,7 @@ enum CasperAgentActivity {
         guard !sid.isEmpty else { return [] }
         let cwd = (snapshot.workingDirectory ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cwd.isEmpty else { return [] }
-        return [claudeJSONLPath(sessionId: sid, cwd: cwd)]
+        return [CasperClaudeSessionPath.jsonlPath(sessionId: sid, cwd: cwd)]
     }
 
     /// Session-attributed fallback paths used when the live hook map has no
@@ -282,7 +344,7 @@ enum CasperAgentActivity {
         // single-panel workspaces pointing at the same JSONL.
         var paths: Set<String> = []
         for (sid, cwd) in validClaudeSnapshots(for: workspace) {
-            paths.insert(claudeJSONLPath(sessionId: sid, cwd: cwd))
+            paths.insert(CasperClaudeSessionPath.jsonlPath(sessionId: sid, cwd: cwd))
         }
         return Array(paths)
     }
@@ -318,6 +380,37 @@ enum CasperAgentActivity {
             guard !cwd.isEmpty else { return nil }
             return (sid, cwd)
         }
+    }
+
+    static func codexSessionIDs(
+        for workspace: Workspace
+    ) -> [String] {
+        let hookIDs = CasperCodexSessionMap.shared.sessionIDs(forWorkspaceID: workspace.id)
+        return hookIDs.isEmpty ? codexSnapshotSessionIDs(for: workspace) : hookIDs.sorted()
+    }
+
+    static func codexSessionIDs(
+        forPanel panelId: UUID,
+        in workspace: Workspace
+    ) -> [String] {
+        let hookIDs = CasperCodexSessionMap.shared.sessionIDs(forPanelID: panelId)
+        return hookIDs.isEmpty ? codexSnapshotSessionIDs(forPanel: panelId, in: workspace) : hookIDs.sorted()
+    }
+
+    private static func codexSnapshotSessionIDs(forPanel panelId: UUID, in workspace: Workspace) -> [String] {
+        guard let snapshot = workspace.restoredAgentSnapshotsByPanelId[panelId],
+              snapshot.kind == .codex else { return [] }
+        let sid = snapshot.sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sid.isEmpty ? [] : [sid]
+    }
+
+    private static func codexSnapshotSessionIDs(for workspace: Workspace) -> [String] {
+        var ids: Set<String> = []
+        for snapshot in workspace.restoredAgentSnapshotsByPanelId.values where snapshot.kind == .codex {
+            let sid = snapshot.sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sid.isEmpty { ids.insert(sid) }
+        }
+        return ids.sorted()
     }
 
     /// Sort comparator: pinned-first, then activity-desc with `.none` last.
@@ -408,10 +501,24 @@ private let casperISO8601Formatter: ISO8601DateFormatter = {
 /// `~/.claude/projects/<dashed-cwd>/<sessionId>.jsonl`. Single source of
 /// truth for the encoding rule — used by the hook session map parser, the
 /// workspace-level snapshot fallback, and the per-panel snapshot fallback.
-fileprivate func claudeJSONLPath(sessionId: String, cwd: String) -> String {
-    let encoded = cwd.replacingOccurrences(of: "/", with: "-")
-    return (NSHomeDirectory() as NSString)
-        .appendingPathComponent(".claude/projects/\(encoded)/\(sessionId).jsonl")
+enum CasperClaudeSessionPath {
+    /// Claude Code encodes the project dir by replacing every non-alphanumeric
+    /// UTF-16 code unit of the cwd with "-" (cli.js `replace(/[^a-zA-Z0-9]/g,
+    /// "-")`), NOT just "/": `/Users/x/code/foo.bar` → `-Users-x-code-foo-bar`,
+    /// `/Users/x/.worktrees/y` → `-Users-x--worktrees-y`. Replacing only "/"
+    /// pointed dotted/underscored cwds at nonexistent project dirs, so those
+    /// sessions never surfaced a sidebar timestamp.
+    static func jsonlPath(sessionId: String, cwd: String) -> String {
+        let units = cwd.utf16.map { unit -> UInt16 in
+            let isAlphanumeric = (unit >= 0x30 && unit <= 0x39)
+                || (unit >= 0x41 && unit <= 0x5A)
+                || (unit >= 0x61 && unit <= 0x7A)
+            return isAlphanumeric ? unit : 0x2D // "-"
+        }
+        let encoded = String(utf16CodeUnits: units, count: units.count)
+        return (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".claude/projects/\(encoded)/\(sessionId).jsonl")
+    }
 }
 
 /// Maps cmux workspace UUIDs to the Claude Code session JSONL paths cmux's
@@ -529,7 +636,7 @@ final class CasperClaudeSessionMap: ObservableObject {
                   let workspaceId = UUID(uuidString: workspaceIdString),
                   let cwd = record["cwd"] as? String
             else { continue }
-            let jsonlPath = claudeJSONLPath(sessionId: sessionId, cwd: cwd)
+            let jsonlPath = CasperClaudeSessionPath.jsonlPath(sessionId: sessionId, cwd: cwd)
             workspaceOut[workspaceId, default: []].append(jsonlPath)
             if let surfaceIdString = record["surfaceId"] as? String,
                let surfaceId = UUID(uuidString: surfaceIdString) {
@@ -540,12 +647,105 @@ final class CasperClaudeSessionMap: ObservableObject {
     }
 }
 
-/// Cheap, stable id for `VerticalTabsSidebar`'s Claude-activity poll task.
-/// Hashing the full `[UUID: [String]]` of per-workspace JSONL paths on
-/// every body eval costs hundreds of string hashes; this two-field id
-/// captures the only inputs that should restart the poll loop.
-struct CasperClaudeSessionsTaskID: Hashable {
+/// Maps cmux workspace UUIDs to Codex native session IDs by reading the
+/// shared hook-session store (`~/.cmuxterm/codex-hook-sessions.json`).
+/// Codex activity is then resolved through Codex's own SQLite thread index,
+/// not by scanning every rollout file.
+@MainActor
+final class CasperCodexSessionMap: ObservableObject {
+    static let shared = CasperCodexSessionMap()
+
+    private struct CachedState {
+        let mtime: Date
+        let map: [UUID: [String]]
+        let panelMap: [UUID: [String]]
+    }
+
+    private var cached: CachedState?
+
+    @Published private(set) var mapVersion: TimeInterval = 0
+
+    private let refreshQueue = DispatchQueue(
+        label: "casper.codex-session-map.refresh",
+        qos: .userInitiated
+    )
+    private var refreshInFlight = false
+    private var lastRefreshKickAt: Date = .distantPast
+    private let refreshKickTTL: TimeInterval = 2.0
+
+    init() {
+        kickRefresh()
+    }
+
+    func sessionIDs(forWorkspaceID id: UUID) -> [String] {
+        kickRefresh()
+        return cached?.map[id] ?? []
+    }
+
+    func sessionIDs(forPanelID id: UUID) -> [String] {
+        kickRefresh()
+        return cached?.panelMap[id] ?? []
+    }
+
+    func kickRefresh() {
+        if refreshInFlight { return }
+        let now = Date()
+        if now.timeIntervalSince(lastRefreshKickAt) < refreshKickTTL { return }
+        refreshInFlight = true
+        lastRefreshKickAt = now
+        let priorMtime = cached?.mtime
+        refreshQueue.async { [weak self] in
+            let next = Self.computeRefresh(priorMtime: priorMtime)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.refreshInFlight = false
+                guard let next else { return }
+                self.cached = next
+                self.mapVersion = next.mtime.timeIntervalSinceReferenceDate
+            }
+        }
+    }
+
+    private static func computeRefresh(priorMtime: Date?) -> CachedState? {
+        let path = RestorableAgentKind.codex.hookStoreFileURL().path
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let mtime = attrs[.modificationDate] as? Date
+        else { return nil }
+        if priorMtime == mtime { return nil }
+        let (workspaceMap, panelMap) = parse(path: path)
+        return CachedState(mtime: mtime, map: workspaceMap, panelMap: panelMap)
+    }
+
+    private static func parse(path: String) -> (workspace: [UUID: [String]], panel: [UUID: [String]]) {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessions = obj["sessions"] as? [String: [String: Any]]
+        else { return ([:], [:]) }
+        var workspaceOut: [UUID: [String]] = [:]
+        var panelOut: [UUID: [String]] = [:]
+        for (sessionId, record) in sessions {
+            let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedSessionId.isEmpty,
+                  let workspaceIdString = record["workspaceId"] as? String,
+                  let workspaceId = UUID(uuidString: workspaceIdString)
+            else { continue }
+            workspaceOut[workspaceId, default: []].append(trimmedSessionId)
+            if let surfaceIdString = record["surfaceId"] as? String,
+               let surfaceId = UUID(uuidString: surfaceIdString) {
+                panelOut[surfaceId, default: []].append(trimmedSessionId)
+            }
+        }
+        return (workspaceOut, panelOut)
+    }
+}
+
+/// Cheap, stable id for `VerticalTabsSidebar`' agent-activity poll task.
+/// Hashing the full `[UUID: [String]]` maps on every body eval costs hundreds
+/// of string hashes; these fields capture the inputs that should restart the
+/// poll loop.
+struct CasperAgentSessionsTaskID: Hashable {
     let mapVersion: TimeInterval
+    let codexMapVersion: TimeInterval
     let workspaceIDs: Set<UUID>
 }
 
@@ -627,6 +827,211 @@ enum CasperClaudeJSONLPathsCache {
     }
 }
 
+/// MainActor snapshot of "latest Codex activity timestamp per workspace"
+/// derived from Codex's own `~/.codex/state_5.sqlite` thread index.
+/// Runtime hook status timestamps still win when present; this fills the
+/// restored/cleared-status gap without scanning rollout JSONLs from SwiftUI.
+@MainActor
+final class CasperCodexActivityStore: ObservableObject {
+    static let shared = CasperCodexActivityStore()
+
+    @Published private(set) var latestActivityByWorkspace: [UUID: Date] = [:]
+    @Published private(set) var latestActivityByPanel: [UUID: Date] = [:]
+
+    private let refreshQueue = DispatchQueue(
+        label: "casper.codex-activity.refresh",
+        qos: .utility
+    )
+    private var inFlightWorkspaces: Set<UUID> = []
+    private var inFlightPanels: Set<UUID> = []
+
+    func latestActivity(forWorkspaceID id: UUID) -> Date? {
+        latestActivityByWorkspace[id]
+    }
+
+    func latestActivity(forPanelID id: UUID) -> Date? {
+        latestActivityByPanel[id]
+    }
+
+    func refresh(workspaceSessions: [UUID: [String]], panelSessions: [UUID: [String]] = [:]) {
+        var toRefresh: [UUID: [String]] = [:]
+        for (id, sessions) in workspaceSessions {
+            if inFlightWorkspaces.contains(id) { continue }
+            inFlightWorkspaces.insert(id)
+            toRefresh[id] = sessions
+        }
+        var panelsToRefresh: [UUID: [String]] = [:]
+        for (id, sessions) in panelSessions {
+            if inFlightPanels.contains(id) { continue }
+            inFlightPanels.insert(id)
+            panelsToRefresh[id] = sessions
+        }
+        #if DEBUG
+        cmuxDebugLog(
+            "casper.codexActivity.refresh.request asked=\(workspaceSessions.count) toRefresh=\(toRefresh.count) panels=\(panelsToRefresh.count)"
+        )
+        #endif
+        guard !toRefresh.isEmpty || !panelsToRefresh.isEmpty else { return }
+
+        var merged: [UUID: [String]] = toRefresh
+        for (id, sessions) in panelsToRefresh { merged[id] = sessions }
+        refreshQueue.async { [weak self] in
+            let start = Date()
+            let allResults = CasperCodexActivityIO.computeActivities(forWorkspaceSessions: merged)
+            let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
+            #if DEBUG
+            let withDate = allResults.values.compactMap { $0 }.count
+            cmuxDebugLog(
+                "casper.codexActivity.refresh.compute ws=\(toRefresh.count) panels=\(panelsToRefresh.count) withDate=\(withDate) elapsedMs=\(elapsedMs)"
+            )
+            #endif
+            Task { @MainActor [weak self] in
+                if let strong = self {
+                    for id in toRefresh.keys { strong.inFlightWorkspaces.remove(id) }
+                    for id in panelsToRefresh.keys { strong.inFlightPanels.remove(id) }
+                }
+                guard let self else { return }
+                var wsSnapshot = self.latestActivityByWorkspace
+                var panelSnapshot = self.latestActivityByPanel
+                var wsChanged = false
+                var panelChanged = false
+                for (id, date) in allResults {
+                    guard let date else { continue }
+                    if toRefresh[id] != nil, wsSnapshot[id] != date {
+                        wsSnapshot[id] = date
+                        wsChanged = true
+                    }
+                    if panelsToRefresh[id] != nil, panelSnapshot[id] != date {
+                        panelSnapshot[id] = date
+                        panelChanged = true
+                    }
+                }
+                if wsChanged {
+                    self.latestActivityByWorkspace = wsSnapshot
+                }
+                if panelChanged {
+                    self.latestActivityByPanel = panelSnapshot
+                }
+                #if DEBUG
+                cmuxDebugLog(
+                    "casper.codexActivity.refresh.publish wsChanged=\(wsChanged) panelChanged=\(panelChanged) storeCount=\(self.latestActivityByWorkspace.count)"
+                )
+                #endif
+            }
+        }
+    }
+}
+
+enum CasperCodexActivityIO {
+    static func computeActivities(
+        forWorkspaceSessions sessions: [UUID: [String]]
+    ) -> [UUID: Date?] {
+        guard !sessions.isEmpty else { return [:] }
+        var groups: [[String]: [UUID]] = [:]
+        var allSessionIDs: Set<String> = []
+        for (id, sessionIDs) in sessions {
+            let normalized = normalizedSessionIDs(sessionIDs)
+            groups[normalized, default: []].append(id)
+            for sessionID in normalized { allSessionIDs.insert(sessionID) }
+        }
+        let dateBySessionID = latestDatesBySessionID(sessionIDs: Array(allSessionIDs))
+        var out: [UUID: Date?] = [:]
+        out.reserveCapacity(sessions.count)
+        for (sessionIDs, ids) in groups {
+            let date = sessionIDs.compactMap { dateBySessionID[$0] }.max()
+            for id in ids { out[id] = date }
+        }
+        return out
+    }
+
+    private static func normalizedSessionIDs(_ ids: [String]) -> [String] {
+        Array(Set(ids.compactMap { raw -> String? in
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        })).sorted()
+    }
+
+    private static func latestDatesBySessionID(sessionIDs: [String]) -> [String: Date] {
+        let normalized = normalizedSessionIDs(sessionIDs)
+        guard !normalized.isEmpty,
+              let snapshot = CodexStateDatabaseSnapshot.make()
+        else { return [:] }
+        defer { snapshot.remove() }
+
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(snapshot.databaseURL.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
+            sqlite3_close(db)
+            return [:]
+        }
+        defer { sqlite3_close(db) }
+
+        let placeholders = Array(repeating: "?", count: normalized.count).joined(separator: ",")
+        let sql = """
+            SELECT id, updated_at_ms
+            FROM threads
+            WHERE archived = 0 AND id IN (\(placeholders))
+            """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            sqlite3_finalize(stmt)
+            return [:]
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        let SQLITE_TRANSIENT_FN = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
+        for (index, sessionID) in normalized.enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), sessionID, -1, SQLITE_TRANSIENT_FN)
+        }
+
+        var out: [String: Date] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let cString = sqlite3_column_text(stmt, 0) else { continue }
+            let sessionID = String(cString: cString)
+            let updatedMs = sqlite3_column_int64(stmt, 1)
+            guard updatedMs > 0 else { continue }
+            out[sessionID] = Date(timeIntervalSince1970: TimeInterval(updatedMs) / 1000.0)
+        }
+        return out
+    }
+
+    private struct CodexStateDatabaseSnapshot {
+        let databaseURL: URL
+        private let directoryURL: URL
+
+        static func make(
+            sourcePath: String = ("~/.codex/state_5.sqlite" as NSString).expandingTildeInPath
+        ) -> CodexStateDatabaseSnapshot? {
+            let fileManager = FileManager.default
+            guard fileManager.fileExists(atPath: sourcePath) else { return nil }
+            let snapshotDir = fileManager.temporaryDirectory.appendingPathComponent(
+                "cmux-codex-activity-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            do {
+                try fileManager.createDirectory(at: snapshotDir, withIntermediateDirectories: true)
+                let snapshotDB = snapshotDir.appendingPathComponent("state.db")
+                try fileManager.copyItem(atPath: sourcePath, toPath: snapshotDB.path)
+                for sidecar in ["-wal", "-shm"] {
+                    let source = sourcePath + sidecar
+                    let destination = snapshotDB.path + sidecar
+                    if fileManager.fileExists(atPath: source) {
+                        try? fileManager.copyItem(atPath: source, toPath: destination)
+                    }
+                }
+                return CodexStateDatabaseSnapshot(databaseURL: snapshotDB, directoryURL: snapshotDir)
+            } catch {
+                try? fileManager.removeItem(at: snapshotDir)
+                return nil
+            }
+        }
+
+        func remove() {
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+    }
+}
+
 /// MainActor snapshot of "latest real-activity timestamp per workspace"
 /// derived from each workspace's recorded Claude Code JSONL session files.
 /// Reads are pure dict lookups; refreshes are dispatched to a background
@@ -645,6 +1050,10 @@ final class CasperClaudeActivityStore: ObservableObject {
 
     @Published private(set) var latestActivityByWorkspace: [UUID: Date] = [:]
     @Published private(set) var latestActivityByPanel: [UUID: Date] = [:]
+    /// Path-keyed dates from every scan (and the disk cache). Workspace and
+    /// panel UUIDs are minted fresh on each session restore, so only this map
+    /// can answer "when was this session last active" across a relaunch.
+    @Published private(set) var latestActivityByPath: [String: Date] = [:]
 
     private let refreshQueue = DispatchQueue(
         label: "casper.claude-activity.refresh",
@@ -659,22 +1068,31 @@ final class CasperClaudeActivityStore: ObservableObject {
     /// within ~1s, but the user sees something immediately instead of an
     /// empty trailing column on cold start.
     ///
-    /// `-v2` suffix: the v1 cache was populated by the cwd-aggregate fallback
-    /// in `computeClaudeJSONLPaths`, which leaked the most-recently-active
-    /// sibling session's timestamp to every workspace sharing a project root.
-    /// Renaming the file ensures the first cold start after the per-session
-    /// attribution fix paints from a fresh scan rather than the stale v1 map.
+    /// `-v3` suffix: v1 was poisoned by the cwd-aggregate fallback; v2 fixed
+    /// attribution but was keyed by workspace UUID — UUIDs don't survive a
+    /// relaunch (session restore mints fresh ones), so v2 could never hit and
+    /// the cold-start paint silently never worked. v3 keys by JSONL path,
+    /// which is stable across restarts.
     private static let cacheURL: URL = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent(".cmuxterm/casper-claude-activity-cache-v2.json")
+        .appendingPathComponent(".cmuxterm/casper-claude-activity-cache-v3.json")
+    private static let legacyCacheURLs: [URL] = [
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".cmuxterm/casper-claude-activity-cache.json"),
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".cmuxterm/casper-claude-activity-cache-v2.json"),
+    ]
 
     init() {
         // Disk read + JSON parse runs off-main so the first `.shared`
         // dereference (which happens on the main thread, during sidebar
         // instantiation at app launch) doesn't block. Results merge into
-        // `latestActivityByWorkspace` without overwriting any entries the
+        // `latestActivityByPath` without overwriting any entries the
         // background scan may have already populated by the time we land
         // back on main.
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            for legacy in Self.legacyCacheURLs {
+                try? FileManager.default.removeItem(at: legacy)
+            }
             let parsed = Self.parseDiskCache()
             guard !parsed.isEmpty else { return }
             Task { @MainActor in
@@ -683,34 +1101,34 @@ final class CasperClaudeActivityStore: ObservableObject {
         }
     }
 
-    private func mergeDiskCache(_ parsed: [UUID: Date]) {
-        var merged = latestActivityByWorkspace
+    private func mergeDiskCache(_ parsed: [String: Date]) {
+        var merged = latestActivityByPath
         var didMerge = false
-        for (id, date) in parsed where merged[id] == nil {
-            merged[id] = date
+        for (path, date) in parsed where merged[path] == nil {
+            merged[path] = date
             didMerge = true
         }
         if didMerge {
             // Single @Published assignment so observers get one publish, not
             // one per merged entry.
-            latestActivityByWorkspace = merged
+            latestActivityByPath = merged
             #if DEBUG
             cmuxDebugLog("casper.claudeActivity.cache.load count=\(parsed.count)")
             #endif
         }
     }
 
-    private static func parseDiskCache() -> [UUID: Date] {
+    private static func parseDiskCache() -> [String: Date] {
         guard let data = try? Data(contentsOf: cacheURL),
               let raw = try? JSONSerialization.jsonObject(with: data) as? [String: String]
         else { return [:] }
-        var out: [UUID: Date] = [:]
+        var out: [String: Date] = [:]
         out.reserveCapacity(raw.count)
-        for (key, value) in raw {
-            guard let id = UUID(uuidString: key),
+        for (path, value) in raw {
+            guard path.hasPrefix("/"),
                   let date = casperISO8601Formatter.date(from: value)
             else { continue }
-            out[id] = date
+            out[path] = date
         }
         return out
     }
@@ -721,25 +1139,25 @@ final class CasperClaudeActivityStore: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             guard let self else { return }
             self.diskSaveScheduled = false
-            let snapshot = self.latestActivityByWorkspace
+            let snapshot = self.latestActivityByPath
             DispatchQueue.global(qos: .utility).async {
                 Self.persist(snapshot)
             }
         }
     }
 
-    private static func persist(_ dict: [UUID: Date]) {
+    private static func persist(_ dict: [String: Date]) {
         // Keep the on-disk cache bounded — over months of use this dict
-        // accumulates an entry per workspace ever seen across forks; only the
+        // accumulates an entry per session ever seen; only the
         // most-recently-active matter for cold-start paint.
         let maxPersistedEntries = 200
-        let trimmed: [(UUID, Date)] = dict.count <= maxPersistedEntries
+        let trimmed: [(String, Date)] = dict.count <= maxPersistedEntries
             ? Array(dict)
             : dict.sorted { $0.value > $1.value }.prefix(maxPersistedEntries).map { ($0.key, $0.value) }
         var raw: [String: String] = [:]
         raw.reserveCapacity(trimmed.count)
-        for (id, date) in trimmed {
-            raw[id.uuidString] = casperISO8601Formatter.string(from: date)
+        for (path, date) in trimmed {
+            raw[path] = casperISO8601Formatter.string(from: date)
         }
         guard let data = try? JSONSerialization.data(withJSONObject: raw) else { return }
         let url = cacheURL
@@ -757,6 +1175,12 @@ final class CasperClaudeActivityStore: ObservableObject {
 
     func latestActivity(forPanelID id: UUID) -> Date? {
         latestActivityByPanel[id]
+    }
+
+    /// Path-keyed lookup for callers whose UUID isn't in the runtime maps yet
+    /// (cold start before the first scan lands). Pure dict reads.
+    func latestActivity(forJSONLPaths paths: [String]) -> Date? {
+        paths.compactMap { latestActivityByPath[$0] }.max()
     }
 
     /// Kicks off a background scan for the given workspace → JSONL-paths map.
@@ -798,10 +1222,10 @@ final class CasperClaudeActivityStore: ObservableObject {
         for (id, paths) in panelsToRefresh { merged[id] = paths }
         refreshQueue.async { [weak self] in
             let start = Date()
-            let allResults = CasperClaudeActivityIO.computeActivities(forWorkspaceSessions: merged)
+            let scan = CasperClaudeActivityIO.computeActivities(forWorkspaceSessions: merged)
             let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
             #if DEBUG
-            let withDate = allResults.values.compactMap { $0 }.count
+            let withDate = scan.byRequestID.values.compactMap { $0 }.count
             cmuxDebugLog(
                 "casper.claudeActivity.refresh.compute ws=\(toRefresh.count) panels=\(panelsToRefresh.count) withDate=\(withDate) elapsedMs=\(elapsedMs)"
             )
@@ -818,7 +1242,7 @@ final class CasperClaudeActivityStore: ObservableObject {
                 var panelSnapshot = self.latestActivityByPanel
                 var wsChanged = false
                 var panelChanged = false
-                for (id, date) in allResults {
+                for (id, date) in scan.byRequestID {
                     guard let date else { continue }
                     if toRefresh[id] != nil, wsSnapshot[id] != date {
                         wsSnapshot[id] = date
@@ -831,14 +1255,25 @@ final class CasperClaudeActivityStore: ObservableObject {
                 }
                 if wsChanged {
                     self.latestActivityByWorkspace = wsSnapshot
-                    self.scheduleDiskSave()
                 }
                 if panelChanged {
                     self.latestActivityByPanel = panelSnapshot
                 }
+                // Path-keyed dates back the cold-start disk cache and the
+                // UUID-miss lookup fallback; fresh scan values win.
+                var pathSnapshot = self.latestActivityByPath
+                var pathChanged = false
+                for (path, date) in scan.datesByPath where pathSnapshot[path] != date {
+                    pathSnapshot[path] = date
+                    pathChanged = true
+                }
+                if pathChanged {
+                    self.latestActivityByPath = pathSnapshot
+                    self.scheduleDiskSave()
+                }
                 #if DEBUG
                 cmuxDebugLog(
-                    "casper.claudeActivity.refresh.publish wsChanged=\(wsChanged) panelChanged=\(panelChanged) storeCount=\(self.latestActivityByWorkspace.count)"
+                    "casper.claudeActivity.refresh.publish wsChanged=\(wsChanged) panelChanged=\(panelChanged) pathChanged=\(pathChanged) storeCount=\(self.latestActivityByWorkspace.count)"
                 )
                 #endif
             }
@@ -849,53 +1284,52 @@ final class CasperClaudeActivityStore: ObservableObject {
 /// Background-only filesystem walker. NEVER call from main — every public
 /// entry point is documented as background-only.
 enum CasperClaudeActivityIO {
-    /// Background-only. Returns `[workspaceID: Date?]` where nil means "no
-    /// JSONLs found or no parseable activity". Caller must dispatch back to
-    /// main for cache updates. Scans workspaces concurrently — for users
-    /// with many open workspaces, sequential 50ms-per-file IO compounds into
-    /// a visible cold-open delay.
+    struct ScanResult {
+        /// Per requested workspace/panel id; nil means "no JSONLs found or no
+        /// parseable activity".
+        let byRequestID: [UUID: Date?]
+        /// Per distinct JSONL path with parseable activity — feeds the
+        /// path-keyed cold-start disk cache.
+        let datesByPath: [String: Date]
+    }
+
+    /// Background-only. Caller must dispatch back to main for cache updates.
+    /// Each distinct path is scanned once, concurrently — for users with many
+    /// open workspaces, sequential 50ms-per-file IO compounds into a visible
+    /// cold-open delay — and every requested id takes the max over its paths.
     static func computeActivities(
         forWorkspaceSessions sessions: [UUID: [String]]
-    ) -> [UUID: Date?] {
-        guard !sessions.isEmpty else { return [:] }
-        // Group workspaces by identical path list. The cwd fallback often
-        // resolves many workspaces to the same project-dir JSONL set; without
-        // dedup that's N×M file reads per poll.
-        var groups: [[String]: [UUID]] = [:]
-        for (id, paths) in sessions {
-            groups[paths, default: []].append(id)
-        }
-        let distinct = Array(groups.keys)
-        var dateByPaths = Array<Date?>(repeating: nil, count: distinct.count)
-        dateByPaths.withUnsafeMutableBufferPointer { buf in
-            DispatchQueue.concurrentPerform(iterations: distinct.count) { i in
-                buf[i] = computeLatestActivity(forJSONLPaths: distinct[i])
+    ) -> ScanResult {
+        guard !sessions.isEmpty else { return ScanResult(byRequestID: [:], datesByPath: [:]) }
+        // Dedup by path (not by identical path *set*): overlapping sets — a
+        // workspace's list and its panels' sublists — still read each file
+        // exactly once per poll.
+        let distinctPaths = Array(Set(sessions.values.flatMap { $0 }))
+        var dateByIndex = Array<Date?>(repeating: nil, count: distinctPaths.count)
+        dateByIndex.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: distinctPaths.count) { i in
+                buf[i] = latestRealActivity(forJSONLPath: distinctPaths[i])
             }
+        }
+        var datesByPath: [String: Date] = [:]
+        datesByPath.reserveCapacity(distinctPaths.count)
+        for (i, path) in distinctPaths.enumerated() {
+            if let date = dateByIndex[i] { datesByPath[path] = date }
         }
         var out: [UUID: Date?] = [:]
         out.reserveCapacity(sessions.count)
-        for (i, paths) in distinct.enumerated() {
-            let date = dateByPaths[i]
-            guard let ids = groups[paths] else { continue }
-            #if DEBUG
-            if date == nil {
-                cmuxDebugLog(
-                    "casper.claudeActivity.miss workspaces=\(ids.count) paths=\(paths.count)"
-                )
-            }
-            #endif
-            for id in ids { out[id] = date }
+        for (id, paths) in sessions {
+            out[id] = paths.compactMap { datesByPath[$0] }.max()
         }
-        return out
-    }
-
-    private static func computeLatestActivity(forJSONLPaths paths: [String]) -> Date? {
-        var latest: Date?
-        for path in paths {
-            guard let activity = latestRealActivity(forJSONLPath: path) else { continue }
-            if latest == nil || activity > latest! { latest = activity }
+        #if DEBUG
+        let missCount = out.values.filter { $0 == nil }.count
+        if missCount > 0 {
+            cmuxDebugLog(
+                "casper.claudeActivity.miss ids=\(missCount) distinctPaths=\(distinctPaths.count)"
+            )
         }
-        return latest
+        #endif
+        return ScanResult(byRequestID: out, datesByPath: datesByPath)
     }
 
     /// Returns the latest `timestamp` on a real user/assistant message in the

@@ -9242,6 +9242,10 @@ struct VerticalTabsSidebar: View {
     // precomputed dict passed through workspaceRows. Delete with the
     // activity-state patch.
     @ObservedObject private var claudeActivityStore = CasperClaudeActivityStore.shared
+    // CASPER: off-main Codex SQLite activity snapshot; complements live
+    // `statusEntries` so restored/cleared Codex sessions can still show
+    // their last thread update time in the compact sidebar.
+    @ObservedObject private var codexActivityStore = CasperCodexActivityStore.shared
     // CASPER: claude-hook session→workspace map, refreshed off-main.
     // Observed here so when a new session registers (mtime changes →
     // `mapVersion` bumps), the sidebar re-evals and restarts the
@@ -9249,6 +9253,8 @@ struct VerticalTabsSidebar: View {
     // reads stay at the sidebar layer. Delete with the activity-state
     // patch.
     @ObservedObject private var claudeSessionMap = CasperClaudeSessionMap.shared
+    // CASPER: codex-hook session→workspace map, refreshed off-main.
+    @ObservedObject private var codexSessionMap = CasperCodexSessionMap.shared
     // CASPER: bridges each visible workspace's narrow `statusEntries`
     // publisher into a single ObservableObject the sidebar observes. After
     // commit 73d79ad0 moved statusEntries onto a sub-ObservableObject,
@@ -9974,31 +9980,46 @@ struct VerticalTabsSidebar: View {
         // shares the same value rather than each subscribing individually.
         let liveShowsModifierShortcutHints = isCasperCompactSidebar && modifierKeyMonitor.isModifierPressed
         let alwaysShowShortcutHints = isCasperCompactSidebar && renderContext.tabItemSettings.alwaysShowShortcutHints
-        // CASPER: drive off-main Claude JSONL activity refresh. Per-workspace
-        // session paths sourced from `~/.cmuxterm/claude-hook-sessions.json`
-        // so each workspace's "last activity" comes from its own JSONLs,
-        // not every JSONL sharing the same cwd. `.task(id:)` re-fires when
-        // the set of visible workspaces changes.
+        // CASPER: drive off-main agent-history activity refresh. Claude uses
+        // exact JSONL paths; Codex uses exact native session IDs resolved
+        // through Codex's SQLite thread index. Both are scoped through hook
+        // records/restored snapshots so activity never aggregates across
+        // sibling sessions in the same cwd. `.task(id:)` re-fires when the
+        // set of visible workspaces or hook-map versions changes.
         // activityByID already keys on every filteredTab id; reuse it instead
         // of a second .map pass over filteredTabs.
         let localWorkspaceIDs: Set<UUID> = Set(activityByID.keys)
-        let claudeNow = Date()
+        let agentActivityNow = Date()
         var claudeWorkspaceSessions: [UUID: [String]] = [:]
         var claudePanelSessions: [UUID: [String]] = [:]
+        var codexWorkspaceSessions: [UUID: [String]] = [:]
+        var codexPanelSessions: [UUID: [String]] = [:]
         for tab in filteredTabs {
             let paths = CasperAgentActivity.claudeJSONLPaths(
                 for: tab,
-                now: claudeNow
+                now: agentActivityNow
             )
             if !paths.isEmpty { claudeWorkspaceSessions[tab.id] = paths }
+            let codexSessionIDs = CasperAgentActivity.codexSessionIDs(
+                for: tab
+            )
+            if !codexSessionIDs.isEmpty { codexWorkspaceSessions[tab.id] = codexSessionIDs }
             if tab.panels.count > 1 {
                 for panelId in tab.sidebarOrderedPanelIds() {
                     let panelPaths = CasperAgentActivity.claudeJSONLPaths(
                         forPanel: panelId,
-                        in: tab
+                        in: tab,
+                        now: agentActivityNow
                     )
                     if !panelPaths.isEmpty {
                         claudePanelSessions[panelId] = panelPaths
+                    }
+                    let panelCodexSessionIDs = CasperAgentActivity.codexSessionIDs(
+                        forPanel: panelId,
+                        in: tab
+                    )
+                    if !panelCodexSessionIDs.isEmpty {
+                        codexPanelSessions[panelId] = panelCodexSessionIDs
                     }
                 }
             }
@@ -10008,8 +10029,9 @@ struct VerticalTabsSidebar: View {
         // N=48 workspaces. The two fields below capture the only inputs
         // that should restart the poll loop: hook-file version (new
         // session registered/cleared) and the visible-workspace set.
-        let claudeWorkspaceSessionsTaskID = CasperClaudeSessionsTaskID(
+        let agentSessionsTaskID = CasperAgentSessionsTaskID(
             mapVersion: claudeSessionMap.mapVersion,
+            codexMapVersion: codexSessionMap.mapVersion,
             workspaceIDs: localWorkspaceIDs
         )
         return VStack(spacing: 0) {
@@ -10108,6 +10130,10 @@ struct VerticalTabsSidebar: View {
                 CasperClaudeActivityStore.shared.refresh(
                     workspaceSessions: claudeWorkspaceSessions,
                     panelSessions: claudePanelSessions
+                )
+                CasperCodexActivityStore.shared.refresh(
+                    workspaceSessions: codexWorkspaceSessions,
+                    panelSessions: codexPanelSessions
                 )
                 try? await Task.sleep(for: .seconds(20))
             }
