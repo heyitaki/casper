@@ -334,6 +334,38 @@ Adds a collapsible **Archive** section at the bottom of the compact sidebar. Rig
   - Selecting an archived session deliberately does **not** unarchive — only a submit does. This is why the trigger lives at the Return keystroke / Feed-send / explicit-menu layer, not at the selection/`focusTab` layer.
 - Deletion condition: delete if upstream adds a first-class sidebar session archive. Retire `CasperArchiveStore.swift`, the `isArchived`/`onToggleArchive`/`onArchiveWorkspace` additions, the `archived` panel-snapshot field + its read/write, the `keyDown`/`FeedCoordinator`/panel-menu hooks, the `AppDelegate.sessionAutosaveFingerprint` archive hash, `cmuxTests/CasperArchiveStoreTests.swift`, and the `casperCompactPanelRow` extraction (fold back inline).
 
+### 13) Fish integration loaded from `vendor_conf.d` (env-based, survives an initial command)
+
+- Files (added):
+  - `Resources/shell-integration/fish/vendor_conf.d/cmux-shell-integration.fish`
+  - `cmuxTests/FishShellIntegrationTests.swift` (`testFishIntegrationLoadsFromVendorConfWithoutInitCommand`, `testVendorConfLoaderDoesNotDoubleSourceUserConfigWhenShellIsNotFish`; the file itself is upstream)
+- Files (upstream files modified):
+  - `Sources/GhosttyTerminalView.swift` — the `XDG_DATA_DIRS` injection this loader depends on (the `// Make <integrationDir>/fish/vendor_conf.d/...` hunk) is Casper-only and previously unowned by any patch section. It is claimed here. `cf1a8c7b6d` deleted the loader but left the injection, so from that merge until this patch the app exported an `XDG_DATA_DIRS` entry pointing at a directory with no `vendor_conf.d` — a dangling injection, and the loudest available signal that the retirement was wrong.
+- Scope (read this before assuming it fixes a resume bug):
+  - **fish-only.** cmux picks the integration branch by `$SHELL`, so a user whose login shell is zsh or bash never reaches the fish branch and is entirely unaffected by this patch. The zsh equivalent of this bug is patch #14, which is a different mechanism and the one that actually bit us.
+- Summary:
+  - Upstream injects fish integration through the *shell command*: `managedFishShellCommand` builds `fish -il --init-command 'source "$CMUX_FISH_INTEGRATION_FILE"'`, applied under `if baseConfig.command?.isEmpty != false`. Restored agent panels set `baseConfig.command` to the resume launcher script, so that branch never runs and those panels get **no** fish integration — no `claude` function, so `claude` resolves through `PATH` to a user-installed binary (e.g. `~/.local/bin/claude` from the native installer) and starts with no cmux hooks. The session never registers in `~/.cmuxterm/claude-hook-sessions.json` and is silently unrestorable on the next launch. zsh/bash reach the same end state by a different route (#14), not via this branch.
+  - Fish sources `$XDG_DATA_DIRS/fish/vendor_conf.d/*.fish` on every startup, so this loader is env-based and applies to every panel regardless of the initial command. It just sources the sibling upstream `config.fish`, keeping the upstream-file footprint at zero for `config.fish` itself. Ghostty ships its own integration the same way.
+  - Two guards the loader must carry, both because `vendor_conf.d` runs in a different slot than `--init-command` (before the user's config rather than after, and on every fish rather than only interactive ones):
+    - `status is-interactive; or return` — `config.fish` has no interactivity guard of its own (upstream never needed one), so without this every `fish -c` from a build script writes a shim, chmods it, and mutates `PATH`.
+    - seed `CMUX_FISH_USER_CONFIG_ALREADY_LOADED` — `config.fish:257` sources the user's own `conf.d` + `config.fish` when it is unset. cmux sets it only in the fish branch, so it is absent whenever `$SHELL` is zsh/bash and the user runs `fish` by hand; without the seed the user's whole fish config is sourced twice (measured).
+  - Double-*loading* is harmless in panels that get both mechanisms: `_cmux_install_cli_wrapper` early-returns via `functions -q`, and `_cmux_path_prepend_unique_directory` dedupes. Verified. That is a narrower claim than load-*order* safety, which the two guards above cover.
+- Deletion condition:
+  - Delete if upstream loads its fish integration from `vendor_conf.d`, or via any other env-based mechanism that survives a non-empty `baseConfig.command`.
+
+### 14) Resume launcher re-enters cmux's `ZDOTDIR` before running the resume command
+
+- Files (upstream files modified):
+  - `Sources/SessionPersistence.swift` (`TerminalStartupReturnShellScript.commandThenReturnLines`: `zshIntegrationReentryLines` hoisted above the `case`, marked `// CASPER:`)
+  - `cmuxTests/AgentSessionAutoResumeSettingsTests.swift` (`testResumeLauncherReentersCmuxZdotdirBeforeRunningResumeCommand`; the file itself is upstream)
+- Summary:
+  - cmux's `.zshenv` restores the user's `ZDOTDIR` as soon as it loads, so by the time the resume launcher script runs, `ZDOTDIR` is the user's again. `commandThenReturnLines` emitted the re-entry block *after* the `case` that runs the resume command, so `zsh -lic '<agent> --resume …'` loaded only the user's config: no cmux integration, therefore no `claude` shell function, therefore `claude` resolved through `PATH` to whatever binary the user has installed (e.g. `~/.local/bin/claude`, which the native Claude installer added on 2026-07-15) and started with **no cmux hooks injected**.
+  - Consequence: every resumed agent ran unregistered and never reported to `~/.cmuxterm/claude-hook-sessions.json`. Confirmed in the field — all 27 resumed `claude --resume` processes carried no `--settings`, and the hook store had frozen at the previous app restart. Sessions survived restore only via the sticky `restoredAgentSnapshotsByPanelId` cache; anything not already in that cache was silently lost.
+  - Hoisting is safe: the block is zsh-gated and only exports, so the trailing `exec -l` sees `ZDOTDIR` exactly as before. Verified directly: `whence -w claude` in the resume shell goes from `claude: command` to `claude: function`.
+  - **This is general, not Casper-specific — upstream it.** It affects any upstream cmux user whose `$SHELL` is zsh. Note bash is not covered either way: the `case` sends `zsh|bash` to `-lic`, but the re-entry block is zsh-only, so bash resumes remain unhooked (pre-existing, untouched here).
+- Deletion condition:
+  - Delete if upstream reorders this itself, or stops restoring `ZDOTDIR` in `.zshenv`.
+
 ## Merge conflict notes
 
 These upstream files are touched by fork patches and tend to drift upstream. Re-check each when running `git merge upstream/main`:
@@ -403,7 +435,7 @@ These upstream files are touched by fork patches and tend to drift upstream. Re-
 Obviated by the 2026-06-09 upstream merge (~1,830 commits):
 
 - **File preview `.ts` routing** — upstream `knownTextResolutionBeforeMedia` (sniffs MPEG-TS byte patterns) supersedes the fork's text-extension fast path. Only the `isExplicitTextFile` shim remains for Finder-row icons.
-- **Fish shell integration (`vendor_conf.d/cmux-shell-integration.fish`)** — upstream shipped `Resources/shell-integration/fish/config.fish` with per-surface CLI shims + a `claude` fish function (functions beat PATH; no re-prepend trick needed). The wrapper itself was renamed `cmux-claude-wrapper` upstream.
+- ~~**Fish shell integration (`vendor_conf.d/cmux-shell-integration.fish`)**~~ — **un-retired; see patch #13.** The 2026-06-09 merge retired this on the belief that upstream's `Resources/shell-integration/fish/config.fish` fully replaced it. It does not: upstream loads that file via the shell command (`fish -il --init-command`), which `GhosttyTerminalView.swift` applies only when `baseConfig.command` is empty. Restored agent panels always set an initial command, so they got no fish integration at all. The retirement also left the `XDG_DATA_DIRS` injection in place with nothing to find — a dangling hunk that should have been the tell. The wrapper rename to `cmux-claude-wrapper` was real and is kept. Note the re-added loader is *not* a copy of the original (which was a self-contained `claude`-wrapper installer, now obsoleted by upstream's `_cmux_install_cli_wrapper`); it is a thin loader that keeps two of the original's guards, `status is-interactive` and load-order safety.
 - **Workspace sidebar grouping by repo path (old `CasperWorkspaceGroupSection`-wrapped-VStack render path)** — the 2026-06 merge temporarily dropped per-panel rows and repo-path grouping in favor of upstream's user-defined WorkspaceGroups. The feature was restored in patch #7 above using a flat `CasperSidebarRenderPlan` + `LazyVStack` approach. `CasperWorkspaceGroupResolver`, `CasperWorkspaceGroups.swift`, and the new `CasperSidebarRenderPlan.swift` are all active fork files.
 - **`CasperBoundedAsyncWorkPool` git-probe driver in TabManager** — upstream's `WorkspaceGitMetadataProbeLimiter` actor + directory-coalesced snapshot requests supersede it. The pool type remains for the warmup coordinator.
 - **Cheap/heavy session-autosave fingerprint split** — upstream's `ProcessDetectedResumeIndexes` has no cheap path; dropped.

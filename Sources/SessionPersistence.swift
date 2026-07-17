@@ -1282,14 +1282,18 @@ nonisolated enum TerminalStartupReturnShellScript {
 
     static func commandThenReturnLines(command: String, workingDirectory: String? = nil) -> [String] {
         let quotedCommand = TerminalStartupShellQuoting.singleQuoted(command)
-        var lines = [
-            shellLine,
-            #"case "${_cmux_resume_shell:t}" in"#,
-            #"  zsh|bash) "$_cmux_resume_shell" -lic \#(quotedCommand) ;;"#,
-            #"  csh|tcsh) "$_cmux_resume_shell" -c \#(quotedCommand) ;;"#,
-            #"  *) "$_cmux_resume_shell" -c \#(quotedCommand) ;;"#,
-            #"esac"#,
-        ] + zshIntegrationReentryLines
+        // CASPER: cmux's .zshenv restores the user's ZDOTDIR as soon as it loads, so re-entry must
+        // precede the resume command, not just the trailing `exec -l` — otherwise the resumed agent
+        // runs without cmux's integration and starts with no hooks. See docs/casper-fork.md #14.
+        var lines = [shellLine]
+            + zshIntegrationReentryLines
+            + [
+                #"case "${_cmux_resume_shell:t}" in"#,
+                #"  zsh|bash) "$_cmux_resume_shell" -lic \#(quotedCommand) ;;"#,
+                #"  csh|tcsh) "$_cmux_resume_shell" -c \#(quotedCommand) ;;"#,
+                #"  *) "$_cmux_resume_shell" -c \#(quotedCommand) ;;"#,
+                #"esac"#,
+            ]
         // The resume command's `cd` runs inside the child shell above, so after the resumed agent
         // exits the outer login shell would otherwise land in this script's launch cwd (the surface
         // default), not the session's directory. Return the outer shell to the session's working
