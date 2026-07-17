@@ -161,6 +161,92 @@ struct FishShellIntegrationTests {
         )
     }
 
+    /// Restored agent panels spawn with a non-empty initial command, so
+    /// `managedFishShellCommand`'s `--init-command` never applies and fish must load
+    /// the integration from `$XDG_DATA_DIRS/fish/vendor_conf.d` instead.
+    @Test(.enabled(if: fishExecutablePath != nil))
+    func testFishIntegrationLoadsFromVendorConfWithoutInitCommand() throws {
+        let fishExecutable = try requireFishExecutable()
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cmux-fish-vendor-conf-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let testIntegrationDir = try stageIntegrationDir(in: root)
+        var environment = baseFishEnvironment(
+            root: root,
+            integrationDir: testIntegrationDir,
+            fishExecutable: fishExecutable
+        )
+        environment["XDG_DATA_DIRS"] = testIntegrationDir.path
+        environment["CMUX_SURFACE_ID"] = "33333333-3333-3333-3333-333333333333"
+
+        // No --init-command: the restored-panel shape, where XDG_DATA_DIRS is the only
+        // thing that can load the integration.
+        let result = runProcess(
+            executablePath: fishExecutable,
+            arguments: ["-i", "-c", "claude test"],
+            environment: environment,
+            timeout: 5
+        )
+
+        expectFalse(result.timedOut, result.stderr)
+        expectEqual(result.status, 0, result.stderr)
+        expectTrue(result.stdout.contains("cmux-claude-wrapper test"), result.stdout + result.stderr)
+    }
+
+    /// cmux injects XDG_DATA_DIRS for every shell but sets
+    /// CMUX_FISH_USER_CONFIG_ALREADY_LOADED only when $SHELL is fish, so a zsh/bash
+    /// user running `fish` by hand reaches the loader with it unset.
+    @Test(.enabled(if: fishExecutablePath != nil))
+    func testVendorConfLoaderDoesNotDoubleSourceUserConfigWhenShellIsNotFish() throws {
+        let fishExecutable = try requireFishExecutable()
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("cmux-fish-double-source-\(UUID().uuidString)")
+        let markerPath = root.appendingPathComponent("marker.txt", isDirectory: false)
+        let userFishDir = root.appendingPathComponent("home/.config/fish", isDirectory: true)
+        try fileManager.createDirectory(at: userFishDir.appendingPathComponent("conf.d"), withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try "echo USER_CONFIG >> \(markerPath.path)\n"
+            .write(to: userFishDir.appendingPathComponent("config.fish"), atomically: true, encoding: .utf8)
+        try "echo USER_CONFD >> \(markerPath.path)\n"
+            .write(to: userFishDir.appendingPathComponent("conf.d/marker.fish"), atomically: true, encoding: .utf8)
+
+        let testIntegrationDir = try stageIntegrationDir(in: root)
+        var environment = baseFishEnvironment(
+            root: root,
+            integrationDir: testIntegrationDir,
+            fishExecutable: fishExecutable
+        )
+        // A zsh panel: XDG_DATA_DIRS is injected, but no fish-branch env vars are.
+        environment["HOME"] = root.appendingPathComponent("home").path
+        environment["SHELL"] = "/bin/zsh"
+        environment["XDG_DATA_DIRS"] = testIntegrationDir.path
+        environment["CMUX_SURFACE_ID"] = "55555555-5555-5555-5555-555555555555"
+        environment.removeValue(forKey: "XDG_CONFIG_HOME")
+        environment.removeValue(forKey: "CMUX_FISH_INTEGRATION_FILE")
+        environment.removeValue(forKey: "CMUX_FISH_USER_CONFIG_ALREADY_LOADED")
+
+        let result = runProcess(
+            executablePath: fishExecutable,
+            arguments: ["-i", "-c", "true"],
+            environment: environment,
+            timeout: 5
+        )
+
+        expectFalse(result.timedOut, result.stderr)
+        expectEqual(result.status, 0, result.stderr)
+
+        let marker = (try? String(contentsOf: markerPath, encoding: .utf8)) ?? ""
+        let configCount = marker.components(separatedBy: "USER_CONFIG").count - 1
+        let confdCount = marker.components(separatedBy: "USER_CONFD").count - 1
+        expectEqual(configCount, 1, "user config.fish sourced \(configCount)x, expected once:\n\(marker)")
+        expectEqual(confdCount, 1, "user conf.d sourced \(confdCount)x, expected once:\n\(marker)")
+    }
+
     @Test
     func testGeneratedFishBootstrapStagesIntegrationAndPreservesUserConfigHome() throws {
         let fileManager = FileManager.default
@@ -286,29 +372,16 @@ struct FishShellIntegrationTests {
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: root) }
 
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let integrationDir = repoRoot.appendingPathComponent("Resources/shell-integration", isDirectory: true)
-        let testIntegrationDir = root.appendingPathComponent("shell integration with spaces", isDirectory: true)
-        try fileManager.copyItem(at: integrationDir, to: testIntegrationDir)
-        let testBinDir = testIntegrationDir.appendingPathComponent("bin", isDirectory: true)
-        try fileManager.createDirectory(at: testBinDir, withIntermediateDirectories: true)
-        try writeExecutableShellFile(at: testBinDir.appendingPathComponent("cmux-claude-wrapper"), body: "#!/bin/sh\necho cmux-claude-wrapper \"$@\"\n")
-        try writeExecutableShellFile(at: testBinDir.appendingPathComponent("grok"), body: "#!/bin/sh\necho cmux-grok-wrapper \"$@\"\n")
-        let integrationFile = testIntegrationDir.appendingPathComponent("fish/config.fish", isDirectory: false)
+        let testIntegrationDir = try stageIntegrationDir(in: root)
 
-        var environment: [String: String] = [
-            "HOME": root.path,
-            "TERM": "xterm-256color",
-            "SHELL": fishExecutable,
-            "USER": NSUserName(),
-            "XDG_CONFIG_HOME": extraEnvironment["CMUX_TEST_USER_CONFIG_HOME"] ?? root.appendingPathComponent("user-config").path,
-            "CMUX_SHELL_INTEGRATION": "1",
-            "CMUX_SHELL_INTEGRATION_DIR": testIntegrationDir.path,
-            "CMUX_FISH_INTEGRATION_FILE": integrationFile.path,
-            "CMUX_FISH_USER_CONFIG_ALREADY_LOADED": "1",
-        ]
+        var environment = baseFishEnvironment(
+            root: root,
+            integrationDir: testIntegrationDir,
+            fishExecutable: fishExecutable
+        )
+        if let userConfigHome = extraEnvironment["CMUX_TEST_USER_CONFIG_HOME"] {
+            environment["XDG_CONFIG_HOME"] = userConfigHome
+        }
         extraEnvironment.forEach { environment[$0] = $1 }
         environment.removeValue(forKey: "CMUX_TEST_USER_CONFIG_HOME")
 
@@ -324,6 +397,50 @@ struct FishShellIntegrationTests {
             stdout: result.stdout.trimmingCharacters(in: .whitespacesAndNewlines),
             stderr: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         )
+    }
+
+    /// Copies the repo's shell-integration tree into `root` under a path containing
+    /// spaces (quoting regression cover) and stubs the bundled CLI wrappers.
+    private func stageIntegrationDir(in root: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let integrationDir = repoRoot.appendingPathComponent("Resources/shell-integration", isDirectory: true)
+        let testIntegrationDir = root.appendingPathComponent("shell integration with spaces", isDirectory: true)
+        try fileManager.copyItem(at: integrationDir, to: testIntegrationDir)
+
+        let testBinDir = testIntegrationDir.appendingPathComponent("bin", isDirectory: true)
+        try fileManager.createDirectory(at: testBinDir, withIntermediateDirectories: true)
+        try writeExecutableShellFile(
+            at: testBinDir.appendingPathComponent("cmux-claude-wrapper"),
+            body: "#!/bin/sh\necho cmux-claude-wrapper \"$@\"\n"
+        )
+        try writeExecutableShellFile(
+            at: testBinDir.appendingPathComponent("grok"),
+            body: "#!/bin/sh\necho cmux-grok-wrapper \"$@\"\n"
+        )
+        return testIntegrationDir
+    }
+
+    /// The env a fish panel is spawned with, per `applyManagedFishStartupEnvironment`.
+    private func baseFishEnvironment(
+        root: URL,
+        integrationDir: URL,
+        fishExecutable: String
+    ) -> [String: String] {
+        [
+            "HOME": root.path,
+            "TERM": "xterm-256color",
+            "SHELL": fishExecutable,
+            "USER": NSUserName(),
+            "TMPDIR": root.appendingPathComponent("tmp", isDirectory: true).path,
+            "XDG_CONFIG_HOME": root.appendingPathComponent("user-config").path,
+            "CMUX_SHELL_INTEGRATION": "1",
+            "CMUX_SHELL_INTEGRATION_DIR": integrationDir.path,
+            "CMUX_FISH_INTEGRATION_FILE": integrationDir.appendingPathComponent("fish/config.fish").path,
+            "CMUX_FISH_USER_CONFIG_ALREADY_LOADED": "1",
+        ]
     }
 
     private func writeExecutableShellFile(at url: URL, body: String) throws {

@@ -691,6 +691,26 @@ final class AgentSessionAutoResumeSettingsTests: XCTestCase {
         XCTAssertTrue(bare.contains(exec), bare)
     }
 
+    func testResumeLauncherReentersCmuxZdotdirBeforeRunningResumeCommand() {
+        let script = TerminalStartupReturnShellScript
+            .commandThenReturnLines(command: "'claude' '--resume' 'abc'")
+            .joined(separator: "\n")
+
+        let zdotdirExport = "export ZDOTDIR=\"$CMUX_SHELL_INTEGRATION_DIR\""
+        let resumeCommand = "\"$_cmux_resume_shell\" -lic"
+        let zdotdirRange = script.range(of: zdotdirExport)
+        let resumeRange = script.range(of: resumeCommand)
+        XCTAssertNotNil(zdotdirRange, "launcher must re-enter cmux's ZDOTDIR; script:\n\(script)")
+        XCTAssertNotNil(resumeRange, script)
+        if let zdotdirRange, let resumeRange {
+            XCTAssertTrue(
+                zdotdirRange.lowerBound < resumeRange.lowerBound,
+                "cmux's ZDOTDIR must be re-entered before the resume command runs, else the resumed "
+                    + "agent gets no cmux hooks and never registers; script:\n\(script)"
+            )
+        }
+    }
+
     private func withRestoredDefaults<T>(
         key: String,
         defaults: UserDefaults = .standard,
