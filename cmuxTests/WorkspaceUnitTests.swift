@@ -6895,6 +6895,28 @@ final class WorkspacePanelGitBranchTests: XCTestCase {
         XCTAssertEqual(workspace.bonsplitController.allPaneIds.count, 1)
     }
 
+    // CASPER: a SharedLiveAgentIndex refresh is the only signal that can flip
+    // `CasperSidebarPanelEntry.canForkConversation` for a live (non-restored)
+    // agent, and the branded sidebar observes no Workspace — the refresher must
+    // forward index publishes or the Fork Conversation row item stays hidden
+    // until an unrelated repaint. Delete with CasperSidebarActivityRefresher.
+    func testCasperSidebarActivityRefresherBumpsOnSharedLiveAgentIndexPublish() {
+        let refresher = CasperSidebarActivityRefresher()
+        let initialGeneration = refresher.generation
+
+        SharedLiveAgentIndex.shared.objectWillChange.send()
+
+        let deadline = Date().addingTimeInterval(2.0)
+        while refresher.generation == initialGeneration && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertGreaterThan(
+            refresher.generation,
+            initialGeneration,
+            "SharedLiveAgentIndex publishes must bump the sidebar refresher"
+        )
+    }
+
     func testForkConversationDefaultSettingFallsBackToRight() throws {
         let suiteName = "cmux.forkConversationDefault.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
