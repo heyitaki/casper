@@ -34,6 +34,7 @@ final class CasperSidebarActivityRefresher: ObservableObject {
 
     private let bumpSubject = PassthroughSubject<Void, Never>()
     private var bumpCancellable: AnyCancellable?
+    private var liveAgentIndexCancellable: AnyCancellable?
     private var workspaceCancellables: [UUID: AnyCancellable] = [:]
 
     init() {
@@ -59,6 +60,18 @@ final class CasperSidebarActivityRefresher: ObservableObject {
                 guard let self else { return }
                 self.generation &+= 1
             }
+
+        // A SharedLiveAgentIndex refresh is the only signal that can flip
+        // `CasperSidebarPanelEntry.canForkConversation` for a live agent with
+        // no restored snapshot, and the index's publish otherwise never
+        // reaches this sidebar (it forwards through Workspace.objectWillChange,
+        // which the branded sidebar does not observe). Funnel it through the
+        // same throttle so the fork item appears once the background hook-store
+        // load lands, instead of waiting for an unrelated repaint.
+        let subject = bumpSubject
+        liveAgentIndexCancellable = SharedLiveAgentIndex.shared
+            .objectWillChange
+            .sink { _ in subject.send(()) }
     }
 
     /// Reconcile per-workspace subscriptions with the current visible set.
