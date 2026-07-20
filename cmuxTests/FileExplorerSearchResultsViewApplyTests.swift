@@ -23,15 +23,15 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
         let snapshot = settledSnapshot(query: "foo", results: sharedResults)
 
         view.apply(snapshot)
-        XCTAssertEqual(view.debugAppliedWorkCount, 1)
+        XCTAssertEqual(view.appliedWorkCount, 1)
 
         // Same buffer, same scalar fields → must short-circuit.
         view.apply(snapshot)
-        XCTAssertEqual(view.debugAppliedWorkCount, 1, "Duplicate snapshot must skip apply")
+        XCTAssertEqual(view.appliedWorkCount, 1, "Duplicate snapshot must skip apply")
 
         // And again, to confirm the cache stays warm.
         view.apply(snapshot)
-        XCTAssertEqual(view.debugAppliedWorkCount, 1)
+        XCTAssertEqual(view.appliedWorkCount, 1)
     }
 
     /// A new query against the SAME results buffer must NOT short-circuit:
@@ -43,10 +43,10 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
         let sharedResults: [FileSearchResult] = makeResults(fileCount: 5, hitsPerFile: 3)
 
         view.apply(settledSnapshot(query: "foo", results: sharedResults))
-        XCTAssertEqual(view.debugAppliedWorkCount, 1)
+        XCTAssertEqual(view.appliedWorkCount, 1)
 
         view.apply(settledSnapshot(query: "foob", results: sharedResults))
-        XCTAssertEqual(view.debugAppliedWorkCount, 2, "Query change must re-run apply")
+        XCTAssertEqual(view.appliedWorkCount, 2, "Query change must re-run apply")
     }
 
     /// Changing `hasMore` while keeping the results buffer reflects a state
@@ -57,10 +57,10 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
         let sharedResults: [FileSearchResult] = makeResults(fileCount: 5, hitsPerFile: 3)
 
         view.apply(settledSnapshot(query: "foo", results: sharedResults, hasMore: true))
-        XCTAssertEqual(view.debugAppliedWorkCount, 1)
+        XCTAssertEqual(view.appliedWorkCount, 1)
 
         view.apply(settledSnapshot(query: "foo", results: sharedResults, hasMore: false))
-        XCTAssertEqual(view.debugAppliedWorkCount, 2)
+        XCTAssertEqual(view.appliedWorkCount, 2)
     }
 
     /// A status transition can ride the same results buffer. The status field
@@ -70,10 +70,10 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
         let sharedResults: [FileSearchResult] = makeResults(fileCount: 5, hitsPerFile: 3)
 
         view.apply(settledSnapshot(query: "foo", results: sharedResults, status: .matches))
-        XCTAssertEqual(view.debugAppliedWorkCount, 1)
+        XCTAssertEqual(view.appliedWorkCount, 1)
 
         view.apply(settledSnapshot(query: "foo", results: sharedResults, status: .failed("boom")))
-        XCTAssertEqual(view.debugAppliedWorkCount, 2, "Status change must re-run apply")
+        XCTAssertEqual(view.appliedWorkCount, 2, "Status change must re-run apply")
     }
 
     func testTotalMatchCountChangeForcesApply() {
@@ -81,7 +81,7 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
         let sharedResults = makeResults(fileCount: 5, hitsPerFile: 3)
         view.apply(settledSnapshot(query: "foo", results: sharedResults, totalMatchCount: 15))
         view.apply(settledSnapshot(query: "foo", results: sharedResults, totalMatchCount: 20))
-        XCTAssertEqual(view.debugAppliedWorkCount, 2)
+        XCTAssertEqual(view.appliedWorkCount, 2)
     }
 
     func testIsTruncatedChangeForcesApply() {
@@ -89,7 +89,7 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
         let sharedResults = makeResults(fileCount: 5, hitsPerFile: 3)
         view.apply(settledSnapshot(query: "foo", results: sharedResults, isTruncated: false))
         view.apply(settledSnapshot(query: "foo", results: sharedResults, isTruncated: true))
-        XCTAssertEqual(view.debugAppliedWorkCount, 2)
+        XCTAssertEqual(view.appliedWorkCount, 2)
     }
 
     /// Two snapshots built from independently-allocated arrays with byte-equal
@@ -104,7 +104,7 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
 
         view.apply(settledSnapshot(query: "foo", results: first))
         view.apply(settledSnapshot(query: "foo", results: second))
-        XCTAssertEqual(view.debugAppliedWorkCount, 2)
+        XCTAssertEqual(view.appliedWorkCount, 2)
     }
 
     // MARK: - Group / row count behavior
@@ -143,17 +143,17 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
         let view = FileExplorerSearchResultsView()
 
         view.apply(settledSnapshot(query: "foo", results: [], status: .noMatches))
-        XCTAssertFalse(view.debugEmptyStateLabelHidden, "noMatches must show empty-state label")
+        XCTAssertFalse(view.emptyStateLabel.isHidden, "noMatches must show empty-state label")
 
         view.apply(settledSnapshot(
             query: "foo",
             results: makeResults(fileCount: 2, hitsPerFile: 1),
             status: .matches
         ))
-        XCTAssertTrue(view.debugEmptyStateLabelHidden, "matches with rows must hide empty-state label")
+        XCTAssertTrue(view.emptyStateLabel.isHidden, "matches with rows must hide empty-state label")
 
         view.apply(settledSnapshot(query: "", results: [], status: .idle))
-        XCTAssertTrue(view.debugEmptyStateLabelHidden, "idle must hide empty-state label")
+        XCTAssertTrue(view.emptyStateLabel.isHidden, "idle must hide empty-state label")
     }
 
     /// Prefix narrowing (typing one more character) is the common keystroke
@@ -266,7 +266,7 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
     /// the short-circuited path bottoms out below XCTest's noise floor, so
     /// the perf baseline can't reliably catch a regression. The behavioral
     /// assert below IS the regression guard: if `shouldShortCircuitApply` is
-    /// weakened or removed, `debugAppliedWorkCount` will climb past 1.
+    /// weakened or removed, `appliedWorkCount` will climb past 1.
     func testDuplicateEmitBurstIsFree() {
         let view = FileExplorerSearchResultsView()
         let snapshot = settledSnapshot(
@@ -274,11 +274,11 @@ final class FileExplorerSearchResultsViewApplyTests: XCTestCase {
             results: makeResults(fileCount: 10, hitsPerFile: 5)
         )
         view.apply(snapshot)
-        let workBefore = view.debugAppliedWorkCount
+        let workBefore = view.appliedWorkCount
         for _ in 0..<200 {
             view.apply(snapshot)
         }
-        XCTAssertEqual(view.debugAppliedWorkCount, workBefore, "All duplicates must short-circuit")
+        XCTAssertEqual(view.appliedWorkCount, workBefore, "All duplicates must short-circuit")
     }
 
     // MARK: - Test fixtures

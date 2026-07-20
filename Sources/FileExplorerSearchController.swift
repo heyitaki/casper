@@ -540,7 +540,7 @@ final class FileSearchController: FileSearchControlling {
         "!**/DerivedData/**",
     ]
     private var process: Process?
-    private var generation = 0
+    private(set) var generation = 0
     private var request: Request?
     private var results: [FileSearchResult] = []
     // append-only "what's currently rendered" view of `results`. Each
@@ -565,13 +565,7 @@ final class FileSearchController: FileSearchControlling {
     private var isSearchRunning = false
     private var didHitHardCap = false
 
-#if DEBUG
-    private(set) var debugPipelineDeliveryCount = 0
-
-    func debugEnqueuePipelineUpdate(_ update: FileSearchPipelineUpdate) {
-        enqueuePipelineUpdate(update, generation: generation)
-    }
-#endif
+    private(set) var pipelineDeliveryCount = 0
 
     func search(query rawQuery: String, rootPath: String, isLocal: Bool, contentRevision: Int = 0, options: FileSearchOptions = .default) {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -774,7 +768,7 @@ final class FileSearchController: FileSearchControlling {
     /// and are applied immediately, they carry the "stop the rg" signal and
     /// must take effect synchronously, and they're also the last update of a
     /// query so there's nothing to coalesce them against.
-    private func enqueuePipelineUpdate(_ update: FileSearchPipelineUpdate, generation searchGeneration: Int) {
+    func enqueuePipelineUpdate(_ update: FileSearchPipelineUpdate, generation searchGeneration: Int) {
         guard searchGeneration == generation else { return }
         if update.shouldStopProcess {
             pendingPipelineUpdate = nil
@@ -795,9 +789,7 @@ final class FileSearchController: FileSearchControlling {
 
     private func applyPipelineUpdate(_ update: FileSearchPipelineUpdate, generation searchGeneration: Int) {
         guard searchGeneration == generation else { return }
-#if DEBUG
-        debugPipelineDeliveryCount += 1
-#endif
+        pipelineDeliveryCount += 1
         results = update.results
         if update.shouldStopProcess {
             didHitHardCap = true

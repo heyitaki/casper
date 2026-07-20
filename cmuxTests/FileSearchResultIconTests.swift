@@ -10,11 +10,17 @@ import XCTest
 @testable import cmux
 #endif
 
+private func resetSymbolCache() {
+    FileSearchResultIcon.symbolCacheLock.lock()
+    FileSearchResultIcon.symbolCache.removeAll(keepingCapacity: true)
+    FileSearchResultIcon.symbolCacheLock.unlock()
+}
+
 @MainActor
 final class FileSearchResultIconTests: XCTestCase {
     override func setUp() {
         super.setUp()
-        FileSearchResultIcon._resetSymbolCacheForTests()
+        resetSymbolCache()
     }
 
     func testSymbolPicksExtensionMapping() {
@@ -91,7 +97,7 @@ final class FileSearchResultIconTests: XCTestCase {
 
     func testResetClearsCache() {
         let before = FileSearchResultIcon.symbol(forRelativePath: "src/Foo.swift")
-        FileSearchResultIcon._resetSymbolCacheForTests()
+        resetSymbolCache()
         let after = FileSearchResultIcon.symbol(forRelativePath: "src/Foo.swift")
         XCTAssertFalse(before === after, "Reset should evict cached entries so a fresh lookup allocates a new image")
     }

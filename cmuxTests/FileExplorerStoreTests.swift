@@ -853,7 +853,7 @@ struct FileSearchControllerTests {
         controller.onSnapshotChanged = { snapshots.append($0) }
 
         for count in 1...5 {
-            controller.debugEnqueuePipelineUpdate(FileSearchPipelineUpdate(
+            controller.enqueuePipelineUpdate(FileSearchPipelineUpdate(
                 results: (0..<count).map { index in
                     FileSearchResult(
                         path: "/tmp/file\(index).txt",
@@ -865,14 +865,14 @@ struct FileSearchControllerTests {
                 },
                 status: .matches,
                 shouldStopProcess: false
-            ))
+            ), generation: controller.generation)
         }
 
         await Task.yield()
-        #expect(controller.debugPipelineDeliveryCount == 1)
+        #expect(controller.pipelineDeliveryCount == 1)
         #expect(snapshots.last?.totalMatchCount == 5)
 
-        controller.debugEnqueuePipelineUpdate(FileSearchPipelineUpdate(
+        controller.enqueuePipelineUpdate(FileSearchPipelineUpdate(
             results: (0..<6).map { index in
                 FileSearchResult(
                     path: "/tmp/file\(index).txt",
@@ -884,8 +884,8 @@ struct FileSearchControllerTests {
             },
             status: .matches,
             shouldStopProcess: true
-        ))
-        #expect(controller.debugPipelineDeliveryCount == 2)
+        ), generation: controller.generation)
+        #expect(controller.pipelineDeliveryCount == 2)
         #expect(snapshots.last?.isTruncated == true)
     }
 #endif
@@ -1258,7 +1258,7 @@ struct FileSearchControllerTests {
             format: String(localized: "fileExplorer.search.searching", defaultValue: "%d matches, searching"),
             0
         ))
-        #expect(resultsView.debugAppliedWorkCount == 0)
+        #expect(resultsView.appliedWorkCount == 0)
 
         let results = [Self.searchResult(relativePath: "first.txt")]
         searchController.publish(FileSearchSnapshot(
@@ -1272,7 +1272,7 @@ struct FileSearchControllerTests {
             format: String(localized: "fileExplorer.search.searching", defaultValue: "%d matches, searching"),
             100
         ))
-        #expect(resultsView.debugAppliedWorkCount == 1)
+        #expect(resultsView.appliedWorkCount == 1)
 
         searchController.publish(FileSearchSnapshot(
             query: "needle",

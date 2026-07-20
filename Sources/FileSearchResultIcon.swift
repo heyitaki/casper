@@ -62,8 +62,8 @@ enum FileSearchResultIcon {
     // an unfair lock for the rare write path rather than serialize behind a
     // queue or actor.
     // A synchronous lock keeps the tiny cache critical section ordered across AppKit callers without async hops.
-    private static let symbolCacheLock = NSLock()
-    nonisolated(unsafe) private static var symbolCache: [String: NSImage] = [:]
+    static let symbolCacheLock = NSLock()
+    nonisolated(unsafe) static var symbolCache: [String: NSImage] = [:]
     nonisolated(unsafe) private static let symbolConfiguration = NSImage.SymbolConfiguration(
         pointSize: 12,
         weight: .regular
@@ -93,14 +93,6 @@ enum FileSearchResultIcon {
         symbolCache[name] = configured
         symbolCacheLock.unlock()
         return configured
-    }
-
-    /// Test hook, wipes the symbol cache so per-call resolution behavior can
-    /// be observed independently between cases.
-    static func _resetSymbolCacheForTests() {
-        symbolCacheLock.lock()
-        symbolCache.removeAll(keepingCapacity: true)
-        symbolCacheLock.unlock()
     }
 
     private static let extensionTints: [String: NSColor] = [

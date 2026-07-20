@@ -65,17 +65,9 @@ final class FileExplorerSearchResultsView: NSScrollView {
         let isTruncated: Bool
     }
     private var lastAppliedIdentity: AppliedIdentity?
-    #if DEBUG
-    /// Test-only counter incremented each time `apply` performs real work (i.e.
-    /// did NOT short-circuit on the identity cache). Exposed so perf/regression
-    /// tests can observe duplicate-emit coalescing.
-    private(set) var debugAppliedWorkCount: Int = 0
-    /// Test-only mirror of the empty-state label's visibility. Pins the
-    /// contract that a settled `.noMatches` apply leaves the label visible
-    /// while every other terminal status keeps it hidden, the short-circuit
-    /// must not silently bypass this update.
-    var debugEmptyStateLabelHidden: Bool { emptyStateLabel.isHidden }
-    #endif
+    /// Count of `apply` invocations that performed real work (did not short-circuit
+    /// on the identity cache). Read by coalescing/regression tests.
+    private(set) var appliedWorkCount: Int = 0
 
     // pagination state. `snapshotHasMore` mirrors the latest snapshot's
     // hasMore field; `lastLoadMoreRequestedAtCount` is the result count that
@@ -92,7 +84,7 @@ final class FileExplorerSearchResultsView: NSScrollView {
     // (not on `.idle`, which renders blank). Sits in the scroll view's own
     // coordinate space so it doesn't scroll, and stays hidden whenever
     // `groupItems` is non-empty.
-    private let emptyStateLabel = NSTextField(labelWithString: "")
+    let emptyStateLabel = NSTextField(labelWithString: "")
 
     init() {
         outlineView = FileExplorerSearchOutlineView()
@@ -357,9 +349,7 @@ final class FileExplorerSearchResultsView: NSScrollView {
             return
         }
         defer { stashAppliedIdentity(for: snapshot) }
-        #if DEBUG
-        debugAppliedWorkCount += 1
-        #endif
+        appliedWorkCount += 1
         let newQuery = snapshot.query
         let queryChanged = newQuery != query
         query = newQuery
