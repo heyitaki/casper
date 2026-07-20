@@ -3014,6 +3014,7 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         displayTitle: String = "row",
         isWorkspaceSelected: Bool = false,
         isPanelFocused: Bool = false,
+        canForkConversation: Bool = false,
         isPinned: Bool = false,
         activity: CasperWorkspaceActivity = CasperWorkspaceActivity(state: .none, lastActivityAt: nil),
         isInMultiSelection: Bool = false,
@@ -3031,6 +3032,7 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             groupKey: "/repo",
             isWorkspaceSelected: isWorkspaceSelected,
             isPanelFocused: isPanelFocused,
+            canForkConversation: canForkConversation,
             isPinned: isPinned,
             activity: activity,
             withinWorkspaceOrder: 0,
@@ -3044,14 +3046,13 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
             onClose: onClose,
             actions: CasperSidebarRowActions(
                 hasWorkingDirectory: false,
-                canForkAgent: false,
                 onRename: {},
                 onRevealInFinder: {},
                 onOpenWorkingDirectory: {},
                 onCopyPath: {},
                 onTogglePin: {},
                 onDuplicate: {},
-                onForkSession: {},
+                onForkConversation: { _ in },
                 onToggleArchive: {},
                 onArchiveWorkspace: {}
             )
@@ -3070,6 +3071,7 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         XCTAssertNotEqual(base, makeCasperSidebarPanelRow(displayTitle: "changed"))
         XCTAssertNotEqual(base, makeCasperSidebarPanelRow(isWorkspaceSelected: true))
         XCTAssertNotEqual(base, makeCasperSidebarPanelRow(isPanelFocused: true))
+        XCTAssertNotEqual(base, makeCasperSidebarPanelRow(canForkConversation: true))
         XCTAssertNotEqual(base, makeCasperSidebarPanelRow(isPinned: true))
         XCTAssertNotEqual(
             base,

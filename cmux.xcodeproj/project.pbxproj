@@ -122,7 +122,6 @@
 		CA5840180000000000000001 /* Casper/Sidebar/CasperAgentActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840180000000000000002 /* Casper/Sidebar/CasperAgentActivity.swift */; };
 		CA5850220000000000000001 /* Casper/Sidebar/CasperArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5850220000000000000002 /* Casper/Sidebar/CasperArchiveStore.swift */; };
 		CA5840170000000000000001 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840170000000000000002 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift */; };
-		CA5850210000000000000001 /* Casper/Sidebar/CasperForkSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5850210000000000000002 /* Casper/Sidebar/CasperForkSession.swift */; };
 		CA5840200000000000000001 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840200000000000000002 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift */; };
 		CA5850160000000000000001 /* Casper/Sidebar/CasperSidebarNavigator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5850160000000000000002 /* Casper/Sidebar/CasperSidebarNavigator.swift */; };
 		CA5840210000000000000001 /* Casper/Sidebar/CasperSidebarRenderPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA5840210000000000000002 /* Casper/Sidebar/CasperSidebarRenderPlan.swift */; };
@@ -930,7 +929,6 @@
 		CA5840180000000000000002 /* Casper/Sidebar/CasperAgentActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperAgentActivity.swift; sourceTree = "<group>"; };
 		CA5850220000000000000002 /* Casper/Sidebar/CasperArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperArchiveStore.swift; sourceTree = "<group>"; };
 		CA5840170000000000000002 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperCompactWorkspaceRow.swift; sourceTree = "<group>"; };
-		CA5850210000000000000002 /* Casper/Sidebar/CasperForkSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperForkSession.swift; sourceTree = "<group>"; };
 		CA5840200000000000000002 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperSidebarActivityRefresher.swift; sourceTree = "<group>"; };
 		CA5850160000000000000002 /* Casper/Sidebar/CasperSidebarNavigator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperSidebarNavigator.swift; sourceTree = "<group>"; };
 		CA5840210000000000000002 /* Casper/Sidebar/CasperSidebarRenderPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Casper/Sidebar/CasperSidebarRenderPlan.swift; sourceTree = "<group>"; };
@@ -1717,7 +1715,6 @@
 			children = (
 				CA5850310000000000000002 /* Casper/Sidebar/AppDelegate+CasperActivationDesyncRepair.swift */,
 				CA5850220000000000000002 /* Casper/Sidebar/CasperArchiveStore.swift */,
-				CA5850210000000000000002 /* Casper/Sidebar/CasperForkSession.swift */,
 				CA5850160000000000000002 /* Casper/Sidebar/CasperSidebarNavigator.swift */,
 				3023B1003023B1003023B100 /* ConfigSource.swift */,
 				3023B1013023B1013023B101 /* ConfigSettingsView.swift */,
@@ -2859,7 +2856,6 @@
 				CA5840180000000000000001 /* Casper/Sidebar/CasperAgentActivity.swift in Sources */,
 				CA5850220000000000000001 /* Casper/Sidebar/CasperArchiveStore.swift in Sources */,
 				CA5840170000000000000001 /* Casper/Sidebar/CasperCompactWorkspaceRow.swift in Sources */,
-				CA5850210000000000000001 /* Casper/Sidebar/CasperForkSession.swift in Sources */,
 				CA5840200000000000000001 /* Casper/Sidebar/CasperSidebarActivityRefresher.swift in Sources */,
 				CA5850160000000000000001 /* Casper/Sidebar/CasperSidebarNavigator.swift in Sources */,
 				CA5840210000000000000001 /* Casper/Sidebar/CasperSidebarRenderPlan.swift in Sources */,

@@ -46,6 +46,10 @@ struct CasperSidebarPanelEntry: Identifiable, Equatable, Sendable {
     /// workspace's split tree. Combined with `isWorkspaceSelected` this is
     /// the "selected row" predicate.
     let isPanelFocused: Bool
+    /// True when upstream's synchronous gate permits Fork Conversation for
+    /// this terminal. Part of `==` so a live snapshot change refreshes the
+    /// row's context-menu visibility.
+    let canForkConversation: Bool
     /// Mirrors `workspace.isPinned`. Pin remains a workspace-level concept
     /// for v1 — pinning a workspace floats all its panels above the
     /// activity-sorted region.
@@ -305,6 +309,9 @@ enum CasperSidebarPanelEntryBuilder {
         from workspaces: [Workspace],
         selectedWorkspaceId: UUID?,
         activityByWorkspaceId: [UUID: CasperWorkspaceActivity],
+        canForkConversation: @MainActor (Workspace, UUID) -> Bool = { workspace, panelId in
+            workspace.canForkAgentConversationFromPanel(panelId)
+        },
         notificationStore: TerminalNotificationStore,
         archivedPanelIds: Set<UUID> = []
     ) -> [CasperSidebarPanelEntry] {
@@ -372,6 +379,7 @@ enum CasperSidebarPanelEntryBuilder {
                         groupKey: groupKey,
                         isWorkspaceSelected: isWorkspaceSelected,
                         isPanelFocused: focusedPanelId == panelId,
+                        canForkConversation: canForkConversation(workspace, panelId),
                         isPinned: workspace.isPinned,
                         activity: activity,
                         withinWorkspaceOrder: index,
@@ -391,7 +399,10 @@ enum CasperSidebarPanelEntryBuilder {
     static func workspaceRowEntries(
         from workspaces: [Workspace],
         selectedWorkspaceId: UUID?,
-        activityByWorkspaceId: [UUID: CasperWorkspaceActivity]
+        activityByWorkspaceId: [UUID: CasperWorkspaceActivity],
+        canForkConversation: @MainActor (Workspace, UUID) -> Bool = { workspace, panelId in
+            workspace.canForkAgentConversationFromPanel(panelId)
+        }
     ) -> [CasperSidebarPanelEntry] {
         workspaces.enumerated().map { offset, workspace in
             let panelId = workspace.focusedPanelId
@@ -409,6 +420,7 @@ enum CasperSidebarPanelEntryBuilder {
                 groupKey: groupKey,
                 isWorkspaceSelected: workspace.id == selectedWorkspaceId,
                 isPanelFocused: true,
+                canForkConversation: canForkConversation(workspace, panelId),
                 isPinned: workspace.isPinned,
                 activity: activity,
                 withinWorkspaceOrder: offset,
@@ -688,16 +700,13 @@ struct CasperSidebarGroupHeaderRow: View {
 struct CasperSidebarRowActions {
     /// Gates the cwd-dependent items (reveal / open / copy / duplicate).
     let hasWorkingDirectory: Bool
-    /// Gates the "Fork Session" item — true only when a forkable (claude/codex)
-    /// agent is live on this panel. See `CasperForkSession.forkableKind`.
-    let canForkAgent: Bool
     let onRename: () -> Void
     let onRevealInFinder: () -> Void
     let onOpenWorkingDirectory: () -> Void
     let onCopyPath: () -> Void
     let onTogglePin: () -> Void
     let onDuplicate: () -> Void
-    let onForkSession: () -> Void
+    let onForkConversation: (AgentConversationForkDestination?) -> Void
     /// CASPER: archive this one session (active row) or move it back to active
     /// (archived row). The label is chosen from `entry.isArchived`; this performs
     /// the toggle. Delete with the archive feature (`CasperArchiveStore`).
@@ -893,14 +902,35 @@ struct CasperSidebarPanelRow: View, Equatable {
                 systemImage: entry.isPinned ? "pin.slash" : "pin"
             )
         }
-        if actions.canForkAgent {
+        if entry.canForkConversation {
             Divider()
-            // CASPER: branch the live claude/codex agent into a new workspace.
             Button {
-                actions.onForkSession()
+                actions.onForkConversation(nil)
             } label: {
                 Label(
-                    String(localized: "sidebar.session.menu.fork", defaultValue: "Fork Session"),
+                    String(localized: "panelContextMenu.forkConversation", defaultValue: "Fork Conversation"),
+                    systemImage: "arrow.triangle.branch"
+                )
+            }
+            let defaultForkDestination = AgentConversationForkDefaultSettings.current()
+            Menu {
+                ForEach(AgentConversationForkDestination.allCases) { destination in
+                    if destination == .newTab {
+                        Divider()
+                    }
+                    Button {
+                        actions.onForkConversation(destination)
+                    } label: {
+                        if destination == defaultForkDestination {
+                            Label(destination.settingsTitle, systemImage: "checkmark")
+                        } else {
+                            Text(destination.settingsTitle)
+                        }
+                    }
+                }
+            } label: {
+                Label(
+                    String(localized: "panelContextMenu.forkConversationTo", defaultValue: "Fork Conversation To"),
                     systemImage: "arrow.triangle.branch"
                 )
             }

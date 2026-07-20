@@ -18343,6 +18343,33 @@ final class Workspace: Identifiable, ObservableObject {
         ) == .supportedWithoutProbe
     }
 
+    // CASPER: let panel-keyed sidebar and panel-body menus share upstream's
+    // destination dispatcher; delete if upstream adds a panelId-keyed fork
+    // entry point or sidebar/panel-body fork surfaces.
+    @discardableResult
+    func forkAgentConversation(
+        fromPanelId panelId: UUID,
+        destination: AgentConversationForkDestination?
+    ) -> Bool {
+        guard panels[panelId] is TerminalPanel,
+              let snapshot = forkableAgentSnapshot(forPanelId: panelId),
+              ContentView.commandPaletteSnapshotForkAvailability(
+                  snapshot,
+                  isRemoteTerminal: isRemoteTerminalSurface(panelId)
+              ) == .supportedWithoutProbe,
+              let anchorTabId = surfaceIdFromPanelId(panelId),
+              let paneId = paneId(forPanelId: panelId) else {
+            return false
+        }
+        return forkAgentConversation(
+            fromPanelId: panelId,
+            snapshot: snapshot,
+            destination: destination ?? AgentConversationForkDefaultSettings.current(),
+            anchorTabId: anchorTabId,
+            paneId: paneId
+        )
+    }
+
     /// Snapshot used by the right-click fork path. Prefers the workspace's restored snapshot
     /// (filled on session restore / hibernation), then falls back to the process-wide
     /// `SharedLiveAgentIndex`. The shared index loads the on-disk hook session store off the

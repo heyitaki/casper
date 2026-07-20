@@ -34,6 +34,32 @@ enum PanelTabActions {
         _ = workspace.newTerminalSurface(inPane: paneId, focus: true)
     }
 
+    // CASPER: expose upstream Fork Conversation through panel-keyed menus;
+    // delete if upstream adds sidebar/panel-body fork surfaces.
+    static func canForkConversation(workspaceId: UUID, panelId: UUID) -> Bool {
+        guard let workspace = resolveManager(workspaceId: workspaceId)?
+            .tabs.first(where: { $0.id == workspaceId }) else {
+            return false
+        }
+        return workspace.canForkAgentConversationFromPanel(panelId)
+    }
+
+    static func forkConversation(
+        workspaceId: UUID,
+        panelId: UUID,
+        destination: AgentConversationForkDestination?
+    ) {
+        guard let workspace = resolveManager(workspaceId: workspaceId)?
+            .tabs.first(where: { $0.id == workspaceId }),
+              workspace.forkAgentConversation(
+                  fromPanelId: panelId,
+                  destination: destination
+              ) else {
+            NSSound.beep()
+            return
+        }
+    }
+
     static func canMoveTabToNewWorkspace(panelId: UUID) -> Bool {
         AppDelegate.shared?.canMoveSurfaceToNewWorkspace(panelId: panelId) ?? false
     }
@@ -176,6 +202,10 @@ final class PanelTabActionMenuController: NSObject {
             action: #selector(panelCloseTab(_:))
         )
 
+        // CASPER: mirror bonsplit's Fork Conversation presentation for all
+        // panel-body menus; delete if upstream adds panel-body fork surfaces.
+        appendForkConversationMenuItems(to: menu)
+
         appendMoveTabMenuItems(to: menu)
 
         // CASPER: archive is independent of whether any Move Tab destination
@@ -183,6 +213,54 @@ final class PanelTabActionMenuController: NSObject {
         // returns (that nesting silently dropped Archive/Archive Workspace
         // for single-workspace users during the 2026-07 upstream merge).
         appendArchiveMenuItems(to: menu)
+    }
+
+    // CASPER: panel-body Fork Conversation delegates to Workspace's shared
+    // panelId entry point; delete if upstream adds panel-body fork surfaces.
+    private func appendForkConversationMenuItems(to menu: NSMenu) {
+        guard PanelTabActions.canForkConversation(
+            workspaceId: workspaceId,
+            panelId: panelId
+        ) else {
+            return
+        }
+
+        menu.addItem(.separator())
+        let forkItem = menu.addItem(
+            withTitle: String(localized: "panelContextMenu.forkConversation", defaultValue: "Fork Conversation"),
+            action: #selector(panelForkConversation(_:)),
+            keyEquivalent: ""
+        )
+        forkItem.target = self
+        forkItem.image = NSImage(
+            systemSymbolName: "arrow.triangle.branch",
+            accessibilityDescription: nil
+        )
+
+        let forkToItem = NSMenuItem(
+            title: String(localized: "panelContextMenu.forkConversationTo", defaultValue: "Fork Conversation To"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        let forkToMenu = NSMenu()
+        forkToMenu.autoenablesItems = false
+        let defaultDestination = AgentConversationForkDefaultSettings.current()
+        for destination in AgentConversationForkDestination.allCases {
+            if destination == .newTab {
+                forkToMenu.addItem(.separator())
+            }
+            let destinationItem = NSMenuItem(
+                title: destination.settingsTitle,
+                action: #selector(panelForkConversationTo(_:)),
+                keyEquivalent: ""
+            )
+            destinationItem.target = self
+            destinationItem.representedObject = destination
+            destinationItem.state = destination == defaultDestination ? .on : .off
+            forkToMenu.addItem(destinationItem)
+        }
+        forkToItem.submenu = forkToMenu
+        menu.addItem(forkToItem)
     }
 
     // CASPER: #3890 port — "Move Tab" submenu mirrors GhosttyNSView appendMoveCurrentSurfaceMoveMenuItems
@@ -310,6 +388,29 @@ final class PanelTabActionMenuController: NSObject {
         PanelTabActions.closeTab(workspaceId: workspaceId, panelId: panelId)
     }
 
+    // CASPER: selectors for the shared panel-keyed fork action; delete if
+    // upstream adds panel-body Fork Conversation surfaces.
+    @objc private func panelForkConversation(_ sender: Any?) {
+        PanelTabActions.forkConversation(
+            workspaceId: workspaceId,
+            panelId: panelId,
+            destination: nil
+        )
+    }
+
+    @objc private func panelForkConversationTo(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let destination = item.representedObject as? AgentConversationForkDestination else {
+            NSSound.beep()
+            return
+        }
+        PanelTabActions.forkConversation(
+            workspaceId: workspaceId,
+            panelId: panelId,
+            destination: destination
+        )
+    }
+
     @objc private func panelMoveTabToNewWorkspace(_ sender: Any?) {
         PanelTabActions.moveTabToNewWorkspace(panelId: panelId)
     }
@@ -399,6 +500,46 @@ private struct PanelTabActionsContextMenu: ViewModifier {
                 Text(String(localized: "menu.file.closeTab", defaultValue: "Close Tab"))
             }
             .keyboardShortcut(closeTabShortcut)
+
+            // CASPER: mirror bonsplit's Fork Conversation presentation for the
+            // SwiftUI panel menu; delete if upstream adds panel-body fork surfaces.
+            if PanelTabActions.canForkConversation(workspaceId: workspaceId, panelId: panelId) {
+                Divider()
+                Button {
+                    PanelTabActions.forkConversation(
+                        workspaceId: workspaceId,
+                        panelId: panelId,
+                        destination: nil
+                    )
+                } label: {
+                    Label(
+                        String(localized: "panelContextMenu.forkConversation", defaultValue: "Fork Conversation"),
+                        systemImage: "arrow.triangle.branch"
+                    )
+                }
+
+                let defaultForkDestination = AgentConversationForkDefaultSettings.current()
+                Menu(String(localized: "panelContextMenu.forkConversationTo", defaultValue: "Fork Conversation To")) {
+                    ForEach(AgentConversationForkDestination.allCases) { destination in
+                        if destination == .newTab {
+                            Divider()
+                        }
+                        Button {
+                            PanelTabActions.forkConversation(
+                                workspaceId: workspaceId,
+                                panelId: panelId,
+                                destination: destination
+                            )
+                        } label: {
+                            if destination == defaultForkDestination {
+                                Label(destination.settingsTitle, systemImage: "checkmark")
+                            } else {
+                                Text(destination.settingsTitle)
+                            }
+                        }
+                    }
+                }
+            }
 
             // CASPER: #3890 port — submenu mirrors the AppKit version above.
             // Delete if upstream unifies panel context menus.

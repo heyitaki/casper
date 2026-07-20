@@ -6810,6 +6810,91 @@ final class WorkspacePanelGitBranchTests: XCTestCase {
         XCTAssertFalse(workspace.canForkAgentConversationFromPanel(UUID()))
     }
 
+    // CASPER: tests for the panel-keyed fork entry point
+    // (`forkAgentConversation(fromPanelId:destination:)`); delete with the
+    // Workspace.swift CASPER bridge if upstream adds a panelId-keyed fork
+    // entry point.
+    func testForkAgentConversationFromPanelUsesConfiguredDefaultDestination() throws {
+        let defaults = UserDefaults.standard
+        let previousValue = defaults.object(forKey: AgentConversationForkDefaultSettings.key)
+        defer {
+            if let previousValue {
+                defaults.set(previousValue, forKey: AgentConversationForkDefaultSettings.key)
+            } else {
+                defaults.removeObject(forKey: AgentConversationForkDefaultSettings.key)
+            }
+        }
+        defaults.set(AgentConversationForkDestination.newTab.rawValue, forKey: AgentConversationForkDefaultSettings.key)
+
+        let workspace = Workspace()
+        let sourcePanelId = try XCTUnwrap(workspace.focusedPanelId)
+        let sourcePaneId = try XCTUnwrap(workspace.paneId(forPanelId: sourcePanelId))
+        workspace.setRestoredAgentSnapshotForTesting(makeForkableClaudeSnapshot(), panelId: sourcePanelId)
+
+        XCTAssertTrue(workspace.forkAgentConversation(fromPanelId: sourcePanelId, destination: nil))
+        XCTAssertEqual(workspace.bonsplitController.allPaneIds.count, 1)
+        XCTAssertEqual(workspace.bonsplitController.tabs(inPane: sourcePaneId).count, 2)
+    }
+
+    func testForkAgentConversationFromPanelReturnsFalseWithoutSnapshot() throws {
+        let workspace = Workspace()
+        let sourcePanelId = try XCTUnwrap(workspace.focusedPanelId)
+        let originalPanelIds = Set(workspace.panels.keys)
+
+        XCTAssertFalse(workspace.forkAgentConversation(fromPanelId: sourcePanelId, destination: .right))
+        XCTAssertEqual(Set(workspace.panels.keys), originalPanelIds)
+        XCTAssertEqual(workspace.bonsplitController.allPaneIds.count, 1)
+    }
+
+    func testForkAgentConversationFromPanelToNewWorkspaceUsesOwningTabManager() throws {
+        let tabManager = TabManager()
+        let sourceWorkspace = try XCTUnwrap(tabManager.tabs.first)
+        let sourcePanelId = try XCTUnwrap(sourceWorkspace.focusedPanelId)
+        let snapshot = makeForkableClaudeSnapshot()
+        sourceWorkspace.setRestoredAgentSnapshotForTesting(snapshot, panelId: sourcePanelId)
+        let originalWorkspaceIds = Set(tabManager.tabs.map(\.id))
+
+        XCTAssertTrue(
+            sourceWorkspace.forkAgentConversation(
+                fromPanelId: sourcePanelId,
+                destination: .newWorkspace
+            )
+        )
+
+        let forkWorkspace = try XCTUnwrap(
+            tabManager.tabs.first { !originalWorkspaceIds.contains($0.id) }
+        )
+        let forkPanelId = try XCTUnwrap(forkWorkspace.focusedPanelId)
+        let forkPanel = try XCTUnwrap(forkWorkspace.terminalPanel(for: forkPanelId))
+        XCTAssertEqual(tabManager.tabs.count, originalWorkspaceIds.count + 1)
+        XCTAssertEqual(forkPanel.surface.initialInput, snapshot.forkCommand.map { $0 + "\n" })
+    }
+
+    func testForkAgentConversationFromPanelRejectsSnapshotRequiringProbe() throws {
+        let workspace = Workspace()
+        let sourcePanelId = try XCTUnwrap(workspace.focusedPanelId)
+        let snapshot = SessionRestorableAgentSnapshot(
+            kind: .opencode,
+            sessionId: "opencode-session",
+            workingDirectory: "/tmp/opencode repo",
+            launchCommand: AgentLaunchCommandSnapshot(
+                launcher: "opencode",
+                executablePath: "/opt/homebrew/bin/opencode",
+                arguments: ["/opt/homebrew/bin/opencode"],
+                workingDirectory: "/tmp/opencode repo",
+                environment: nil,
+                capturedAt: 123,
+                source: "environment"
+            )
+        )
+        workspace.setRestoredAgentSnapshotForTesting(snapshot, panelId: sourcePanelId)
+        let originalPanelIds = Set(workspace.panels.keys)
+
+        XCTAssertFalse(workspace.forkAgentConversation(fromPanelId: sourcePanelId, destination: .right))
+        XCTAssertEqual(Set(workspace.panels.keys), originalPanelIds)
+        XCTAssertEqual(workspace.bonsplitController.allPaneIds.count, 1)
+    }
+
     func testForkConversationDefaultSettingFallsBackToRight() throws {
         let suiteName = "cmux.forkConversationDefault.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

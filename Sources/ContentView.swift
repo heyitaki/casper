@@ -12752,15 +12752,8 @@ struct VerticalTabsSidebar: View {
         let workspace = workspaceLookup[workspaceId]
         let cwd = casperSessionWorkingDirectory(workspace: workspace, panelId: panelId)
         let hasCwd = !(cwd?.isEmpty ?? true)
-        // CASPER: cheap, render-time check (no disk I/O) — only claude/codex
-        // panels with a live agent expose "Fork Session". The authoritative
-        // session lookup happens lazily on click in CasperForkSession.
-        let canFork = workspace.map {
-            CasperForkSession.forkableKind(for: $0, panelId: panelId) != nil
-        } ?? false
         return CasperSidebarRowActions(
             hasWorkingDirectory: hasCwd,
-            canForkAgent: canFork,
             onRename: { [weak tabManager] in
                 tabManager?.focusTab(workspaceId, surfaceId: panelId)
                 AppDelegate.shared?.requestCommandPaletteRenameTab(source: "casper.sidebar.contextMenu")
@@ -12785,13 +12778,13 @@ struct VerticalTabsSidebar: View {
                 guard let tabManager, let cwd, !cwd.isEmpty else { return }
                 _ = tabManager.addWorkspace(workingDirectory: cwd)
             },
-            onForkSession: { [weak tabManager] in
-                guard let tabManager else { return }
-                CasperForkSession.forkSession(
-                    tabManager: tabManager,
+            // CASPER: share the panel-menu fork action and upstream gate;
+            // delete if upstream adds sidebar Fork Conversation surfaces.
+            onForkConversation: { destination in
+                PanelTabActions.forkConversation(
                     workspaceId: workspaceId,
                     panelId: panelId,
-                    fallbackCwd: cwd
+                    destination: destination
                 )
             },
             // CASPER: archive (active) or move-back-to-active (archived) just
@@ -13008,6 +13001,11 @@ struct VerticalTabsSidebar: View {
                 from: sortedTabs,
                 selectedWorkspaceId: tabManager.selectedTabId,
                 activityByWorkspaceId: activityByID,
+                // CASPER: stamp upstream's fork gate into the immutable row
+                // snapshot; delete if upstream adds sidebar panel rows.
+                canForkConversation: { workspace, panelId in
+                    workspace.canForkAgentConversationFromPanel(panelId)
+                },
                 notificationStore: notificationStore,
                 archivedPanelIds: archiveStore.archivedPanelIds
             )

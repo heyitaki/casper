@@ -3,7 +3,7 @@
 # Reduce counts as files shrink. CI fails if tracked files exceed this budget.
 32601	CLI/cmux.swift
 22096	Sources/TerminalController.swift
-19917	Sources/Workspace.swift
+19955	Sources/Workspace.swift
 19815	Sources/ContentView.swift
 17920	Sources/AppDelegate.swift
 16503	Sources/GhosttyTerminalView.swift
@@ -12,7 +12,7 @@
 9984	Sources/TabManager.swift
 8494	cmuxTests/CLINotifyProcessIntegrationRegressionTests.swift
 7737	Sources/Panels/BrowserPanelView.swift
-7214	cmuxTests/WorkspaceUnitTests.swift
+7321	cmuxTests/WorkspaceUnitTests.swift
 6968	cmuxTests/WorkspaceRemoteConnectionTests.swift
 6489	cmuxTests/GhosttyConfigTests.swift
 6299	cmuxTests/TerminalAndGhosttyTests.swift
@@ -133,6 +133,7 @@
 640	cmuxTests/CommandPaletteNucleoFFITests.swift
 638	Packages/CmuxSwiftRender/Sources/CmuxSwiftRender/ExpressionEvaluator.swift
 630	Sources/WorkspaceRemoteConfiguration.swift
+624	Sources/Panels/PanelCloseTabContextMenu.swift
 621	cmuxUITests/RightSidebarChromeHeightUITests.swift
 620	cmuxTests/TerminalNotificationQueueTests.swift
 619	cmuxTests/FinderFileDropRegressionTests.swift
@@ -185,4 +186,4 @@
 502	Sources/Settings/ConfigSource.swift
 1149	Sources/Casper/Search/CasperFindResultsView.swift
 984	Sources/Casper/Sidebar/CasperAgentActivity.swift
-972	Sources/Casper/Sidebar/CasperWorkspaceGroups.swift
+1142	Sources/Casper/Sidebar/CasperWorkspaceGroups.swift
