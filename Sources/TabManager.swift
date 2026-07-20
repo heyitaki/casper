@@ -2568,7 +2568,7 @@ class TabManager: ObservableObject {
         initialTerminalInput: String? = nil,
         initialTerminalEnvironment: [String: String]
     ) -> Workspace {
-        Workspace(
+        let workspace = Workspace(
             title: title,
             workingDirectory: workingDirectory,
             portOrdinal: portOrdinal,
@@ -2577,6 +2577,11 @@ class TabManager: ObservableObject {
             initialTerminalInput: initialTerminalInput,
             initialTerminalEnvironment: initialTerminalEnvironment
         )
+        // CASPER: record only genuine workspace creation, never session restore; delete if upstream adds a first-class recent workspace directory store.
+        if CasperBuildEnvironment.isBranded {
+            CasperRecentWorkspaceDirectoryStore().record(workspace.currentDirectory)
+        }
+        return workspace
     }
 
     func applyCreationChromeInheritance(
@@ -3664,6 +3669,12 @@ class TabManager: ObservableObject {
     }
 
     func implicitWorkingDirectoryForNewWorkspace(from sourceWorkspace: Workspace?) -> String? {
+        // CASPER: branded builds inherit the selected workspace directory unconditionally; delete if upstream makes workspace-directory inheritance always-on.
+        if CasperBuildEnvironment.isBranded {
+            return CasperWorkspaceDirectoryResolver().resolve(
+                selectedWorkspaceDirectory: preferredWorkingDirectoryForNewTab(workspace: sourceWorkspace)
+            )
+        }
         guard WorkspaceWorkingDirectoryInheritanceSettings.isEnabled() else {
             return nil
         }

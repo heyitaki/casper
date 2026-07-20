@@ -359,6 +359,25 @@ final class WindowDecorationsController {
                 ) ?? anchorView
                 AppDelegate.shared?.toggleNotificationsPopover(animated: true, anchorView: resolvedAnchorView)
             case .newTab:
+                // CASPER: minimal-mode left click uses the same plus menu as every other sidebar host; delete if upstream adds a shared new-workspace menu action.
+                // Prefer the registry-resolved hit region: it is the view that actually
+                // resolved this click's slot, so the menu anchors to the button that was
+                // hit. `anchorView` (passed only by the click-target call site) is framed at
+                // the window's leading edge while the cluster renders trailing-aligned, so
+                // it is only a last resort. The monitor and sendEvent call sites pass no
+                // anchor at all and would otherwise skip the menu and create a workspace.
+                let resolvedAnchor = MinimalModeTitlebarControlHitRegionRegistry
+                    .minimalModeSidebarControlActionAnchor(forWindowPoint: locationInWindow, in: window)
+                    ?? anchorView.map { (view: $0, slotRect: NSRect?.none) }
+                if CasperBuildEnvironment.isBranded,
+                   let resolvedAnchor,
+                   AppDelegate.shared?.showNewWorkspaceContextMenu(
+                        anchorView: resolvedAnchor.view,
+                        anchorRect: resolvedAnchor.slotRect,
+                        debugSource: "titlebar.minimalSidebarControl"
+                   ) == true {
+                    return
+                }
                 let targetTabManager = AppDelegate.shared?.activeTabManagerForCommands(preferredWindow: window)
                 _ = AppDelegate.shared?.performNewWorkspaceAction(
                     tabManager: targetTabManager,

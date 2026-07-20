@@ -74,6 +74,38 @@ enum TitlebarControlsHitRegions {
     static func pointFallsInButtonColumn(_ point: NSPoint, config: TitlebarControlsStyleConfig) -> Bool {
         sidebarActionSlot(at: point, config: config) != nil
     }
+
+    /// The frame of the button occupying `range`, centered vertically in `bounds`. Single
+    /// source of truth for both the AppKit button layout and the menu anchor rect, so the
+    /// two cannot drift.
+    static func buttonRect(
+        for range: ClosedRange<CGFloat>,
+        config: TitlebarControlsStyleConfig,
+        in bounds: NSRect
+    ) -> NSRect {
+        NSRect(
+            x: range.lowerBound,
+            y: max(0, (bounds.height - config.buttonSize) / 2),
+            width: config.buttonSize,
+            height: config.buttonSize
+        )
+    }
+
+    // CASPER: the rect of the individual button under `point`, so a menu can be anchored to
+    // that button rather than to the whole cluster. Delete if upstream adds a shared
+    // new-workspace menu anchor.
+    static func sidebarActionSlotRect(
+        at point: NSPoint,
+        config: TitlebarControlsStyleConfig,
+        in bounds: NSRect
+    ) -> NSRect? {
+        let slots = MinimalModeSidebarControlActionSlot.visibleSlots
+        for (index, range) in buttonXRanges(config: config).enumerated() where range.contains(point.x) {
+            guard index < slots.count else { return nil }
+            return buttonRect(for: range, config: config, in: bounds)
+        }
+        return nil
+    }
 }
 
 final class MinimalModeSidebarControlActionView: NSView {
@@ -221,7 +253,14 @@ final class MinimalModeSidebarControlActionView: NSView {
         case .toggleSidebar:
             CmuxExtensionSidebarSelection.showMenu(anchorView: self, event: event)
         case .newTab:
-            _ = AppDelegate.shared?.showNewWorkspaceContextMenu(anchorView: self, event: event)
+            // CASPER: anchor under the hit button, matching the left-click path, so the
+            // directory menu isn't offset to the cluster's leading edge. Delete if upstream
+            // adds a searchable recent-directory workspace menu.
+            _ = AppDelegate.shared?.showNewWorkspaceContextMenu(
+                anchorView: self,
+                anchorRect: TitlebarControlsHitRegions.sidebarActionSlotRect(at: localPoint, config: config, in: bounds),
+                event: event
+            )
         case .focusHistoryBack:
             _ = AppDelegate.shared?.showFocusHistoryContextMenu(anchorView: self, event: event, direction: .back)
         case .focusHistoryForward:
@@ -238,12 +277,7 @@ final class MinimalModeSidebarControlActionView: NSView {
         for (index, range) in ranges.enumerated() {
             guard index < slots.count,
                   let button = buttons[slots[index]] else { continue }
-            button.frame = NSRect(
-                x: range.lowerBound,
-                y: max(0, (bounds.height - config.buttonSize) / 2),
-                width: config.buttonSize,
-                height: config.buttonSize
-            )
+            button.frame = TitlebarControlsHitRegions.buttonRect(for: range, config: config, in: bounds)
         }
         syncButtons()
     }

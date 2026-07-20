@@ -157,6 +157,8 @@ func titlebarControlPressedScale(isPressed _: Bool) -> CGFloat {
 
 final class TitlebarControlsViewModel: ObservableObject {
     weak var notificationsAnchorView: NSView?
+    // CASPER: retain the sidebar plus anchor without changing all three host closures; delete if upstream adds a shared new-workspace menu anchor.
+    weak var newWorkspaceMenuAnchorView: NSView?
 }
 
 @MainActor
@@ -734,6 +736,8 @@ struct TitlebarControlButton<Content: View>: View {
     let action: () -> Void
     var isEnabled = true
     var rightClickAction: ((NSView, NSEvent) -> Void)? = nil
+    // CASPER: expose the existing context-menu overlay as a left-click menu anchor; delete if upstream gives titlebar buttons an AppKit anchor action.
+    var onResolveContextMenuAnchor: ((NSView) -> Void)? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -750,7 +754,10 @@ struct TitlebarControlButton<Content: View>: View {
         .accessibilityLabel(accessibilityLabel)
         .overlay {
             if let rightClickAction {
-                TitlebarControlRightClickView(onRightMouseDown: rightClickAction)
+                TitlebarControlRightClickView(
+                    onResolve: onResolveContextMenuAnchor,
+                    onRightMouseDown: rightClickAction
+                )
             }
         }
         .titlebarInteractiveControl()
@@ -856,16 +863,20 @@ private struct TitlebarControlButtonStyleBody: View {
 }
 
 private struct TitlebarControlRightClickView: NSViewRepresentable {
+    // CASPER: report the overlay view so left and right clicks share one anchored menu; delete if upstream gives titlebar buttons an AppKit anchor action.
+    let onResolve: ((NSView) -> Void)?
     let onRightMouseDown: (NSView, NSEvent) -> Void
 
     func makeNSView(context: Context) -> TitlebarControlRightClickNSView {
         let view = TitlebarControlRightClickNSView()
         view.onRightMouseDown = onRightMouseDown
+        onResolve?(view)
         return view
     }
 
     func updateNSView(_ nsView: TitlebarControlRightClickNSView, context: Context) {
         nsView.onRightMouseDown = onRightMouseDown
+        onResolve?(nsView)
     }
 }
 
@@ -1099,12 +1110,25 @@ struct TitlebarControlsView: View {
                         #if DEBUG
                         cmuxDebugLog("titlebar.newTab")
                         #endif
+                        // CASPER: sidebar plus always opens the shared directory menu; delete if upstream adds a searchable recent-directory workspace menu.
+                        if CasperBuildEnvironment.isBranded,
+                           let anchorView = viewModel.newWorkspaceMenuAnchorView,
+                           AppDelegate.shared?.showNewWorkspaceContextMenu(anchorView: anchorView) == true {
+                            return
+                        }
                         onNewTab()
                     },
                     rightClickAction: { anchorView, event in
                         _ = AppDelegate.shared?.showNewWorkspaceContextMenu(anchorView: anchorView, event: event)
-                    }) {
-                    iconLabel(systemName: "plus", config: config, iconGeometryKeyPrefix: "titlebarControl_newTabIcon")
+                    },
+                    onResolveContextMenuAnchor: { viewModel.newWorkspaceMenuAnchorView = $0 }
+                ) {
+                    // CASPER: the plus opens a directory menu, so it reads as a folder action; delete if upstream adds a searchable recent-directory workspace menu.
+                    iconLabel(
+                        systemName: CasperBuildEnvironment.isBranded ? "folder.badge.plus" : "plus",
+                        config: config,
+                        iconGeometryKeyPrefix: "titlebarControl_newTabIcon"
+                    )
                 }
                 .safeHelp(KeyboardShortcutSettings.Action.newTab.tooltip(String(localized: "titlebar.newWorkspace.tooltip", defaultValue: "New workspace")))
             }
@@ -1440,6 +1464,10 @@ private struct MinimalModeTitlebarButtonHitRegionView: NSViewRepresentable {
             TitlebarControlsHitRegions.sidebarActionSlot(at: localPoint, config: config)
         }
 
+        func minimalModeSidebarControlActionSlotRect(localPoint: NSPoint) -> NSRect? {
+            TitlebarControlsHitRegions.sidebarActionSlotRect(at: localPoint, config: config, in: bounds)
+        }
+
         deinit {
             MinimalModeTitlebarControlHitRegionRegistry.unregister(self)
         }
@@ -1557,13 +1585,30 @@ struct HiddenTitlebarSidebarControlsView: View {
             MinimalModeSidebarControlActionProxyView(
                 config: clusterConfig,
                 requiresRevealedState: true
-            ) { slot, anchorView, _ in
+            ) { slot, anchorView, locationInWindow in
                 switch slot {
                 case .toggleSidebar:
                     break
                 case .showNotifications:
                     onToggleNotifications(anchorView)
                 case .newTab:
+                    // CASPER: this proxy owns the accessibility/AXPress path, which bypasses
+                    // the window monitor entirely, so it must open the same menu rather than
+                    // silently creating a workspace. Delete if upstream adds a shared
+                    // new-workspace menu action.
+                    let localPoint = anchorView.convert(locationInWindow, from: nil)
+                    if CasperBuildEnvironment.isBranded,
+                       AppDelegate.shared?.showNewWorkspaceContextMenu(
+                            anchorView: anchorView,
+                            anchorRect: TitlebarControlsHitRegions.sidebarActionSlotRect(
+                                at: localPoint,
+                                config: clusterConfig,
+                                in: anchorView.bounds
+                            ),
+                            debugSource: "titlebar.minimalSidebarProxy"
+                       ) == true {
+                        return
+                    }
                     onNewTab()
                 case .focusHistoryBack:
                     let availability = focusHistoryNavigationAvailability(

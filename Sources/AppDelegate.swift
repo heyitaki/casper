@@ -734,16 +734,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    @MainActor
-    private final class NewWorkspaceContextMenuActionBox: NSObject {
-        let windowId: UUID
-        let action: CmuxResolvedConfigAction
-
-        init(windowId: UUID, action: CmuxResolvedConfigAction) {
-            self.windowId = windowId
-            self.action = action
-        }
-    }
+    // CASPER: the shared directory-menu controller owns configured-item dispatch; delete if upstream adds a searchable recent-directory workspace menu.
 
     private final class MainWindowController: NSWindowController, NSWindowDelegate {
         var onClose: (() -> Void)?
@@ -7256,76 +7247,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @discardableResult
     func showNewWorkspaceContextMenu(
         anchorView: NSView,
-        event: NSEvent,
+        anchorRect: NSRect? = nil,
+        event: NSEvent? = nil,
         debugSource: String = "titlebar.newWorkspace.contextMenu"
     ) -> Bool {
+        // CASPER: route every sidebar plus click through the one shared directory-menu builder; delete if upstream adds a searchable recent-directory workspace menu.
+        // A windowless anchor can't host a menu: popUp would no-op while we still reported
+        // success, swallowing the click. Report failure so callers run their own action.
+        // Mirrors the notificationsAnchorView window guard.
+        guard anchorView.window != nil else { return false }
         let context = contextForMainWindow(anchorView.window)
             ?? mainWindowContext(forShortcutEvent: event, debugSource: debugSource)
             ?? preferredMainWindowContextForWorkspaceCreation(event: event, debugSource: debugSource)
-        guard let context,
-              let cmuxConfigStore = context.cmuxConfigStore else {
-            return false
-        }
-
-        let configuredItems = cmuxConfigStore.newWorkspaceContextMenuItems
-        guard !configuredItems.isEmpty else { return false }
-
-        let menu = NSMenu()
-        for configuredItem in configuredItems {
-            switch configuredItem {
-            case .separator:
-                if !menu.items.isEmpty, menu.items.last?.isSeparatorItem == false {
-                    menu.addItem(.separator())
+        let cmuxConfigStore = context?.cmuxConfigStore
+        let controller = CasperNewWorkspaceMenuController(
+            configuredItems: cmuxConfigStore?.newWorkspaceContextMenuItems ?? [],
+            globalConfigPath: cmuxConfigStore?.globalConfigPath,
+            showsDirectoryItems: CasperBuildEnvironment.isBranded,
+            // CASPER: recent folders share the folder picker's directory-open mutation path; delete if upstream adds a shared directory workspace action.
+            onRecentDirectory: { [weak self] directory in
+                self?.openWorkspaceForExternalDirectory(
+                    workingDirectory: directory,
+                    debugSource: "titlebar.newWorkspace.recent"
+                )
+            },
+            onFolderPicker: { [weak self] in
+                self?.showOpenFolderPanel()
+            },
+            onConfiguredAction: { [weak self, weak context] action in
+                guard let self, let context, let window = self.resolvedWindow(for: context) else {
+                    return false
                 }
-            case .action(let menuAction):
-                let item = NSMenuItem(
-                    title: menuAction.title,
-                    action: #selector(performNewWorkspaceContextMenuItem(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.representedObject = NewWorkspaceContextMenuActionBox(
-                    windowId: context.windowId,
-                    action: menuAction.action
-                )
-                item.toolTip = menuAction.tooltip
-                item.image = menuAction.icon?.contextMenuImage(
-                    configSourcePath: menuAction.iconSourcePath,
-                    globalConfigPath: cmuxConfigStore.globalConfigPath
-                )
-                // CASPER: bind configured keyboard shortcut onto context menu item so
-                // users who map a shortcut to a config action can see and invoke it from
-                // the menu. Delete if upstream exposes shortcut binding for context menu
-                // actions in CmuxResolvedConfigAction or the menu-building API.
-                if let stored = menuAction.action.menuShortcut,
-                   let keyEquivalent = stored.menuItemKeyEquivalent {
-                    item.keyEquivalent = keyEquivalent
-                    item.keyEquivalentModifierMask = stored.modifierFlags
-                }
-                menu.addItem(item)
+                return self.executeConfiguredCmuxAction(action, context: context, preferredWindow: window)
             }
-        }
-
-        while menu.items.last?.isSeparatorItem == true {
-            menu.removeItem(at: menu.items.count - 1)
-        }
-        guard menu.items.contains(where: { !$0.isSeparatorItem }) else { return false }
-
-        NSMenu.popUpContextMenu(menu, with: event, for: anchorView)
-        return true
-    }
-
-    @objc private func performNewWorkspaceContextMenuItem(_ sender: NSMenuItem) {
-        guard let box = sender.representedObject as? NewWorkspaceContextMenuActionBox,
-              let context = mainWindowContexts.values.first(where: { $0.windowId == box.windowId }),
-              let window = resolvedWindow(for: context) else {
-            NSSound.beep()
-            return
-        }
-        guard executeConfiguredCmuxAction(box.action, context: context, preferredWindow: window) else {
-            NSSound.beep()
-            return
-        }
+        )
+        return controller.show(relativeTo: anchorView, anchorRect: anchorRect, event: event)
     }
 
     /// Shows the "Open Folder" panel and creates a workspace for the selected directory.
@@ -7554,7 +7510,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return Array(pathComponents.prefix(bundleComponents.count)) == bundleComponents
     }
 
-    private func openWorkspaceForExternalDirectory(
+    // CASPER: allow the shared plus-menu wrapper to reuse the external-directory path; delete if upstream exposes a shared directory workspace action.
+    func openWorkspaceForExternalDirectory(
         workingDirectory: String,
         debugSource: String
     ) {

@@ -471,6 +471,16 @@ protocol MinimalModeTitlebarControlHitRegionProviding: AnyObject {
 
 protocol MinimalModeSidebarControlActionHitRegionProviding: MinimalModeTitlebarControlHitRegionProviding {
     func minimalModeSidebarControlActionSlot(localPoint: NSPoint) -> MinimalModeSidebarControlActionSlot?
+    // CASPER: the bounds of the individual button under `localPoint`, so a menu anchors to
+    // that button instead of the whole cluster. Delete if upstream adds a shared
+    // new-workspace menu anchor.
+    func minimalModeSidebarControlActionSlotRect(localPoint: NSPoint) -> NSRect?
+}
+
+// CASPER: conformers that don't lay out buttons (test doubles, non-cluster regions) have no
+// per-button rect; anchoring falls back to the whole view. Delete with the requirement above.
+extension MinimalModeSidebarControlActionHitRegionProviding {
+    func minimalModeSidebarControlActionSlotRect(localPoint _: NSPoint) -> NSRect? { nil }
 }
 
 enum MinimalModeTitlebarControlHitRegionRegistry {
@@ -536,10 +546,14 @@ enum MinimalModeTitlebarControlHitRegionRegistry {
         return false
     }
 
-    static func minimalModeSidebarControlActionSlot(
+    /// The registered hit region, its slot, and that slot's button rect for a window point.
+    /// Single source of truth: the slot lookup and the menu-anchor lookup must agree on
+    /// which view and button a click resolved to, or the menu anchors somewhere other than
+    /// the button that was hit.
+    private static func resolveSidebarControlAction(
         forWindowPoint windowPoint: NSPoint,
         in window: NSWindow
-    ) -> MinimalModeSidebarControlActionSlot? {
+    ) -> (view: NSView, slot: MinimalModeSidebarControlActionSlot, slotRect: NSRect?)? {
         let epsilon = max(0.5, 1.0 / max(1.0, window.backingScaleFactor))
         for view in snapshot() {
             guard view.window === window,
@@ -548,10 +562,31 @@ enum MinimalModeTitlebarControlHitRegionRegistry {
             let localPoint = view.convert(windowPoint, from: nil)
             guard view.bounds.insetBy(dx: -epsilon, dy: -epsilon).contains(localPoint) else { continue }
             if let slot = provider.minimalModeSidebarControlActionSlot(localPoint: localPoint) {
-                return slot
+                return (view, slot, provider.minimalModeSidebarControlActionSlotRect(localPoint: localPoint))
             }
         }
         return nil
+    }
+
+    static func minimalModeSidebarControlActionSlot(
+        forWindowPoint windowPoint: NSPoint,
+        in window: NSWindow
+    ) -> MinimalModeSidebarControlActionSlot? {
+        resolveSidebarControlAction(forWindowPoint: windowPoint, in: window)?.slot
+    }
+
+    // CASPER: resolve the hit-region view and the hit button's rect so the window-monitor
+    // click path can anchor the new-workspace menu under the button it just hit. That path
+    // swallows the event before the SwiftUI button runs, so it has no anchor of its own.
+    // Delete if upstream adds a shared new-workspace menu anchor.
+    static func minimalModeSidebarControlActionAnchor(
+        forWindowPoint windowPoint: NSPoint,
+        in window: NSWindow
+    ) -> (view: NSView, slotRect: NSRect?)? {
+        guard let resolved = resolveSidebarControlAction(forWindowPoint: windowPoint, in: window) else {
+            return nil
+        }
+        return (resolved.view, resolved.slotRect)
     }
 }
 

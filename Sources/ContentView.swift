@@ -11136,6 +11136,17 @@ struct VerticalTabsSidebar: View {
         return minimalModeSidebarTitlebarControlsTopInset(in: observedWindow)
     }
 
+    // CASPER: anchor for the browser-stack New Tab row's directory menu; delete if upstream
+    // adds a searchable recent-directory workspace menu.
+    @State private var browserStackNewTabAnchorView: NSView?
+
+    // CASPER: the trailing-aligned Casper cluster otherwise sits flush against the sidebar's
+    // right edge; stock builds keep their original 4pt. Delete if upstream adopts equivalent
+    // alignment. (AppKit-click-target sync is covered in docs/casper-fork.md.)
+    private var minimalModeSidebarTitlebarControlsTrailingPadding: CGFloat {
+        CasperBuildEnvironment.isBranded ? 10 : 4
+    }
+
     private var showsSidebarNotificationMessage: Bool {
         tabItemSettingsStore.snapshot.showsNotificationMessage
     }
@@ -11517,7 +11528,7 @@ struct VerticalTabsSidebar: View {
                             )
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.trailing, 4)
+                        .padding(.trailing, minimalModeSidebarTitlebarControlsTrailingPadding)
                         .padding(.top, 2)
                     }
                 }
@@ -11776,7 +11787,7 @@ struct VerticalTabsSidebar: View {
                         )
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.trailing, 4)
+                    .padding(.trailing, minimalModeSidebarTitlebarControlsTrailingPadding)
                     .padding(.top, 2)
                 }
             }
@@ -12191,9 +12202,24 @@ struct VerticalTabsSidebar: View {
                 }
             }
 
-            Button(action: onNewTab) {
+            Button(action: {
+                // CASPER: this row invokes the same new-workspace action as the sidebar
+                // plus, so it opens the same directory menu instead of silently creating.
+                // Delete if upstream adds a searchable recent-directory workspace menu.
+                if CasperBuildEnvironment.isBranded,
+                   let anchorView = browserStackNewTabAnchorView,
+                   AppDelegate.shared?.showNewWorkspaceContextMenu(
+                        anchorView: anchorView,
+                        debugSource: "sidebar.browserStack.newTab"
+                   ) == true {
+                    return
+                }
+                onNewTab()
+            }) {
                 HStack(spacing: 9) {
-                    Image(systemName: "plus")
+                    // CASPER: matches the sidebar plus, which opens the same menu; delete if
+                    // upstream adds a searchable recent-directory workspace menu.
+                    Image(systemName: CasperBuildEnvironment.isBranded ? "folder.badge.plus" : "plus")
                         .font(.system(size: 15, weight: .regular))
                         .frame(width: 22, height: 22)
                     Text(String(localized: "sidebar.browserStack.newTab", defaultValue: "New Tab"))
@@ -12204,6 +12230,7 @@ struct VerticalTabsSidebar: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 7)
             }
+            .background(TitlebarControlAnchorView { browserStackNewTabAnchorView = $0 })
             .buttonStyle(.plain)
             .safeHelp(String(localized: "sidebar.browserStack.newTab", defaultValue: "New Tab"))
 
