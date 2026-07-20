@@ -1284,7 +1284,8 @@ nonisolated enum TerminalStartupReturnShellScript {
         let quotedCommand = TerminalStartupShellQuoting.singleQuoted(command)
         // CASPER: cmux's .zshenv restores the user's ZDOTDIR as soon as it loads, so re-entry must
         // precede the resume command, not just the trailing `exec -l` — otherwise the resumed agent
-        // runs without cmux's integration and starts with no hooks. See docs/casper-fork.md #14.
+        // runs without cmux's integration and starts with no hooks.
+        // See docs/casper-fork/agent-resume-shell-integration.md.
         var lines = [shellLine]
             + zshIntegrationReentryLines
             + [

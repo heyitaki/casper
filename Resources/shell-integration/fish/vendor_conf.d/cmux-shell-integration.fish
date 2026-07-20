@@ -4,7 +4,7 @@
 # path is skipped whenever cmux spawns the shell with a command of its own (e.g. a
 # restored panel's resume script), leaving those panels with no integration at all.
 # vendor_conf.d is sourced on every fish startup, so it survives that.
-# See docs/casper-fork.md #13.
+# See docs/casper-fork/agent-resume-shell-integration.md.
 
 # config.fish has no interactivity guard of its own — upstream only ever loads it
 # from `fish -il`. Without this, every `fish -c` writes a shim and mutates PATH.

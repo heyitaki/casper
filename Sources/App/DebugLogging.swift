@@ -28,7 +28,7 @@ final class MainThreadHangWatchdog: @unchecked Sendable {
     /// the shared `/tmp` globally, so this ~50-dump budget (~150 MB at ~3 MB
     /// each) is split across every concurrently-running tagged build — an
     /// instance's own recent samples can be evicted when several run at once.
-    /// That is the intended tradeoff (see docs/casper-fork.md patch 15); the
+    /// That is the intended tradeoff (see docs/casper-fork/hang-watchdog.md); the
     /// problem being solved is cross-launch accumulation — ~20 tagged
     /// reloads/day with nothing ever pruning reached 1.35 GB in five days.
     /// Count, not age, because launch frequency is what drives the total.
