@@ -10565,6 +10565,24 @@ final class Workspace: Identifiable, ObservableObject {
     /// gate `paneLayoutVersion` bumps to genuine reorder events.
     private var lastOrderedPanelIds: [UUID] = []
 
+    // CASPER: monotonic counter bumped only when `focusedPanelId` changes.
+    // `focusedPanelId` is derived from `bonsplitController`, whose focus state is
+    // not `@Published`, and moving focus between panels of the already-selected
+    // workspace leaves `TabManager.selectedTabId` untouched — so nothing
+    // published the move and the compact sidebar's per-panel highlight went
+    // stale (the solid-blue row stuck on whichever panel was focused at the last
+    // unrelated re-render). Same rationale as `paneLayoutVersion` above, which
+    // exists because pure reorders also mutate only bonsplit state. Consumed via
+    // `sidebarFocusObservationPublisher`. Delete with the compact-sidebar patch
+    // if upstream publishes focus changes on Workspace directly.
+    @Published private(set) var focusedPanelVersion: Int = 0
+
+    /// Snapshot of `focusedPanelId` at the last `focusedPanelVersion` bump, so
+    /// the counter moves only on a genuine focus change. Selection re-asserts and
+    /// geometry events also flow through `applyTabSelection` and must not churn
+    /// the sidebar.
+    private var lastPublishedFocusedPanelId: UUID?
+
     /// Subscriptions for panel updates (e.g., browser title changes)
     var panelSubscriptions: [UUID: AnyCancellable] = [:]
     private var agentSessionPanelCallbackIds: Set<UUID> = []
@@ -10596,6 +10614,17 @@ final class Workspace: Identifiable, ObservableObject {
             return nil
         }
         return panelIdFromSurfaceId(tab.id)
+    }
+
+    /// CASPER: bump `focusedPanelVersion` when the focused panel actually
+    /// changed. Called from the `applyTabSelection` choke point, which every
+    /// focus/selection path funnels through (bonsplit's `focusPane` reaches it
+    /// via the `didFocusPane` delegate). Delete with the compact-sidebar patch.
+    private func noteFocusedPanelChangeIfNeeded() {
+        let current = focusedPanelId
+        guard current != lastPublishedFocusedPanelId else { return }
+        lastPublishedFocusedPanelId = current
+        focusedPanelVersion &+= 1
     }
 
     /// Panel ids in bonsplit's spatial order: depth-first over the split tree
@@ -10869,6 +10898,16 @@ final class Workspace: Identifiable, ObservableObject {
     // on Workspace directly and the compact sidebar subscribes accordingly.
     lazy var sidebarActivityObservationPublisher: AnyPublisher<Void, Never> = {
         sidebarObservationSignal($statusEntries)
+    }()
+
+    // CASPER: narrow publisher for the compact sidebar's per-panel focus
+    // highlight (solid blue on the focused panel, lighter wash on its siblings).
+    // Fires when `focusedPanelVersion` bumps — see that property for why focus
+    // needs an explicit signal. Consumed by CasperSidebarActivityRefresher.
+    // Delete with the compact-sidebar patch if upstream publishes focus changes
+    // on Workspace directly.
+    lazy var sidebarFocusObservationPublisher: AnyPublisher<Void, Never> = {
+        sidebarObservationSignal($focusedPanelVersion)
     }()
 
     private func scheduleExtensionSidebarProjectRootRefresh(for directory: String) {
@@ -18643,6 +18682,15 @@ extension Workspace: BonsplitDelegate {
                 previousTerminalHostedView: request.previousTerminalHostedView
             )
         }
+
+        // CASPER: a bonsplit focus move publishes nothing on its own, so the
+        // compact sidebar would keep rendering a stale per-panel highlight.
+        // Bumped once per coalesced batch, after the drain loop, so the many
+        // early returns inside `applyTabSelectionNow` can't skip it. Re-entrant
+        // calls bail at the `isApplyingTabSelection` guard above, leaving the
+        // outermost invocation to publish the settled state exactly once.
+        // Delete with the compact-sidebar patch.
+        noteFocusedPanelChangeIfNeeded()
     }
 
     /// Hide browser portals for tabs that are no longer selected in the given pane.

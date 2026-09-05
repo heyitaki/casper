@@ -88,9 +88,16 @@ final class CasperSidebarActivityRefresher: ObservableObject {
         let subject = bumpSubject
         var openedNewSubscription = false
         for workspace in workspaces where workspaceCancellables[workspace.id] == nil {
-            workspaceCancellables[workspace.id] = workspace
-                .sidebarActivityObservationPublisher
-                .sink { _ in subject.send(()) }
+            // Focus is merged in alongside activity: moving focus between panels
+            // of the already-selected workspace changes no @Published state of
+            // its own (bonsplit's focus isn't published, and `selectedTabId`
+            // doesn't move), so without this the per-panel row highlight renders
+            // stale until an unrelated publish happens to refresh it.
+            workspaceCancellables[workspace.id] = Publishers.Merge(
+                workspace.sidebarActivityObservationPublisher,
+                workspace.sidebarFocusObservationPublisher
+            )
+            .sink { _ in subject.send(()) }
             openedNewSubscription = true
         }
 
